@@ -35,6 +35,7 @@ from asat.actions import (
     MenuItem,
     default_actions,
 )
+from asat.app import Application
 from asat.ansi import (
     AnsiParser,
     CSIToken,
@@ -62,6 +63,13 @@ from asat.hrtf import HRTFProfile, Spatializer, convolve
 from asat.input_router import BindingMap, InputRouter, default_bindings
 from asat.interactive import InteractiveMenu, MenuItemView, detect
 from asat.kernel import ExecutionKernel
+from asat.keyboard import (
+    KeyboardReader,
+    PosixKeyboard,
+    ScriptedKeyboard,
+    WindowsKeyboard,
+    pick_default as pick_default_keyboard,
+)
 from asat.keys import Key, Modifier
 from asat.notebook import FocusMode, FocusState, NotebookCursor
 from asat.output_buffer import OutputBuffer, OutputLine, OutputRecorder
@@ -82,6 +90,7 @@ __all__ = [
     "ActionContext",
     "ActionMenu",
     "AnsiParser",
+    "Application",
     "AudioBuffer",
     "AudioSink",
     "BindingMap",
@@ -108,6 +117,7 @@ __all__ = [
     "InputRouter",
     "InteractiveMenu",
     "Key",
+    "KeyboardReader",
     "MemoryClipboard",
     "MemorySink",
     "MenuItem",
@@ -119,9 +129,11 @@ __all__ = [
     "OutputCursor",
     "OutputLine",
     "OutputRecorder",
+    "PosixKeyboard",
     "ProcessRunner",
     "ScreenCell",
     "ScreenSnapshot",
+    "ScriptedKeyboard",
     "Session",
     "SettingsController",
     "SettingsEditor",
@@ -141,12 +153,14 @@ __all__ = [
     "VoicePreset",
     "VoiceProfile",
     "WavFileSink",
+    "WindowsKeyboard",
     "convolve",
     "default_actions",
     "default_bindings",
     "default_sound_bank",
     "detect",
     "generate_sound",
+    "pick_default_keyboard",
     "write_wav",
 ]
 

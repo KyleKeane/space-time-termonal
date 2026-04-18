@@ -15,10 +15,14 @@ optional accelerator for measured HRTFs only).
 git clone https://github.com/KyleKeane/space-time-termonal
 cd space-time-termonal
 python -m unittest discover -s tests -t .
+python -m asat                       # launch an interactive session
+python -m asat --wav-dir /tmp/asat   # also write every rendered buffer to WAV
 ```
 
-The test suite is the current entry point; an end-user binary is on
-the roadmap (see `docs/FEATURE_REQUESTS.md`).
+A live-speaker audio sink is still on the feature list
+([F6](docs/FEATURE_REQUESTS.md)); until it lands, `--wav-dir` is how
+you actually hear the narration — open the WAVs in a screen-reader
+friendly player.
 
 ## Documentation map
 
