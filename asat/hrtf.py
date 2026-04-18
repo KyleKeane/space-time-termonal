@@ -19,6 +19,12 @@ Two ways to obtain a profile:
 
 Convolution is implemented in pure Python and will transparently use
 numpy.convolve if numpy is importable. No hard numpy dependency.
+
+Sparse-impulse kernels (which is what `HRTFProfile.synthetic` always
+produces) are detected and handled with a direct delay-and-scale in
+O(n), bypassing the full convolution loop. Dense kernels — typical of
+measured HRTFs loaded via `from_stereo_wav` — fall through to the
+numpy path when available and to the pure-Python fallback otherwise.
 """
 
 from __future__ import annotations
@@ -28,7 +34,7 @@ import struct
 import wave
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
+from typing import Optional, Sequence
 
 from asat.audio import (
     AudioBuffer,
@@ -133,11 +139,24 @@ class Spatializer:
 def convolve(signal: Sequence[float], kernel: Sequence[float]) -> tuple[float, ...]:
     """Return the full linear convolution of signal with kernel.
 
-    Uses numpy.convolve if numpy is importable, which is typical of
-    HRTF-sized kernels in production. Otherwise falls back to a pure
-    Python implementation so the library continues to function with
-    only the standard library installed.
+    The branches, in order:
+
+    1. Either side empty -> empty output.
+    2. Kernel has exactly one nonzero tap -> delay-and-scale in O(n).
+       Covers every synthetic HRTF profile without a convolution loop.
+    3. Kernel is all zeros -> zero buffer of length n + m - 1.
+    4. Dense kernel -> numpy.convolve if numpy is importable, else the
+       pure-Python fallback. This is the path measured HRTFs take.
     """
+    n, m = len(signal), len(kernel)
+    if n == 0 or m == 0:
+        return ()
+    tap = _single_tap(kernel)
+    if tap is not None:
+        delay, gain = tap
+        return _delayed_scale(signal, m, delay, gain)
+    if not any(kernel):
+        return (0.0,) * (n + m - 1)
     try:
         import numpy as np  # noqa: PLC0415
 
@@ -145,6 +164,27 @@ def convolve(signal: Sequence[float], kernel: Sequence[float]) -> tuple[float, .
         return tuple(float(value) for value in result)
     except ImportError:
         return _convolve_python(signal, kernel)
+
+
+def _single_tap(kernel: Sequence[float]) -> Optional[tuple[int, float]]:
+    """Return (delay, gain) if kernel has exactly one nonzero sample, else None."""
+    found: Optional[tuple[int, float]] = None
+    for i, value in enumerate(kernel):
+        if value != 0.0:
+            if found is not None:
+                return None
+            found = (i, value)
+    return found
+
+
+def _delayed_scale(
+    signal: Sequence[float], kernel_len: int, delay: int, gain: float
+) -> tuple[float, ...]:
+    """Convolution with a one-hot kernel: out[i + delay] = signal[i] * gain."""
+    out = [0.0] * (len(signal) + kernel_len - 1)
+    for i, s in enumerate(signal):
+        out[i + delay] = s * gain
+    return tuple(out)
 
 
 def _convolve_python(signal: Sequence[float], kernel: Sequence[float]) -> tuple[float, ...]:
