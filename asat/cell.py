@@ -1,9 +1,23 @@
 """Cell model: one input/output interaction in the notebook.
 
 A Cell records a single command submission and the resulting output.
-It is the atomic unit of the notebook workflow. Cells are intentionally
-dumb data containers. All mutation logic lives in the Session class or
-in later-phase modules (execution kernel, parser).
+It is the atomic unit of the notebook workflow.
+
+Mutation policy
+---------------
+Cell is the only non-frozen dataclass in the core data layer, and that
+is deliberate: its state changes over an execution lifecycle
+(PENDING -> RUNNING -> COMPLETED/FAILED/CANCELLED) and every mutation
+needs to update `updated_at` atomically. To keep the rules simple:
+
+* Only two callers are allowed to mutate a Cell:
+    - ExecutionKernel (mark_running, mark_completed, mark_cancelled)
+    - NotebookCursor  (update_command on edit-in-place)
+* Every mutation goes through one of the `mark_*` / `update_command`
+  methods so the timestamp and status stay consistent.
+* Any consumer that wants a stable view while handling an event must
+  call Cell.snapshot() to get a defensive copy that will not change
+  under its feet when the original mutates later.
 
 Fields are ordered so the most important identity information is read
 first by a screen reader: id, command, timestamp, then outputs, then
@@ -106,6 +120,27 @@ class Cell:
         self.exit_code = None
         self.status = CellStatus.PENDING
         self.updated_at = utcnow()
+
+    def snapshot(self) -> "Cell":
+        """Return a detached copy of this cell at the current moment.
+
+        Subscribers that cache cell state from an event must use this
+        rather than the original reference: the kernel may mutate the
+        source Cell immediately after publishing the event, and the
+        metadata dict is deep-copied so later edits do not leak in.
+        """
+        return Cell(
+            cell_id=self.cell_id,
+            command=self.command,
+            created_at=self.created_at,
+            updated_at=self.updated_at,
+            stdout=self.stdout,
+            stderr=self.stderr,
+            exit_code=self.exit_code,
+            status=self.status,
+            parent_id=self.parent_id,
+            metadata=dict(self.metadata),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize this cell to a JSON-compatible dictionary."""
