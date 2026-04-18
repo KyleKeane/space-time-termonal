@@ -93,6 +93,12 @@ class CursorNavigationTests(unittest.TestCase):
         self.assertEqual(payload["new_cell_id"], self.cells[1].cell_id)
         self.assertEqual(payload["new_mode"], FocusMode.NOTEBOOK.value)
 
+    def test_cell_navigation_tags_transition_and_carries_command(self) -> None:
+        self.cursor.move_down()
+        payload = self.recorder.events[-1].payload
+        self.assertEqual(payload["transition"], "cell")
+        self.assertEqual(payload["command"], self.cells[1].command)
+
 
 class CursorInputModeTests(unittest.TestCase):
 
@@ -112,6 +118,26 @@ class CursorInputModeTests(unittest.TestCase):
         for ch in "bc":
             self.cursor.insert_character(ch)
         self.assertEqual(self.cursor.focus.input_buffer, "echo abc")
+
+    def test_insert_character_does_not_publish_focus_changed(self) -> None:
+        self.cursor.enter_input_mode()
+        self.recorder.events.clear()
+        for ch in "bc":
+            self.cursor.insert_character(ch)
+        self.assertEqual(self.recorder.events, [])
+
+    def test_backspace_does_not_publish_focus_changed(self) -> None:
+        self.cursor.enter_input_mode()
+        self.recorder.events.clear()
+        self.cursor.backspace()
+        self.assertEqual(self.recorder.events, [])
+
+    def test_mode_change_tags_transition_as_mode(self) -> None:
+        self.cursor.enter_input_mode()
+        payload = self.recorder.events[-1].payload
+        self.assertEqual(payload["transition"], "mode")
+        self.assertEqual(payload["new_mode"], FocusMode.INPUT.value)
+        self.assertEqual(payload["command"], self.cells[0].command)
 
     def test_insert_character_ignored_in_notebook_mode(self) -> None:
         self.cursor.insert_character("x")

@@ -35,6 +35,8 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "old_cell_id": None,
         "new_cell_id": "c1",
         "input_buffer": "",
+        "transition": "mode",
+        "command": "",
     },
     EventType.OUTPUT_LINE_FOCUSED: {
         "cell_id": "c1",

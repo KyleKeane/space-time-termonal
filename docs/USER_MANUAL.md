@@ -119,10 +119,14 @@ decides what keys do.
 | `SETTINGS` | Driving the live SoundBank editor.                 |
 
 Every mode transition announces itself: you'll hear the
-`focus_shift` cue plus the narrator naming the new mode. If you lose
-track of where you are, just press Escape — it always takes you one
-level out (INPUT / OUTPUT → NOTEBOOK, SETTINGS → close), and the
-narrator confirms the new mode.
+`focus_shift` cue overhead and the system voice names the new mode
+(`"input"`, `"notebook"`, `"output"`, `"settings"`). Walking between
+cells within NOTEBOOK mode plays `nav_blip` instead and the narrator
+reads the focused cell's command. Typing into the input buffer is
+silent on purpose — the `insert_character` action echoes the literal
+character instead. If you lose track of where you are, just press
+Escape — it always takes you one level out (INPUT / OUTPUT →
+NOTEBOOK, SETTINGS → close), and the narrator confirms the new mode.
 
 ---
 
@@ -137,9 +141,10 @@ narrator confirms the new mode.
 | Ctrl+O     | Enter OUTPUT mode on the focused cell's output.   |
 | Ctrl+,     | Open the settings editor.                         |
 
-Moving between cells plays the `nav_blip` cue. The narrator reads
-either "new cell" (empty) or the first line of the cell's command so
-you know what you're standing on.
+Moving between cells plays the `nav_blip` cue and the narrator reads
+the cell's command so you know what you're standing on. Empty cells
+narrate as silence; use Enter to drop into INPUT mode and start
+typing.
 
 ---
 
@@ -165,7 +170,7 @@ discarded and the cell is not modified.
 |--------------|------------------------------------------------------|
 | `:help`      | Narrate + print the keystroke cheat sheet.           |
 | `:settings`  | Open the settings editor (same as Ctrl+,).           |
-| `:save`      | Save the current session to disk.                    |
+| `:save`      | Save the current session to `--session` path (no-op without one). |
 | `:quit`      | Exit ASAT.                                           |
 
 Type the meta-command exactly as shown, then press Enter. If you
@@ -334,8 +339,8 @@ editor, this table is your starting map.
 | `success_chord`   | Command exited with code 0                    | Left                      |
 | `failure_chord`   | Command exited non-zero                       | Right                     |
 | `cancel`          | A command was cancelled / timed out           | Right                     |
-| `nav_blip`        | You moved the notebook cursor                 | Overhead                  |
-| `focus_shift`     | You changed mode or focused a new output line | Centre                    |
+| `nav_blip`        | You moved between cells (NOTEBOOK navigation), or the settings / menu cursor stepped | Overhead                  |
+| `focus_shift`     | You changed focus mode (NOTEBOOK ↔ INPUT / OUTPUT / SETTINGS) or stepped to a new output line | Centre                    |
 | `menu_open` / `menu_close` | The action menu opened / closed     | Overhead                  |
 | `clipboard`       | Something was copied                          | Slightly overhead         |
 | `tui_menu_alert`  | An interactive TUI menu was detected in output| Centre                    |

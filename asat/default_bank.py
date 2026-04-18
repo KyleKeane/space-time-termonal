@@ -362,12 +362,28 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             priority=90,
         ),
 
-        # Navigation cues kept below speech priority so they are quick
-        # and easy to scan past.
+        # Navigation cues: mode changes are overhead ("system") and
+        # name the new mode; cell changes play the `nav_blip` and read
+        # the focused cell's command so the user knows what they are
+        # standing on. Buffer-only transitions are suppressed upstream
+        # (see NotebookCursor._transition) so these bindings do not
+        # fire per keystroke.
         EventBinding(
-            id="focus_changed",
+            id="focus_changed_mode",
             event_type=EventType.FOCUS_CHANGED.value,
+            voice_id="system",
             sound_id="focus_shift",
+            say_template="{new_mode}",
+            predicate="transition == mode",
+            priority=110,
+        ),
+        EventBinding(
+            id="focus_changed_cell",
+            event_type=EventType.FOCUS_CHANGED.value,
+            voice_id="narrator",
+            sound_id="nav_blip",
+            say_template="{command}",
+            predicate="transition == cell",
             priority=100,
         ),
         EventBinding(

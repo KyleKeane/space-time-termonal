@@ -269,13 +269,14 @@ class InputRouter:
         return {"cell_id": cell.cell_id, "command": cell.command}
 
     def _handle_meta_command(self, command: str) -> None:
-        """Dispatch a parsed meta-command (without its leading `:`)."""
+        """Dispatch a parsed meta-command (without its leading `:`).
+
+        `save` and `quit` are handled by the Application via the
+        ACTION_INVOKED payload's `meta_command` key, so the router
+        itself intentionally does nothing for them here.
+        """
         if command == "settings":
             self._open_settings()
-        elif command == "save":
-            self._save_settings()
-        elif command == "quit":
-            self._close_settings()
         elif command == "help":
             self._publish_help()
 

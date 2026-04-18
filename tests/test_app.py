@@ -114,6 +114,37 @@ class ApplicationMetaCommandTests(unittest.TestCase):
         app.handle_key(kc.ENTER)
         self.assertEqual(app.session.cells[0].command, starting_command)
 
+    def test_save_meta_command_persists_session_when_path_set(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "live.json"
+            app = Application.build(session_path=path)
+            seen: list[dict] = []
+            app.bus.subscribe(
+                EventType.SESSION_SAVED,
+                lambda e: seen.append(dict(e.payload)),
+            )
+            _type(app, ":save")
+            app.handle_key(kc.ENTER)
+            self.assertTrue(path.exists())
+            self.assertEqual(len(seen), 1)
+            self.assertEqual(seen[0]["path"], str(path))
+            self.assertTrue(app.running, ":save must not exit the app")
+
+    def test_save_meta_command_is_safe_without_session_path(self) -> None:
+        app = Application.build()
+        seen: list[dict] = []
+        app.bus.subscribe(
+            EventType.SESSION_SAVED,
+            lambda e: seen.append(dict(e.payload)),
+        )
+        _type(app, ":save")
+        app.handle_key(kc.ENTER)
+        self.assertEqual(seen, [])
+        self.assertTrue(app.running)
+
 
 class ApplicationPersistenceTests(unittest.TestCase):
     def test_close_persists_session_when_path_given(self) -> None:
