@@ -72,6 +72,11 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.INTERACTIVE_MENU_DETECTED,
     EventType.INTERACTIVE_MENU_UPDATED,
     EventType.INTERACTIVE_MENU_CLEARED,
+    EventType.SETTINGS_OPENED,
+    EventType.SETTINGS_CLOSED,
+    EventType.SETTINGS_FOCUSED,
+    EventType.SETTINGS_VALUE_EDITED,
+    EventType.SETTINGS_SAVED,
 })
 
 
@@ -208,6 +213,20 @@ def _default_sounds() -> tuple[SoundRecipe, ...]:
             kind="chord",
             params={"frequencies": [523.25, 783.99], "duration": 0.12},
             volume=0.55,
+        ),
+        SoundRecipe(
+            id="settings_chime",
+            kind="chord",
+            params={"frequencies": [440.0, 554.37, 660.0], "duration": 0.16},
+            volume=0.6,
+            elevation=30.0,
+        ),
+        SoundRecipe(
+            id="settings_save",
+            kind="chord",
+            params={"frequencies": [523.25, 783.99, 1046.5], "duration": 0.2},
+            volume=0.7,
+            elevation=20.0,
         ),
     )
 
@@ -417,5 +436,48 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             event_type=EventType.INTERACTIVE_MENU_CLEARED.value,
             sound_id="menu_close",
             priority=120,
+        ),
+
+        # Settings editor — self-voicing so the audio framework is
+        # editable without any separate screen reader wiring.
+        EventBinding(
+            id="settings_opened",
+            event_type=EventType.SETTINGS_OPENED.value,
+            voice_id="system",
+            sound_id="settings_chime",
+            say_template="settings: {section}",
+            priority=220,
+        ),
+        EventBinding(
+            id="settings_closed",
+            event_type=EventType.SETTINGS_CLOSED.value,
+            voice_id="system",
+            sound_id="menu_close",
+            say_template="settings closed",
+            priority=200,
+        ),
+        EventBinding(
+            id="settings_focused",
+            event_type=EventType.SETTINGS_FOCUSED.value,
+            voice_id="narrator",
+            sound_id="nav_blip",
+            say_template="{section} {record_id} {field} {value}",
+            priority=150,
+        ),
+        EventBinding(
+            id="settings_value_edited",
+            event_type=EventType.SETTINGS_VALUE_EDITED.value,
+            voice_id="system",
+            sound_id="tick",
+            say_template="{field} set to {new_value}",
+            priority=200,
+        ),
+        EventBinding(
+            id="settings_saved",
+            event_type=EventType.SETTINGS_SAVED.value,
+            voice_id="system",
+            sound_id="settings_save",
+            say_template="settings saved",
+            priority=220,
         ),
     )

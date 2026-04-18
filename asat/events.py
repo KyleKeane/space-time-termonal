@@ -99,6 +99,12 @@ class EventType(str, Enum):
     AUDIO_SPOKEN = "audio.spoken"
     AUDIO_INTERRUPTED = "audio.interrupted"
 
+    SETTINGS_OPENED = "settings.opened"
+    SETTINGS_CLOSED = "settings.closed"
+    SETTINGS_FOCUSED = "settings.focused"
+    SETTINGS_VALUE_EDITED = "settings.value.edited"
+    SETTINGS_SAVED = "settings.saved"
+
 
 @dataclass(frozen=True)
 class Event:

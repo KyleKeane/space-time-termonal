@@ -72,6 +72,24 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "items": [],
     },
     EventType.INTERACTIVE_MENU_CLEARED: {"cell_id": "c1"},
+    EventType.SETTINGS_OPENED: {"section": "voices", "record_count": 3},
+    EventType.SETTINGS_CLOSED: {"dirty": False},
+    EventType.SETTINGS_FOCUSED: {
+        "level": "field",
+        "section": "voices",
+        "record_index": 0,
+        "record_id": "narrator",
+        "field": "rate",
+        "value": 1.0,
+    },
+    EventType.SETTINGS_VALUE_EDITED: {
+        "section": "voices",
+        "record_index": 0,
+        "field": "rate",
+        "old_value": 1.0,
+        "new_value": 1.1,
+    },
+    EventType.SETTINGS_SAVED: {"path": "/tmp/bank.json"},
 }
 
 
