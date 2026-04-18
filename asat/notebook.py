@@ -37,11 +37,15 @@ class FocusMode(str, Enum):
     OUTPUT: keystrokes walk through lines of the focused cell's
         output. Reserved for a future phase; included here so code
         can already branch on it safely.
+    SETTINGS: keystrokes drive the SoundBank editor (SettingsEditor
+        via SettingsController). Entered from NOTEBOOK by a dedicated
+        shortcut or the `:settings` meta-command.
     """
 
     NOTEBOOK = "notebook"
     INPUT = "input"
     OUTPUT = "output"
+    SETTINGS = "settings"
 
 
 @dataclass(frozen=True)
@@ -186,6 +190,49 @@ class NotebookCursor:
     def exit_output_mode(self) -> Optional[FocusState]:
         """Return to notebook mode from output mode."""
         if self._state.mode != FocusMode.OUTPUT or self._state.cell_id is None:
+            return None
+        self._transition(
+            FocusState(
+                mode=FocusMode.NOTEBOOK,
+                cell_id=self._state.cell_id,
+                input_buffer="",
+            )
+        )
+        return self._state
+
+    def enter_settings_mode(self) -> FocusState:
+        """Switch to SETTINGS mode. Legal from any notebook state."""
+        self._transition(
+            FocusState(
+                mode=FocusMode.SETTINGS,
+                cell_id=self._state.cell_id,
+                input_buffer="",
+            )
+        )
+        return self._state
+
+    def exit_settings_mode(self) -> Optional[FocusState]:
+        """Return to NOTEBOOK mode from SETTINGS mode."""
+        if self._state.mode != FocusMode.SETTINGS:
+            return None
+        self._transition(
+            FocusState(
+                mode=FocusMode.NOTEBOOK,
+                cell_id=self._state.cell_id,
+                input_buffer="",
+            )
+        )
+        return self._state
+
+    def abandon_input_mode(self) -> Optional[FocusState]:
+        """Exit INPUT mode without committing the buffer to the cell.
+
+        Meta-commands (e.g. `:settings`) consume the buffer themselves,
+        so the normal exit path (which writes the buffer back into the
+        focused cell) would leave stale text behind. abandon_input_mode
+        discards the buffer and returns to NOTEBOOK.
+        """
+        if self._state.mode != FocusMode.INPUT or self._state.cell_id is None:
             return None
         self._transition(
             FocusState(

@@ -1,8 +1,8 @@
 """SoundBank: the data model behind ASAT's parametric audio framework.
 
 A SoundBank tells the runtime what to do when each Event flies past on
-the bus. Rather than hard-coding a table in Python (which Phase 3's
-VoiceRouter does today) the mapping lives in data:
+the bus. Rather than hard-coding a routing table in Python, the
+mapping lives in data:
 
     Voice       - a parametric TTS configuration. Engine, rate, pitch,
                   volume, plus a spatial azimuth and elevation so the
@@ -39,6 +39,9 @@ from typing import Any, Iterable, Mapping, Optional
 SCHEMA_VERSION = 1
 
 SOUND_KINDS = ("tone", "chord", "sample", "silence")
+
+VOICE_OVERRIDE_FIELDS = ("rate", "pitch", "volume", "azimuth", "elevation")
+SOUND_OVERRIDE_FIELDS = ("volume", "azimuth", "elevation")
 
 
 class SoundBankError(ValueError):
@@ -183,6 +186,14 @@ class EventBinding:
     `priority` orders sibling bindings when multiple match the same
     event: higher priority runs first. `enabled=False` keeps a binding
     in the bank but silences it without losing its parameters.
+
+    `voice_overrides` and `sound_overrides` are optional per-binding
+    parameter tweaks. They let the same voice or sound record be
+    re-used across many events with small variations (a lower pitch
+    for errors, a higher azimuth for remote-machine output, a quieter
+    volume for chatty debug chunks) without having to clone the
+    underlying record. Unknown keys raise at load time so typos surface
+    instead of silently being ignored.
     """
 
     id: str
@@ -193,6 +204,8 @@ class EventBinding:
     predicate: str = ""
     priority: int = 100
     enabled: bool = True
+    voice_overrides: dict[str, float] = field(default_factory=dict)
+    sound_overrides: dict[str, float] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize this binding to a JSON-compatible dictionary."""
@@ -205,6 +218,8 @@ class EventBinding:
             "predicate": self.predicate,
             "priority": self.priority,
             "enabled": self.enabled,
+            "voice_overrides": dict(self.voice_overrides),
+            "sound_overrides": dict(self.sound_overrides),
         }
 
     @classmethod
@@ -223,6 +238,16 @@ class EventBinding:
             voice_id or sound_id or say_template,
             f"binding {data['id']!r} must set voice_id, sound_id, or say_template",
         )
+        voice_overrides = _parse_overrides(
+            data.get("voice_overrides", {}),
+            VOICE_OVERRIDE_FIELDS,
+            "binding.voice_overrides",
+        )
+        sound_overrides = _parse_overrides(
+            data.get("sound_overrides", {}),
+            SOUND_OVERRIDE_FIELDS,
+            "binding.sound_overrides",
+        )
         return cls(
             id=data["id"],
             event_type=data["event_type"],
@@ -232,6 +257,8 @@ class EventBinding:
             predicate=str(data.get("predicate", "")),
             priority=int(data.get("priority", 100)),
             enabled=bool(data.get("enabled", True)),
+            voice_overrides=voice_overrides,
+            sound_overrides=sound_overrides,
         )
 
 
@@ -409,6 +436,25 @@ def _optional_str(value: Any, label: str) -> Optional[str]:
     if isinstance(value, str):
         return value or None
     raise SoundBankError(f"{label} must be a string or null, got {type(value).__name__}")
+
+
+def _parse_overrides(
+    value: Any,
+    allowed: tuple[str, ...],
+    label: str,
+) -> dict[str, float]:
+    """Parse an override mapping, restricting keys to the allowed set."""
+    if value is None:
+        return {}
+    _require(isinstance(value, Mapping), f"{label} must be a mapping")
+    parsed: dict[str, float] = {}
+    for key, raw in value.items():
+        if key not in allowed:
+            raise SoundBankError(
+                f"{label} has unknown field {key!r}; allowed: {allowed}"
+            )
+        parsed[key] = _as_float(raw, f"{label}.{key}")
+    return parsed
 
 
 def _unique_ids(items: Iterable[Any], kind: str) -> None:

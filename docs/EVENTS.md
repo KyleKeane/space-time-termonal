@@ -129,19 +129,63 @@ Producer: `asat.tui_bridge.TuiBridge` (`source="tui_bridge"`).
 | `INTERACTIVE_MENU_DETECTED`  | `cell_id`, `detection`, `selected_index`, `selected_text`, `items`           |
 | `INTERACTIVE_MENU_UPDATED`   | same as `DETECTED`                                                           |
 | `INTERACTIVE_MENU_CLEARED`   | `cell_id`                                                                    |
+| `ANSI_CURSOR_MOVED`          | `cell_id`, `reason`, `old_row`, `old_col`, `new_row`, `new_col`, `params`    |
+| `ANSI_SGR_CHANGED`           | `cell_id`, `params`, `attrs_added`, `attrs_removed`, `current_attrs`         |
+| `ANSI_DISPLAY_CLEARED`       | `cell_id`, `mode`                                                            |
+| `ANSI_LINE_ERASED`           | `cell_id`, `mode`                                                            |
+| `ANSI_OSC_RECEIVED`          | `cell_id`, `body`, `category`                                                |
+| `ANSI_BELL`                  | `cell_id`                                                                    |
 
 `detection` is one of `"reverse_video"` or `"prefix_marker"`. `items`
 is a tuple of dicts with `row`, `text`, `selected`.
 
+`ANSI_CURSOR_MOVED.reason` is one of `"up"`, `"down"`, `"forward"`,
+`"back"`, `"next_line"`, `"previous_line"`, `"column"`, `"absolute"` —
+the semantic of the CSI final byte, so bindings can filter on intent
+without re-parsing the raw sequence. Row and column numbers are
+zero-based in the post-apply screen frame. `params` carries the
+decimal CSI parameters verbatim.
+
+`ANSI_SGR_CHANGED.attrs_added` / `attrs_removed` are sorted lists of
+the attribute names that changed on this SGR (`"bold"`, `"italic"`,
+`"underline"`, `"reverse"`, `"dim"`, `"strikethrough"`, etc.). The
+`current_attrs` field is the full post-apply set for callers that want
+absolute state.
+
+`ANSI_DISPLAY_CLEARED.mode` is the `J` parameter (0 = cursor-to-end,
+1 = start-to-cursor, 2 = entire screen, 3 = plus scrollback).
+`ANSI_LINE_ERASED.mode` is the `K` parameter (0, 1, 2).
+
+`ANSI_OSC_RECEIVED.category` is one of `"title"` (OSC 0/1/2),
+`"hyperlink"` (OSC 8), `"color"` (OSC 4/10/11), or `"other"`. The raw
+`body` is included so advanced bindings can match on specific
+subcommands.
+
+`ANSI_BELL` carries no extra data: it fires once per BEL byte (0x07)
+unless the byte is the OSC terminator.
+
 ## Audio engine
 
-Producer: `asat.audio_engine.VoiceRouter` today; to be replaced by the
-data-driven `AudioEngine` described in [AUDIO.md](AUDIO.md).
+Producer: `asat.sound_engine.SoundEngine` (`source="sound_engine"`).
+See [AUDIO.md](AUDIO.md) for the full reference.
 
-| EventType           | Payload keys                           |
-|---------------------|----------------------------------------|
-| `AUDIO_SPOKEN`      | `event_type`, `text`, `voice_id`       |
-| `AUDIO_INTERRUPTED` | `event_type`                           |
+| EventType           | Payload keys                                                 |
+|---------------------|--------------------------------------------------------------|
+| `AUDIO_SPOKEN`      | `event_type`, `binding_id`, `text`, `voice_id`, `sound_id`   |
+| `AUDIO_INTERRUPTED` | `event_type`                                                 |
+
+## Settings editor
+
+Producer: `asat.settings_editor.SettingsEditor`
+(`source="settings_editor"`).
+
+| EventType                | Payload keys                                                        |
+|--------------------------|---------------------------------------------------------------------|
+| `SETTINGS_OPENED`        | `section`, `record_count`                                           |
+| `SETTINGS_CLOSED`        | `dirty`                                                             |
+| `SETTINGS_FOCUSED`       | `level`, `section`, (optional) `record_index`, `record_id`, `field`, `value` |
+| `SETTINGS_VALUE_EDITED`  | `section`, `record_index`, `field`, `old_value`, `new_value`        |
+| `SETTINGS_SAVED`         | `path`                                                              |
 
 ---
 

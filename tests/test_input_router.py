@@ -25,6 +25,8 @@ from asat.notebook import FocusMode, NotebookCursor
 from asat.output_buffer import OutputBuffer, STDOUT
 from asat.output_cursor import OutputCursor
 from asat.session import Session
+from asat.settings_controller import SettingsController
+from asat.sound_bank import EventBinding, SoundBank, SoundRecipe, Voice
 
 
 def _build(commands: list[str]) -> tuple[EventBus, Session, NotebookCursor, InputRouter, list[Cell]]:
@@ -246,6 +248,189 @@ class OutputModeDispatchTests(unittest.TestCase):
         result = router.handle_key(Key.combo("o", Modifier.CTRL))
         self.assertEqual(result, "view_output")
         self.assertEqual(cursor.focus.mode, FocusMode.OUTPUT)
+
+
+def _settings_bank() -> SoundBank:
+    """A tiny bank that the router's settings controller can walk."""
+    return SoundBank(
+        voices=(Voice(id="v1", rate=1.0),),
+        sounds=(SoundRecipe(id="s1", kind="tone", params={"frequency": 440.0}),),
+        bindings=(
+            EventBinding(
+                id="b1",
+                event_type="cell.created",
+                voice_id="v1",
+                say_template="hello",
+            ),
+        ),
+    )
+
+
+def _build_with_settings(
+    commands: list[str],
+) -> tuple[EventBus, NotebookCursor, InputRouter, SettingsController]:
+    """Build a router wired to a settings controller, no save path."""
+    bus = EventBus()
+    session = Session.new()
+    for command in commands:
+        session.add_cell(Cell.new(command))
+    cursor = NotebookCursor(session, bus)
+    controller = SettingsController(bus, _settings_bank())
+    router = InputRouter(cursor, bus, settings_controller=controller)
+    return bus, cursor, router, controller
+
+
+class SettingsModeDispatchTests(unittest.TestCase):
+
+    def test_ctrl_comma_opens_settings_from_notebook(self) -> None:
+        _, cursor, router, controller = _build_with_settings(["echo"])
+        result = router.handle_key(Key.combo(",", Modifier.CTRL))
+        self.assertEqual(result, "open_settings")
+        self.assertEqual(cursor.focus.mode, FocusMode.SETTINGS)
+        self.assertTrue(controller.is_open)
+
+    def test_ctrl_comma_without_controller_is_noop(self) -> None:
+        bus = EventBus()
+        session = Session.new()
+        session.add_cell(Cell.new("echo"))
+        cursor = NotebookCursor(session, bus)
+        router = InputRouter(cursor, bus)
+        self.assertEqual(router.handle_key(Key.combo(",", Modifier.CTRL)), "open_settings")
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+
+    def test_arrow_keys_navigate_records(self) -> None:
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(DOWN)  # next section: sounds
+        self.assertEqual(controller.editor.state.section.value, "sounds")
+        router.handle_key(UP)
+        self.assertEqual(controller.editor.state.section.value, "voices")
+
+    def test_enter_descends_then_e_begins_edit(self) -> None:
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(ENTER)  # SECTION -> RECORD
+        router.handle_key(ENTER)  # RECORD -> FIELD
+        router.handle_key(Key.printable("e"))
+        self.assertTrue(controller.editing)
+
+    def test_typed_value_lands_in_edit_buffer(self) -> None:
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(ENTER)
+        router.handle_key(ENTER)
+        router.handle_key(DOWN)  # move to "engine" field
+        router.handle_key(Key.printable("e"))
+        for ch in "sapi":
+            router.handle_key(Key.printable(ch))
+        self.assertEqual(controller.edit_buffer, "sapi")
+        router.handle_key(ENTER)  # commit
+        self.assertFalse(controller.editing)
+        self.assertEqual(controller.bank.voices[0].engine, "sapi")
+
+    def test_escape_in_edit_cancels_then_ascends(self) -> None:
+        _, cursor, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(ENTER)
+        router.handle_key(ENTER)  # FIELD level
+        router.handle_key(Key.printable("e"))
+        router.handle_key(Key.printable("x"))
+        router.handle_key(ESCAPE)  # cancels edit, still at FIELD
+        self.assertFalse(controller.editing)
+        self.assertEqual(cursor.focus.mode, FocusMode.SETTINGS)
+        router.handle_key(ESCAPE)  # ascend to RECORD
+        router.handle_key(ESCAPE)  # ascend to SECTION
+        router.handle_key(ESCAPE)  # at top: closes
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertFalse(controller.is_open)
+
+    def test_ctrl_q_closes_settings(self) -> None:
+        _, cursor, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.combo("q", Modifier.CTRL))
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertFalse(controller.is_open)
+
+    def test_backspace_in_edit_trims_buffer(self) -> None:
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(ENTER)
+        router.handle_key(ENTER)
+        router.handle_key(DOWN)
+        router.handle_key(Key.printable("e"))
+        for ch in "sapix":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(BACKSPACE)
+        self.assertEqual(controller.edit_buffer, "sapi")
+
+    def test_invalid_commit_surfaces_in_action_payload(self) -> None:
+        bus, _, router, _ = _build_with_settings(["echo"])
+        recorder = _Recorder(bus)
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(ENTER)
+        router.handle_key(ENTER)
+        router.handle_key(DOWN)  # engine
+        router.handle_key(DOWN)  # rate
+        router.handle_key(Key.printable("e"))
+        for ch in "fast":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)  # commit (will fail: "fast" isn't a float)
+        commit_events = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "settings_edit_commit"
+        ]
+        self.assertEqual(len(commit_events), 1)
+        self.assertFalse(commit_events[0].payload["ok"])
+        self.assertIn("error", commit_events[0].payload)
+
+
+class MetaCommandTests(unittest.TestCase):
+
+    def test_colon_settings_opens_editor_from_input_mode(self) -> None:
+        _, cursor, router, controller = _build_with_settings([""])
+        router.handle_key(ENTER)  # NOTEBOOK -> INPUT (empty buffer)
+        for ch in ":settings":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)  # submit
+        self.assertEqual(cursor.focus.mode, FocusMode.SETTINGS)
+        self.assertTrue(controller.is_open)
+
+    def test_colon_settings_does_not_overwrite_cell_command(self) -> None:
+        _, _, router, _ = _build_with_settings([""])
+        # The cell itself keeps whatever it held before; meta-command
+        # bypasses commit. Reaching this assertion with no raise proves it.
+        router.handle_key(ENTER)
+        for ch in ":settings":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+
+    def test_submit_payload_reports_meta_command(self) -> None:
+        bus, _, router, _ = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":settings":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        submits = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "submit"
+        ]
+        self.assertEqual(len(submits), 1)
+        self.assertEqual(submits[0].payload["meta_command"], "settings")
+        self.assertNotIn("command", submits[0].payload)
+
+    def test_non_meta_colon_command_falls_through_as_regular_submit(self) -> None:
+        bus, _, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":unknown":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        submits = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "submit"
+        ]
+        self.assertEqual(submits[0].payload.get("command"), ":unknown")
 
 
 class CustomBindingTests(unittest.TestCase):

@@ -27,15 +27,19 @@ it; the event bus is the sole backchannel.
 
 ```
            +-----------------------------+
-           |  Presentation (future)      |
-           |  :settings editor, TUI skin |
+           |  Presentation               |
+           |  settings_controller.py     |
+           |  settings_editor.py         |
            +---------------+-------------+
                            |
            +---------------v-------------+
-           |  Audio engine               |
-           |  audio.py  audio_engine.py  |
-           |  audio_sink.py  tts.py      |
-           |  hrtf.py                    |
+           |  Audio framework            |
+           |  sound_engine.py            |
+           |  sound_generators.py        |
+           |  sound_bank.py              |
+           |  default_bank.py            |
+           |  audio.py  audio_sink.py    |
+           |  tts.py  hrtf.py            |
            +---------------+-------------+
                            |
            +---------------v-------------+
@@ -104,12 +108,13 @@ typical payload shape.
 
 ## Focus model
 
-The user is always in exactly one of three focus modes, owned by
+The user is always in exactly one of four focus modes, owned by
 `NotebookCursor` (`asat/notebook.py`):
 
 * `NOTEBOOK` – walking between cells.
 * `INPUT` – typing a command into the active cell.
 * `OUTPUT` – stepping line-by-line through a cell's captured output.
+* `SETTINGS` – driving the `SettingsEditor` via `SettingsController`.
 
 Mode transitions publish `FOCUS_CHANGED`. The `InputRouter`
 (`asat/input_router.py`) looks up a keystroke under the current mode
@@ -133,13 +138,16 @@ binding table (to be added alongside the audio framework).
    `interactive.detect(...)`, emitting `SCREEN_UPDATED` and the
    `INTERACTIVE_MENU_*` lifecycle events.
 
-## Audio pipeline (Phase 3, to be rewired by the upcoming SoundBank)
+## Audio pipeline
 
-Today's `audio_engine.py` hard-codes a small routing table from event
-type to voice. The audio customization framework described in
-[AUDIO.md](AUDIO.md) (upcoming) replaces that table with a data-driven
-`SoundBank` so every event in the bus can be re-skinned via a JSON
-file edited through the in-terminal `:settings` mode.
+`SoundEngine` (`asat/sound_engine.py`) subscribes to every event the
+active `SoundBank` mentions, renders templates + predicates, pipes
+speech through the `TTSEngine`, runs recipes through
+`SoundGeneratorRegistry`, spatialises both via the `Spatializer`, and
+hands the mix to the `AudioSink`. `default_sound_bank()` seeds the
+baseline, and `SettingsEditor` plus `SettingsController` let users
+reshape the bank live from the keyboard without restarting. See
+[AUDIO.md](AUDIO.md) for the full reference.
 
 ## Testing
 
@@ -160,11 +168,11 @@ layer and left the one below it unchanged:
 |-------|------------------------------------------------|
 | 1     | Data models + event bus                        |
 | 2     | Execution kernel + subprocess runner           |
-| 3     | Spatial audio engine (TTS, HRTF, sinks)        |
+| 3     | Audio primitives (TTS, HRTF, sinks)            |
 | 4     | Input router + notebook cursor                 |
 | 5     | Output buffering + contextual action menu      |
 | 6     | ANSI parsing + virtual screen + menu detection |
+| A     | Data-driven audio framework and settings editor |
 
-Future phases will land the audio customization framework (SoundBank,
-parametric sounds, generic AudioEngine, integrated settings editor)
-plus Windows-native TTS and sink adapters.
+Future phases will add Windows-native TTS and sink adapters plus the
+live-speaker playback stack.

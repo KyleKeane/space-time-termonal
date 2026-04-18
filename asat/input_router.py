@@ -33,6 +33,8 @@ from asat.events import EventType
 from asat.keys import Key, Modifier
 from asat.notebook import FocusMode, NotebookCursor
 from asat.output_cursor import OutputCursor
+from asat.settings_controller import SettingsController
+from asat.settings_editor import SettingsEditorError
 
 
 BindingMap = dict[FocusMode, dict[Key, str]]
@@ -63,18 +65,29 @@ def default_bindings() -> BindingMap:
         Up/Down move between cells, Home/End jump to ends,
         Enter enters input mode on the focused cell,
         Ctrl+N appends a fresh cell and enters input mode,
-        Ctrl+O opens the captured output of the focused cell.
+        Ctrl+O opens the captured output of the focused cell,
+        Ctrl+, (comma) opens the settings editor.
 
     INPUT mode:
         Backspace deletes the last character,
         Enter submits the current command,
         Escape commits and returns to notebook mode.
+        Lines beginning with `:` are treated as meta-commands
+        (see META_COMMANDS) instead of being handed to the kernel.
 
     OUTPUT mode:
         Up/Down walk one line at a time,
         PageUp/PageDown jump a page,
         Home/End jump to the first or last captured line,
         Escape returns to notebook mode.
+
+    SETTINGS mode:
+        Up/Down move between records / fields,
+        Right / Enter descend one level,
+        Left ascends one level,
+        `e` begins editing the focused field,
+        Ctrl+S saves the bank, Ctrl+Q closes the editor,
+        Escape ascends or (at the top level) closes.
     """
     return {
         FocusMode.NOTEBOOK: {
@@ -85,6 +98,7 @@ def default_bindings() -> BindingMap:
             kc.ENTER: "enter_input",
             Key.combo("n", Modifier.CTRL): "new_cell",
             Key.combo("o", Modifier.CTRL): "view_output",
+            Key.combo(",", Modifier.CTRL): "open_settings",
         },
         FocusMode.INPUT: {
             kc.BACKSPACE: "backspace",
@@ -100,7 +114,25 @@ def default_bindings() -> BindingMap:
             kc.END: "output_to_end",
             kc.ESCAPE: "exit_output",
         },
+        FocusMode.SETTINGS: {
+            kc.UP: "settings_prev",
+            kc.DOWN: "settings_next",
+            kc.LEFT: "settings_ascend",
+            kc.RIGHT: "settings_descend",
+            kc.ENTER: "settings_descend",
+            kc.ESCAPE: "settings_ascend",
+            Key.printable("e"): "settings_begin_edit",
+            Key.combo("s", Modifier.CTRL): "settings_save",
+            Key.combo("q", Modifier.CTRL): "settings_close",
+        },
     }
+
+
+# Meta-commands recognised in INPUT mode when the buffer starts with `:`.
+# A meta-command short-circuits the normal submit path: the cell is not
+# handed to the kernel and the input buffer is discarded (not written
+# back into the cell).
+META_COMMANDS: tuple[str, ...] = ("settings", "save", "quit")
 
 
 class InputRouter:
@@ -114,12 +146,21 @@ class InputRouter:
         bus: EventBus,
         bindings: Optional[BindingMap] = None,
         output_cursor: Optional[OutputCursor] = None,
+        settings_controller: Optional[SettingsController] = None,
     ) -> None:
-        """Attach the router to a cursor, event bus, and optional output cursor."""
+        """Attach the router to a cursor, event bus, and optional cursors.
+
+        When a `settings_controller` is supplied, the router gains the
+        `open_settings` action (bound to Ctrl+, by default), the
+        SETTINGS focus-mode key map, and recognition of `:settings`
+        in INPUT mode. When it is absent, those actions silently no-op
+        so a test or embedding that ignores audio still works.
+        """
         self._cursor = cursor
         self._bus = bus
         self._bindings = bindings if bindings is not None else default_bindings()
         self._output_cursor = output_cursor
+        self._settings_controller = settings_controller
 
     @property
     def bindings(self) -> BindingMap:
@@ -136,6 +177,8 @@ class InputRouter:
         """
         self._publish_key(key)
         mode = self._cursor.focus.mode
+        if mode == FocusMode.SETTINGS and self._settings_active_editing():
+            return self._dispatch_settings_edit_key(key)
         mode_map = self._bindings.get(mode, {})
         action = mode_map.get(key)
         if action is not None:
@@ -145,6 +188,37 @@ class InputRouter:
             self._cursor.insert_character(key.char)
             self._publish_action("insert_character", key, {"char": key.char})
             return "insert_character"
+        return None
+
+    def _settings_active_editing(self) -> bool:
+        """Return True when the settings controller is composing a value."""
+        return (
+            self._settings_controller is not None
+            and self._settings_controller.is_open
+            and self._settings_controller.editing
+        )
+
+    def _dispatch_settings_edit_key(self, key: Key) -> Optional[str]:
+        """Route keys while the user is typing a replacement field value.
+
+        This overrides the SETTINGS mode binding map so printable
+        characters flow into the edit buffer rather than firing actions
+        like `settings_begin_edit`.
+        """
+        assert self._settings_controller is not None
+        if key == kc.ENTER:
+            self._invoke("settings_edit_commit", key)
+            return "settings_edit_commit"
+        if key == kc.ESCAPE:
+            self._invoke("settings_edit_cancel", key)
+            return "settings_edit_cancel"
+        if key == kc.BACKSPACE:
+            self._invoke("settings_edit_backspace", key)
+            return "settings_edit_backspace"
+        if key.is_printable() and key.char is not None:
+            self._settings_controller.extend_edit(key.char)
+            self._publish_action("settings_edit_extend", key, {"char": key.char})
+            return "settings_edit_extend"
         return None
 
     def _invoke(self, action: str, key: Key) -> None:
@@ -160,11 +234,102 @@ class InputRouter:
         self._publish_action(action, key, extra)
 
     def _submit(self) -> Optional[dict[str, object]]:
-        """Commit the current input buffer and return submission extras."""
+        """Commit the current input buffer and return submission extras.
+
+        If the buffer begins with `:`, the router treats it as a meta-
+        command (`:settings`, `:save`, `:quit`), consumes it without
+        writing it back into the cell, and reports the command name via
+        the ACTION_INVOKED payload so observers can trace what
+        happened.
+        """
+        buffer = self._cursor.focus.input_buffer
+        meta = _parse_meta_command(buffer)
+        if meta is not None:
+            self._cursor.abandon_input_mode()
+            self._handle_meta_command(meta)
+            return {"meta_command": meta}
         cell = self._cursor.submit()
         if cell is None:
             return None
         return {"cell_id": cell.cell_id, "command": cell.command}
+
+    def _handle_meta_command(self, command: str) -> None:
+        """Dispatch a parsed meta-command (without its leading `:`)."""
+        if command == "settings":
+            self._open_settings()
+        elif command == "save":
+            self._save_settings()
+        elif command == "quit":
+            self._close_settings()
+
+    def _open_settings(self) -> None:
+        """Enter SETTINGS mode and open a controller session if available."""
+        if self._settings_controller is None:
+            return
+        self._settings_controller.open()
+        self._cursor.enter_settings_mode()
+
+    def _close_settings(self) -> None:
+        """Close the controller and return to NOTEBOOK mode."""
+        if self._settings_controller is None:
+            return
+        self._settings_controller.close()
+        self._cursor.exit_settings_mode()
+
+    def _save_settings(self) -> None:
+        """Persist the in-progress bank; no-op without a save path."""
+        if self._settings_controller is None:
+            return
+        if self._settings_controller.save_path is None:
+            return
+        self._settings_controller.save()
+
+    def _settings_prev(self) -> None:
+        """Move the settings cursor one step backward."""
+        if self._settings_controller is not None:
+            self._settings_controller.prev()
+
+    def _settings_next(self) -> None:
+        """Move the settings cursor one step forward."""
+        if self._settings_controller is not None:
+            self._settings_controller.next()
+
+    def _settings_descend(self) -> None:
+        """Drop one level deeper into the settings hierarchy."""
+        if self._settings_controller is not None:
+            self._settings_controller.descend()
+
+    def _settings_ascend(self) -> None:
+        """Rise one level; at the top, close the editor."""
+        if self._settings_controller is None:
+            return
+        if not self._settings_controller.ascend():
+            self._close_settings()
+
+    def _settings_begin_edit(self) -> None:
+        """Start composing a replacement value for the focused field."""
+        if self._settings_controller is not None:
+            self._settings_controller.begin_edit()
+
+    def _settings_edit_commit(self) -> Optional[dict[str, object]]:
+        """Apply the in-progress edit buffer; surface errors in the payload."""
+        if self._settings_controller is None:
+            return None
+        try:
+            self._settings_controller.commit_edit()
+            return {"ok": True}
+        except SettingsEditorError as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def _settings_edit_cancel(self) -> None:
+        """Discard the in-progress edit buffer."""
+        if self._settings_controller is not None:
+            self._settings_controller.cancel_edit()
+
+    def _settings_edit_backspace(self) -> None:
+        """Remove the last character from the edit buffer."""
+        if self._settings_controller is not None:
+            self._settings_controller.backspace_edit()
 
     def _action_handler(self, action: str) -> ActionHandler:
         """Map an action name to a zero-argument callable.
@@ -204,6 +369,17 @@ class InputRouter:
             "output_to_end": lambda: self._with_output_cursor(
                 lambda oc: oc.move_to_end()
             ),
+            "open_settings": _void(self._open_settings),
+            "settings_prev": _void(self._settings_prev),
+            "settings_next": _void(self._settings_next),
+            "settings_descend": _void(self._settings_descend),
+            "settings_ascend": _void(self._settings_ascend),
+            "settings_begin_edit": _void(self._settings_begin_edit),
+            "settings_save": _void(self._save_settings),
+            "settings_close": _void(self._close_settings),
+            "settings_edit_commit": self._settings_edit_commit,
+            "settings_edit_cancel": _void(self._settings_edit_cancel),
+            "settings_edit_backspace": _void(self._settings_edit_backspace),
         }
         if action not in handlers:
             raise KeyError(f"Unknown action: {action}")
@@ -251,3 +427,14 @@ class InputRouter:
             payload,
             source=self.SOURCE,
         )
+
+
+def _parse_meta_command(buffer: str) -> Optional[str]:
+    """Return a meta-command name when buffer is `:<name>` (trimmed), else None."""
+    stripped = buffer.strip()
+    if not stripped.startswith(":"):
+        return None
+    name = stripped[1:].strip()
+    if name in META_COMMANDS:
+        return name
+    return None

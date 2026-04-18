@@ -118,6 +118,99 @@ class SplitChunkTests(unittest.TestCase):
         self.assertEqual(bridge.current_menu.selected_text, "two")
 
 
+class AnsiEventTests(unittest.TestCase):
+
+    def test_cursor_move_publishes_ansi_cursor_moved(self) -> None:
+        bus = EventBus()
+        events = _Recorder(bus)
+        bridge = TuiBridge(bus, cell_id="c1", rows=6, cols=20)
+        bridge.feed("\x1b[3;5H")
+        moves = events.of(EventType.ANSI_CURSOR_MOVED)
+        self.assertEqual(len(moves), 1)
+        payload = moves[0].payload
+        self.assertEqual(payload["cell_id"], "c1")
+        self.assertEqual(payload["reason"], "absolute")
+        self.assertEqual(payload["new_row"], 2)
+        self.assertEqual(payload["new_col"], 4)
+        self.assertEqual(payload["params"], [3, 5])
+
+    def test_cursor_up_reports_reason_up(self) -> None:
+        bus = EventBus()
+        events = _Recorder(bus)
+        bridge = TuiBridge(bus, cell_id="c1", rows=6, cols=20)
+        bridge.feed("\x1b[5;5H\x1b[2A")
+        moves = events.of(EventType.ANSI_CURSOR_MOVED)
+        self.assertEqual(moves[-1].payload["reason"], "up")
+        self.assertEqual(moves[-1].payload["old_row"], 4)
+        self.assertEqual(moves[-1].payload["new_row"], 2)
+
+    def test_sgr_publishes_attrs_added_and_removed(self) -> None:
+        bus = EventBus()
+        events = _Recorder(bus)
+        bridge = TuiBridge(bus, cell_id="c1", rows=4, cols=10)
+        bridge.feed("\x1b[1;7m")
+        sgr = events.of(EventType.ANSI_SGR_CHANGED)
+        self.assertEqual(len(sgr), 1)
+        payload = sgr[0].payload
+        self.assertIn("bold", payload["attrs_added"])
+        self.assertIn("reverse", payload["attrs_added"])
+        self.assertEqual(payload["attrs_removed"], [])
+
+        events.events.clear()
+        bridge.feed("\x1b[0m")
+        sgr = events.of(EventType.ANSI_SGR_CHANGED)
+        self.assertEqual(len(sgr), 1)
+        removed = sgr[0].payload["attrs_removed"]
+        self.assertIn("bold", removed)
+        self.assertIn("reverse", removed)
+
+    def test_display_cleared_publishes_mode(self) -> None:
+        bus = EventBus()
+        events = _Recorder(bus)
+        bridge = TuiBridge(bus, cell_id="c1", rows=4, cols=10)
+        bridge.feed("\x1b[2J")
+        cleared = events.of(EventType.ANSI_DISPLAY_CLEARED)
+        self.assertEqual(len(cleared), 1)
+        self.assertEqual(cleared[0].payload["mode"], 2)
+
+    def test_line_erased_publishes_mode(self) -> None:
+        bus = EventBus()
+        events = _Recorder(bus)
+        bridge = TuiBridge(bus, cell_id="c1", rows=4, cols=10)
+        bridge.feed("abc\x1b[K")
+        erased = events.of(EventType.ANSI_LINE_ERASED)
+        self.assertEqual(len(erased), 1)
+        self.assertEqual(erased[0].payload["mode"], 0)
+
+    def test_bell_publishes_ansi_bell(self) -> None:
+        bus = EventBus()
+        events = _Recorder(bus)
+        bridge = TuiBridge(bus, cell_id="c1")
+        bridge.feed("\x07")
+        bells = events.of(EventType.ANSI_BELL)
+        self.assertEqual(len(bells), 1)
+        self.assertEqual(bells[0].payload, {"cell_id": "c1"})
+
+    def test_osc_title_classified_as_title(self) -> None:
+        bus = EventBus()
+        events = _Recorder(bus)
+        bridge = TuiBridge(bus, cell_id="c1")
+        bridge.feed("\x1b]0;My Title\x07")
+        oscs = events.of(EventType.ANSI_OSC_RECEIVED)
+        self.assertEqual(len(oscs), 1)
+        self.assertEqual(oscs[0].payload["category"], "title")
+        self.assertEqual(oscs[0].payload["body"], "0;My Title")
+
+    def test_osc_hyperlink_classified_as_hyperlink(self) -> None:
+        bus = EventBus()
+        events = _Recorder(bus)
+        bridge = TuiBridge(bus, cell_id="c1")
+        bridge.feed("\x1b]8;;https://example.com\x07")
+        oscs = events.of(EventType.ANSI_OSC_RECEIVED)
+        self.assertEqual(len(oscs), 1)
+        self.assertEqual(oscs[0].payload["category"], "hyperlink")
+
+
 class ResetTests(unittest.TestCase):
 
     def test_reset_clears_current_menu_and_emits_cleared(self) -> None:
