@@ -13,6 +13,23 @@ need to trigger is a key.
 
 ---
 
+## Launching a session
+
+```
+python -m asat                       # interactive session, MemorySink
+python -m asat --wav-dir /tmp/asat   # also write every buffer to WAV
+python -m asat --bank mybank.json    # start from a saved SoundBank
+python -m asat --session s.json      # resume an existing session
+```
+
+Every flag is optional. Without `--wav-dir`, audio is rendered into
+an in-memory sink; that is useful for tests and for debugging the
+event stream, but a blind user who wants real sound today needs
+`--wav-dir DIR` and a WAV-capable player. A live-speaker sink is
+tracked as [FEATURE_REQUESTS F6](FEATURE_REQUESTS.md#f6--live-speaker-audio-sink).
+
+---
+
 ## The five-minute tour
 
 1. **Launch** ASAT. You'll hear a short rising chime (the session

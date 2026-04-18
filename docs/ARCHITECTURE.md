@@ -30,6 +30,12 @@ it; the event bus is the sole backchannel.
 
 ```
            +-----------------------------+
+           |  Entry point                |
+           |  __main__.py  app.py        |
+           |  keyboard.py                |
+           +---------------+-------------+
+                           |
+           +---------------v-------------+
            |  Presentation               |
            |  settings_controller.py     |
            |  settings_editor.py         |
@@ -180,6 +186,20 @@ layer and left the one below it unchanged:
 | A     | Data-driven audio framework (generators, engine, default bank, editor) |
 | T     | Follow-up polish: TUI wiring, ANSI-level events + per-binding overrides, docs |
 | H     | HRTF sparse-impulse fast path (synthetic profiles bypass full convolution) |
+| E     | End-to-end entry point: Application wiring, keyboard adapter, `python -m asat` |
+
+## Entry point
+
+`asat/app.py` defines an `Application` dataclass that assembles every
+collaborator into one object; `asat/__main__.py` (invoked via
+`python -m asat`) builds one with platform-default I/O and drives a
+synchronous read-dispatch loop. The loop has exactly three steps per
+iteration: read one `Key` from the keyboard adapter, call
+`Application.handle_key(key)`, then drain any cells the user just
+submitted and hand each to `Application.execute(cell_id)`.
+`asat/keyboard.py` hosts the `PosixKeyboard` and `WindowsKeyboard`
+adapters (plus a `ScriptedKeyboard` for tests); the rest of ASAT
+never touches terminal input APIs directly.
 
 Open feature requests for the next generation live in
 [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md); the short version is

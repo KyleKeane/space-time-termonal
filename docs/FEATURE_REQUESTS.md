@@ -99,11 +99,13 @@ deterministic fallback for headless tests.
 
 **Gap.** `AudioSink` ships with `MemorySink` (accumulates buffers for
 tests) and `WavFileSink` (writes to disk). Neither plays audio on
-actual speakers, so the terminal is silent end-to-end until a real
-sink exists.
+actual speakers, so the `python -m asat` entry point is silent
+end-to-end until a real sink exists — `--wav-dir DIR` is the current
+workaround, but it only lets the user hear each buffer after the
+fact.
 
-**Where it surfaces.** [ARCHITECTURE.md](ARCHITECTURE.md) phase
-history calls this out as future work.
+**Where it surfaces.** Anyone launching ASAT today without
+`--wav-dir` gets a self-voicing terminal whose voice goes to `/dev/null`.
 
 **Sketch.** Wrap `winsound` (stdlib) or `sounddevice` for low-latency
 playback; implement the `AudioSink` protocol. Buffer management and
@@ -147,15 +149,25 @@ Document the SOFA-to-stereo-WAV conversion recipe in AUDIO.md.
 
 ## F9 — Root README.md
 
-**Gap.** The repo root has no README.md — anyone landing on GitHub
-sees a directory listing with no entry point.
+**Status.** Done — see the repo-root [README.md](../README.md).
 
-**Where it surfaces.** First-contact experience for contributors and
-users alike.
+---
 
-**Sketch.** Short landing page (~30 lines) with: one-paragraph
-description, install / run snippet, pointer into `docs/`.
-Status: addressed by the same PR that ships this file.
+## F10 — Non-blocking execution + cancel keystroke
+
+**Gap.** `Application.execute(cell_id)` runs the kernel synchronously,
+so while a command is running the entry-point loop cannot read keys.
+That makes F1 (Ctrl+C cancel) impossible to implement without moving
+execution off the main thread.
+
+**Where it surfaces.** Every long-running command — `pytest`, `npm
+install`, `git clone` — blocks the whole terminal until it finishes.
+
+**Sketch.** Run the kernel on a worker thread, keep the main loop
+draining keys. Use the existing `EventBus` to communicate: the
+worker publishes output/completion events the main loop subscribes
+to. Add `ExecutionKernel.cancel(cell_id)` that terminates the
+subprocess and publishes `COMMAND_CANCELLED`; bind Ctrl+C to it.
 
 ---
 
