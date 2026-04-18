@@ -132,7 +132,22 @@ def default_bindings() -> BindingMap:
 # A meta-command short-circuits the normal submit path: the cell is not
 # handed to the kernel and the input buffer is discarded (not written
 # back into the cell).
-META_COMMANDS: tuple[str, ...] = ("settings", "save", "quit")
+META_COMMANDS: tuple[str, ...] = ("settings", "save", "quit", "help")
+
+
+# The cheat-sheet lines a `:help` meta-command should surface. Kept in
+# one place so the renderer, the narration, and the docs can all read
+# from the same source of truth.
+HELP_LINES: tuple[str, ...] = (
+    "ASAT quick reference.",
+    "NOTEBOOK:  Up/Down walk cells, Enter type, Ctrl+N new, Ctrl+O output, Ctrl+, settings.",
+    "INPUT:     Enter submits, Backspace deletes, Escape leaves without running.",
+    "OUTPUT:    Up/Down step lines, PageUp/PageDown page, Escape leaves.",
+    "SETTINGS:  Up/Down walk, Right/Enter descend, Left/Escape ascend, e edit, Ctrl+S save, Ctrl+Q close.",
+    "Meta:      :help, :settings, :save, :quit (type in INPUT mode then Enter).",
+    "Exit:      :quit, or EOF (Ctrl+D on POSIX, Ctrl+Z Enter on Windows).",
+    "Docs:      docs/USER_MANUAL.md for the full keystroke reference.",
+)
 
 
 class InputRouter:
@@ -261,6 +276,17 @@ class InputRouter:
             self._save_settings()
         elif command == "quit":
             self._close_settings()
+        elif command == "help":
+            self._publish_help()
+
+    def _publish_help(self) -> None:
+        """Emit HELP_REQUESTED so the renderer and audio bank can react."""
+        publish_event(
+            self._bus,
+            EventType.HELP_REQUESTED,
+            {"lines": list(HELP_LINES)},
+            source=self.SOURCE,
+        )
 
     def _open_settings(self) -> None:
         """Enter SETTINGS mode and open a controller session if available."""

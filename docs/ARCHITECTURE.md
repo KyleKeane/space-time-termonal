@@ -188,6 +188,7 @@ layer and left the one below it unchanged:
 | H     | HRTF sparse-impulse fast path (synthetic profiles bypass full convolution) |
 | E     | End-to-end entry point: Application wiring, keyboard adapter, `python -m asat` |
 | E2    | First-launch polish: TerminalRenderer, SESSION_* publishes, WindowsLiveAudioSink, `--live` / `--quiet` |
+| E3    | Onboarding polish: non-TTY guard, sink signpost, `:help` meta-command + `HELP_REQUESTED`, `--version` / `--check` |
 
 ## Entry point
 

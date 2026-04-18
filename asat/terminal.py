@@ -7,7 +7,9 @@ is derived from one event on the bus.
 
 What gets printed:
 
-- `SESSION_CREATED`: one-line banner naming the session.
+- `SESSION_CREATED`: one-line banner naming the session and pointing
+  at `:help`.
+- `HELP_REQUESTED`: the cheat-sheet lines carried on the event.
 - `FOCUS_CHANGED`: a one-line status like `[input #1]` whenever the
   mode or focused cell changes.
 - `ACTION_INVOKED` with action == `insert_character`: the literal
@@ -47,6 +49,7 @@ class TerminalRenderer:
         bus.subscribe(EventType.SESSION_CREATED, self._on_session_created)
         bus.subscribe(EventType.SESSION_LOADED, self._on_session_loaded)
         bus.subscribe(EventType.SESSION_SAVED, self._on_session_saved)
+        bus.subscribe(EventType.HELP_REQUESTED, self._on_help_requested)
         bus.subscribe(EventType.FOCUS_CHANGED, self._on_focus_changed)
         bus.subscribe(EventType.ACTION_INVOKED, self._on_action_invoked)
         bus.subscribe(EventType.OUTPUT_CHUNK, self._on_output_chunk)
@@ -71,7 +74,15 @@ class TerminalRenderer:
 
     def _on_session_created(self, event: Event) -> None:
         session_id = event.payload.get("session_id", "?")
-        self._write_line(f"[asat] session {session_id} ready. :quit to exit.")
+        self._write_line(
+            f"[asat] session {session_id} ready. Type :help for the keystroke "
+            "cheat sheet, :quit to exit."
+        )
+
+    def _on_help_requested(self, event: Event) -> None:
+        lines = event.payload.get("lines", [])
+        for line in lines:
+            self._write_line(str(line))
 
     def _on_session_loaded(self, event: Event) -> None:
         path = event.payload.get("path", "?")

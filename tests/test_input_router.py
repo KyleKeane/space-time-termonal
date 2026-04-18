@@ -432,6 +432,24 @@ class MetaCommandTests(unittest.TestCase):
         ]
         self.assertEqual(submits[0].payload.get("command"), ":unknown")
 
+    def test_colon_help_publishes_help_requested_with_cheat_sheet_lines(self) -> None:
+        from asat.input_router import HELP_LINES
+
+        bus, _, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":help":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertEqual(len(helps), 1)
+        self.assertEqual(tuple(helps[0].payload["lines"]), HELP_LINES)
+        submits = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "submit"
+        ]
+        self.assertEqual(submits[-1].payload["meta_command"], "help")
+
 
 class CustomBindingTests(unittest.TestCase):
 
