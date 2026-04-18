@@ -9,7 +9,7 @@ import wave
 from pathlib import Path
 
 from asat.audio import AudioBuffer, SpatialPosition
-from asat.hrtf import HRTFProfile, Spatializer, convolve
+from asat.hrtf import HRTFProfile, Spatializer, _convolve_python, convolve
 
 
 def _unit_impulse_stereo_wav(path: Path, left_tap: int, right_tap: int, length: int = 32) -> None:
@@ -50,6 +50,24 @@ class ConvolveTests(unittest.TestCase):
         kernel = [1.0, 1.0]
         result = convolve(signal, kernel)
         self.assertEqual(len(result), len(signal) + len(kernel) - 1)
+
+    def test_sparse_fast_path_matches_reference(self) -> None:
+        signal = [1.0, 1.0, 1.0]
+        kernel = [0.0, 0.0, 2.0, 0.0]
+        self.assertEqual(convolve(signal, kernel), (0.0, 0.0, 2.0, 2.0, 2.0, 0.0))
+        self.assertEqual(convolve(signal, kernel), _convolve_python(signal, kernel))
+
+    def test_zero_kernel_returns_zero_buffer_of_correct_length(self) -> None:
+        signal = [0.5, 0.5, 0.5]
+        kernel = [0.0] * 8
+        result = convolve(signal, kernel)
+        self.assertEqual(len(result), len(signal) + len(kernel) - 1)
+        self.assertEqual(set(result), {0.0})
+
+    def test_dense_kernel_still_matches_reference(self) -> None:
+        signal = [1.0, 2.0, 3.0]
+        kernel = [0.5, 0.0, 0.5, 0.0]
+        self.assertEqual(convolve(signal, kernel), _convolve_python(signal, kernel))
 
 
 class HRTFProfileValidationTests(unittest.TestCase):
