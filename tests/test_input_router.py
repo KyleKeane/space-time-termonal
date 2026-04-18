@@ -128,15 +128,21 @@ class InputModeDispatchTests(unittest.TestCase):
         self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
         self.assertEqual(cells[0].command, "echox")
 
-    def test_enter_submits_and_returns_to_notebook(self) -> None:
-        bus, _, cursor, router, cells = _build(["echo"])
+    def test_enter_submits_and_autoadvances_to_new_input_cell(self) -> None:
+        """F11: after Enter submits a non-empty command from the last
+        cell, the user lands in INPUT mode on a fresh empty cell so
+        they can immediately type the next command."""
+        bus, session, cursor, router, cells = _build(["echo"])
         recorder = _Recorder(bus)
         router.handle_key(ENTER)
         router.handle_key(Key.printable(" "))
         router.handle_key(Key.printable("z"))
         router.handle_key(ENTER)
-        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
         self.assertEqual(cells[0].command, "echo z")
+        self.assertEqual(len(session), 2)
+        self.assertNotEqual(cursor.focus.cell_id, cells[0].cell_id)
+        self.assertEqual(cursor.focus.input_buffer, "")
         submit_events = [
             e for e in recorder.types_of(EventType.ACTION_INVOKED)
             if e.payload.get("action") == "submit"

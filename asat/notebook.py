@@ -278,20 +278,46 @@ class NotebookCursor:
     def submit(self) -> Optional[Cell]:
         """Commit the input buffer and return the cell ready for execution.
 
-        The cursor transitions back to NOTEBOOK mode. Returns the cell
-        so that a controller layer can hand it to the execution kernel.
-        Returns None if called outside INPUT mode or with no focused cell.
+        The cursor auto-advances to a fresh empty INPUT cell after a
+        non-empty submit from the last cell in the session, so the
+        user can immediately type their next command (the REPL-like
+        behaviour documented in FEATURE_REQUESTS.md F11). Submitting
+        an empty buffer, or re-running an already-executed middle
+        cell, still lands in NOTEBOOK on the submitted cell — the
+        user was specifically editing that cell and shouldn't have a
+        new empty cell wedged in after it.
+
+        Returns the cell that was submitted so a controller layer can
+        hand it to the execution kernel. Returns None if called
+        outside INPUT mode or with no focused cell.
         """
         if self._state.mode != FocusMode.INPUT or self._state.cell_id is None:
             return None
         cell = self._commit_buffer_to_cell()
-        self._transition(
-            FocusState(
-                mode=FocusMode.NOTEBOOK,
-                cell_id=cell.cell_id,
-                input_buffer="",
-            )
+        should_autoadvance = (
+            bool(cell.command.strip())
+            and self._session.cells
+            and self._session.cells[-1].cell_id == cell.cell_id
         )
+        if should_autoadvance:
+            new_cell = Cell.new("")
+            self._session.add_cell(new_cell)
+            self._session.set_active(new_cell.cell_id)
+            self._transition(
+                FocusState(
+                    mode=FocusMode.INPUT,
+                    cell_id=new_cell.cell_id,
+                    input_buffer="",
+                )
+            )
+        else:
+            self._transition(
+                FocusState(
+                    mode=FocusMode.NOTEBOOK,
+                    cell_id=cell.cell_id,
+                    input_buffer="",
+                )
+            )
         return cell
 
     def _move(self, delta: int) -> Optional[Cell]:

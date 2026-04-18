@@ -173,7 +173,13 @@ class CursorInputModeTests(unittest.TestCase):
         cell = self.cursor.submit()
         assert cell is not None
         self.assertEqual(cell.command, "echo az")
-        self.assertEqual(self.cursor.focus.mode, FocusMode.NOTEBOOK)
+        # F11: submitting a non-empty command from the last cell
+        # auto-advances to a fresh empty INPUT cell so the user can
+        # keep typing without pressing Ctrl+N.
+        self.assertEqual(self.cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(len(self.session), 2)
+        self.assertNotEqual(self.cursor.focus.cell_id, cell.cell_id)
+        self.assertEqual(self.cursor.focus.input_buffer, "")
 
     def test_submit_outside_input_mode_returns_none(self) -> None:
         self.assertIsNone(self.cursor.submit())
@@ -183,6 +189,57 @@ class CursorInputModeTests(unittest.TestCase):
         self.assertEqual(self.cursor.focus.mode, FocusMode.INPUT)
         self.assertEqual(self.cursor.focus.cell_id, fresh.cell_id)
         self.assertEqual(len(self.session), 2)
+
+    def test_submit_empty_buffer_does_not_autoadvance(self) -> None:
+        """Pressing Enter on an empty buffer should not spam the
+        session with empty cells. Stays in NOTEBOOK on the same cell
+        — effectively a silent no-op you can back out of."""
+        # Start from an empty cell so the commit produces no content.
+        bus = EventBus()
+        session, cells = _session_with([""])
+        cursor = NotebookCursor(session, bus)
+        cursor.enter_input_mode()
+        cell = cursor.submit()
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertEqual(len(session), 1)
+        assert cell is not None
+        self.assertEqual(cell.cell_id, cells[0].cell_id)
+
+    def test_submit_from_middle_cell_does_not_autoadvance(self) -> None:
+        """Re-running an already-executed middle cell (user edited it
+        and wants to re-run in place) should NOT wedge a new empty
+        cell into the middle of the notebook."""
+        bus = EventBus()
+        session, cells = _session_with(["first", "second", "third"])
+        cursor = NotebookCursor(session, bus)
+        # Focus the middle cell and enter input mode.
+        cursor.focus_cell(cells[1].cell_id)
+        cursor.enter_input_mode()
+        cursor.insert_character("x")
+        cell = cursor.submit()
+        assert cell is not None
+        self.assertEqual(cell.command, "secondx")
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertEqual(cursor.focus.cell_id, cells[1].cell_id)
+        # Session is still three cells, not four.
+        self.assertEqual(len(session), 3)
+
+    def test_submit_from_last_cell_with_content_autoadvances(self) -> None:
+        """The documented happy path: type, Enter, keep typing."""
+        bus = EventBus()
+        session, cells = _session_with(["first"])
+        cursor = NotebookCursor(session, bus)
+        cursor.enter_input_mode()
+        cursor.insert_character("!")
+        cell = cursor.submit()
+        assert cell is not None
+        self.assertEqual(cell.command, "first!")
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(len(session), 2)
+        # The new cell is the last cell.
+        self.assertEqual(session.cells[-1].cell_id, cursor.focus.cell_id)
+        # And it's empty, ready for the next command.
+        self.assertEqual(cursor.focus.input_buffer, "")
 
 
 class CursorOutputModeTests(unittest.TestCase):

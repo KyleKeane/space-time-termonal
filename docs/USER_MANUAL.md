@@ -95,9 +95,12 @@ file.
 4. **Press Enter**. You'll hear a triangle-wave "submit" cue on the
    left, then the narrator reads output lines as they stream, then a
    major-chord "success" chime on Enter's exit code, or a low minor
-   "failure" chord on the right if the command failed.
+   "failure" chord on the right if the command failed. ASAT
+   auto-advances to a fresh empty cell in INPUT mode, so you can
+   immediately type your next command without pressing anything else.
 5. **Press Escape**. You're now in NOTEBOOK mode. Up / Down walks
-   between cells.
+   between cells. (You only need this when you want to navigate
+   history; running a new command just means typing and Enter.)
 6. **Press Ctrl+O**. You're now in OUTPUT mode, stepping line-by-line
    through the selected cell's captured output. Escape leaves.
 7. **Press Ctrl+,** (or type `:settings` then Enter in INPUT mode).
