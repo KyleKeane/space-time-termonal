@@ -62,7 +62,8 @@ rather than a raw traceback.
 2. Type `:help` + Enter any time to re-hear the cheat sheet (audio)
    and see it printed (text trace).
 3. Type a command — `echo hi`, `python --version`, `git status`. Each
-   keystroke narrates (audio) and echoes (text).
+   keystroke echoes to the text trace; typing itself is silent in
+   audio by design so long commands don't drown you in cues.
 4. Press **Enter**. The trace prints `$ <command>`, the command runs,
    output streams, and `[done exit=0]` closes it out.
 5. Press **Ctrl+N** for a new cell, **Up/Down** to walk between cells,

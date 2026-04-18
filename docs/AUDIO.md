@@ -120,7 +120,13 @@ exit_code == 0
 stream == "stderr"
 action in ["copy_line", "copy_all"]
 timed_out != False
+transition == mode        # FOCUS_CHANGED: only when the focus mode changed
+transition == cell        # FOCUS_CHANGED: only when the focused cell changed
 ```
+
+String RHS values may be quoted (`"stderr"`) or bare (`mode`) — both
+are accepted because `_parse_literal` falls back to the raw string
+when `ast.literal_eval` can't parse it.
 
 Plug in a different evaluator by passing `predicate=...` to
 `SoundEngine(...)`; the `PredicateEvaluator` protocol is tiny

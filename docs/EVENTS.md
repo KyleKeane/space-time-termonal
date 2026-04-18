@@ -77,9 +77,20 @@ and `asat.notebook.NotebookCursor` (`source="notebook"`).
 
 | EventType        | Payload keys                                                                   | Source          |
 |------------------|--------------------------------------------------------------------------------|-----------------|
-| `FOCUS_CHANGED`  | `old_mode`, `new_mode`, `old_cell_id`, `new_cell_id`, `input_buffer`           | `notebook`      |
+| `FOCUS_CHANGED`  | `old_mode`, `new_mode`, `old_cell_id`, `new_cell_id`, `input_buffer`, `transition`, `command` | `notebook`      |
 | `KEY_PRESSED`    | `name`, `char`, `modifiers`                                                    | `input_router`  |
 | `ACTION_INVOKED` | `action`, `focus_mode`, `cell_id`, `key_name`, plus action-specific extras     | `input_router`  |
+
+`FOCUS_CHANGED` extras:
+
+* `transition` is `"mode"` when the focus mode changed, `"cell"` when
+  only the focused cell changed within NOTEBOOK. Buffer-only deltas
+  (characters typed into the input buffer) do NOT publish
+  `FOCUS_CHANGED`; subscribe to `ACTION_INVOKED` with
+  `action == "insert_character"` instead.
+* `command` is the focused cell's current command text at transition
+  time, or `""` when no cell is focused. Bindings can narrate it with
+  a `{command}` template.
 
 `ACTION_INVOKED` extras:
 

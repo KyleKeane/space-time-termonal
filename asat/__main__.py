@@ -63,8 +63,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             "(Windows) or --wav-dir DIR to hear or capture it.",
             file=sys.stderr,
         )
-    bank = SoundBank.load(args.bank) if args.bank is not None else None
-    session = Session.load(args.session) if args.session is not None else None
+    try:
+        bank = _load_bank(args.bank)
+    except _FriendlyExit as exc:
+        print(f"[asat] {exc}", file=sys.stderr)
+        return 2
+    session = _load_session(args.session)
     app = Application.build(
         sink=sink,
         bank=bank,
@@ -183,6 +187,41 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         ),
     )
     return parser.parse_args(argv)
+
+
+class _FriendlyExit(Exception):
+    """Raised when the CLI should abort with a one-line stderr message."""
+
+
+def _load_bank(path: Optional[Path]) -> Optional[SoundBank]:
+    """Load a SoundBank from disk, or return None for the built-in default.
+
+    A missing file aborts with a friendly message rather than a raw
+    FileNotFoundError traceback, because the most common cause is a
+    typo and the user deserves to see it before anything else happens.
+    """
+    if path is None:
+        return None
+    if not path.exists():
+        raise _FriendlyExit(
+            f"--bank {path}: file not found. Check the path or omit "
+            "the flag to use the built-in default bank."
+        )
+    return SoundBank.load(path)
+
+
+def _load_session(path: Optional[Path]) -> Optional[Session]:
+    """Load a Session from disk, or return None for a fresh session.
+
+    A missing `--session` path is NOT an error: the semantics are
+    "resume from this file if it exists, else create a fresh session
+    and save to this path on exit". This matches the natural
+    expectation of `python -m asat --session work.json` on a blank
+    workspace and keeps first-run onboarding from crashing.
+    """
+    if path is None or not path.exists():
+        return None
+    return Session.load(path)
 
 
 def _make_sink(

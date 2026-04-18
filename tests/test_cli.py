@@ -90,5 +90,42 @@ class NonTTYTests(unittest.TestCase):
         self.assertIn("needs a TTY", err.getvalue())
 
 
+class MissingSessionPathTests(unittest.TestCase):
+    """`--session /path/that/doesnt/exist.json` bootstraps a fresh session."""
+
+    def test_missing_session_starts_fresh_and_saves_on_exit(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        fake_keyboard = mock.MagicMock()
+        fake_keyboard.read_key.return_value = None
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fresh.json"
+            self.assertFalse(path.exists())
+            err = io.StringIO()
+            out = io.StringIO()
+            with mock.patch("asat.__main__.pick_default", return_value=fake_keyboard), \
+                 mock.patch("sys.stderr", err), \
+                 mock.patch("sys.stdout", out):
+                rc = cli.main(["--live", "--session", str(path)])
+            self.assertEqual(rc, 0)
+            # File was created on exit (Application.close() path).
+            self.assertTrue(path.exists())
+
+
+class MissingBankPathTests(unittest.TestCase):
+    """`--bank /path/that/doesnt/exist.json` exits with a friendly error."""
+
+    def test_missing_bank_exits_with_code_2_and_hint(self) -> None:
+        err = io.StringIO()
+        out = io.StringIO()
+        with mock.patch("sys.stderr", err), \
+             mock.patch("sys.stdout", out):
+            rc = cli.main(["--bank", "/tmp/asat-no-such-bank.json"])
+        self.assertEqual(rc, 2)
+        self.assertIn("--bank", err.getvalue())
+        self.assertIn("file not found", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()
