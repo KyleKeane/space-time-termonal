@@ -95,21 +95,37 @@ deterministic fallback for headless tests.
 
 ---
 
-## F6 — Live-speaker audio sink
+## F6 — Live-speaker audio sink (POSIX)
 
-**Gap.** `AudioSink` ships with `MemorySink` (accumulates buffers for
-tests) and `WavFileSink` (writes to disk). Neither plays audio on
-actual speakers, so the `python -m asat` entry point is silent
-end-to-end until a real sink exists — `--wav-dir DIR` is the current
-workaround, but it only lets the user hear each buffer after the
-fact.
+**Status.** Windows live playback shipped (`WindowsLiveAudioSink` in
+`asat/audio_sink.py`, selected by `python -m asat --live`). The
+remaining gap is POSIX.
 
-**Where it surfaces.** Anyone launching ASAT today without
-`--wav-dir` gets a self-voicing terminal whose voice goes to `/dev/null`.
+**Gap.** On macOS and Linux, `pick_live_sink()` raises
+`LiveAudioUnavailable` and the CLI falls back to `MemorySink` with a
+message. There is no stdlib-only live audio backend on POSIX — every
+candidate (`winsound`) is Windows-only, and `subprocess`-ing `aplay`
+/ `afplay` has latency and availability problems.
 
-**Sketch.** Wrap `winsound` (stdlib) or `sounddevice` for low-latency
-playback; implement the `AudioSink` protocol. Buffer management and
-sample-rate coercion already live in `AudioBuffer`.
+**Where it surfaces.** `python -m asat --live` on Linux or macOS
+prints `[asat] --live unavailable: ...` and continues silently. Users
+today have to pair `--wav-dir DIR` with a WAV player, which is
+asynchronous and awkward.
+
+**Sketch.** Two reasonable paths:
+
+1. **Stdlib `subprocess` dispatch.** Write each buffer to a temp WAV
+   and invoke `/usr/bin/afplay` (macOS) or `aplay`/`paplay` (Linux).
+   Simple, no deps, but latency is ~50-150 ms per buffer — noticeable
+   for keystroke feedback.
+2. **Small C extension via `ctypes`.** Bind to CoreAudio (macOS) or
+   ALSA (Linux) directly. Better latency, no new Python deps, but
+   non-trivial to build and test.
+
+Either way the implementation goes in `asat/audio_sink.py` behind
+the same `AudioSink` protocol, and `pick_live_sink()` learns new
+branches. A queueing strategy (drop in-flight keystroke cues when a
+narration voice starts) should be designed together with this.
 
 ---
 

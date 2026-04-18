@@ -53,7 +53,16 @@ from asat.audio import (
     VoicePreset,
     VoiceProfile,
 )
-from asat.audio_sink import AudioSink, MemorySink, WavFileSink, write_wav
+from asat.audio_sink import (
+    AudioSink,
+    LiveAudioUnavailable,
+    MemorySink,
+    WavFileSink,
+    WindowsLiveAudioSink,
+    buffer_to_wav_bytes,
+    pick_live_sink,
+    write_wav,
+)
 from asat.cell import Cell, CellStatus
 from asat.default_bank import COVERED_EVENT_TYPES, default_sound_bank
 from asat.event_bus import EventBus
@@ -77,6 +86,7 @@ from asat.output_cursor import OutputCursor
 from asat.runner import ProcessRunner
 from asat.screen import Cell as ScreenCell, ScreenSnapshot, VirtualScreen
 from asat.session import Session
+from asat.terminal import TerminalRenderer
 from asat.settings_controller import SettingsController
 from asat.settings_editor import SettingsEditor
 from asat.sound_bank import EventBinding, SoundBank, SoundRecipe, Voice
@@ -117,6 +127,7 @@ __all__ = [
     "InputRouter",
     "InteractiveMenu",
     "Key",
+    "LiveAudioUnavailable",
     "KeyboardReader",
     "MemoryClipboard",
     "MemorySink",
@@ -144,6 +155,7 @@ __all__ = [
     "SpatialPosition",
     "Spatializer",
     "TTSEngine",
+    "TerminalRenderer",
     "TextToken",
     "Token",
     "ToneTTSEngine",
@@ -154,6 +166,8 @@ __all__ = [
     "VoiceProfile",
     "WavFileSink",
     "WindowsKeyboard",
+    "WindowsLiveAudioSink",
+    "buffer_to_wav_bytes",
     "convolve",
     "default_actions",
     "default_bindings",
@@ -161,6 +175,7 @@ __all__ = [
     "detect",
     "generate_sound",
     "pick_default_keyboard",
+    "pick_live_sink",
     "write_wav",
 ]
 

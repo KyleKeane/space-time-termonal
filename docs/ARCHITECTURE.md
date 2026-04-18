@@ -32,7 +32,7 @@ it; the event bus is the sole backchannel.
            +-----------------------------+
            |  Entry point                |
            |  __main__.py  app.py        |
-           |  keyboard.py                |
+           |  keyboard.py  terminal.py   |
            +---------------+-------------+
                            |
            +---------------v-------------+
@@ -187,6 +187,7 @@ layer and left the one below it unchanged:
 | T     | Follow-up polish: TUI wiring, ANSI-level events + per-binding overrides, docs |
 | H     | HRTF sparse-impulse fast path (synthetic profiles bypass full convolution) |
 | E     | End-to-end entry point: Application wiring, keyboard adapter, `python -m asat` |
+| E2    | First-launch polish: TerminalRenderer, SESSION_* publishes, WindowsLiveAudioSink, `--live` / `--quiet` |
 
 ## Entry point
 
@@ -200,6 +201,25 @@ submitted and hand each to `Application.execute(cell_id)`.
 `asat/keyboard.py` hosts the `PosixKeyboard` and `WindowsKeyboard`
 adapters (plus a `ScriptedKeyboard` for tests); the rest of ASAT
 never touches terminal input APIs directly.
+
+Three supporting modules round the entry point out:
+
+* `asat/terminal.py` — `TerminalRenderer` subscribes to the bus and
+  prints a minimal text trace (startup banner, keystroke echo,
+  submitted `$ command` line, output chunks, `[done exit=...]`). The
+  audio pipeline is the primary UI; the renderer exists so sighted
+  viewers and anyone debugging have a readable mirror of the event
+  stream. `--quiet` switches it off.
+* `asat/audio_sink.py::WindowsLiveAudioSink` — the first sink that
+  produces actual audio on real speakers, via `winsound.PlaySound`
+  with `SND_MEMORY | SND_ASYNC`. Selected by `--live`.
+  `pick_live_sink()` is the one place the CLI asks "what live backend
+  does this host offer?"; POSIX raises `LiveAudioUnavailable` today
+  (tracked as FEATURE_REQUESTS.md F6).
+* `asat/app.py::Application.build` publishes `SESSION_CREATED` after
+  the SoundEngine has subscribed so the startup chime actually plays
+  through the sink, and emits `SESSION_LOADED` / `SESSION_SAVED` at
+  the matching boundaries.
 
 Open feature requests for the next generation live in
 [FEATURE_REQUESTS.md](FEATURE_REQUESTS.md); the short version is
