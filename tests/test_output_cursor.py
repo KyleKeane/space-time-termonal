@@ -146,5 +146,141 @@ class FocusEventTests(unittest.TestCase):
         self.assertEqual(payloads[1]["text"], "first")
 
 
+class SearchComposerTests(unittest.TestCase):
+    """F16: `/`-style search composer narrows matches as you type."""
+
+    def setUp(self) -> None:
+        self.bus = EventBus()
+        self.recorder = _Recorder(self.bus)
+        self.cursor = OutputCursor(self.bus)
+        self.buffer = _buffer_with(
+            "c1",
+            [
+                ("starting up", STDOUT),
+                ("connecting to database", STDOUT),
+                ("ERROR: connection refused", STDERR),
+                ("retrying", STDOUT),
+                ("ERROR: timeout", STDERR),
+                ("giving up", STDOUT),
+            ],
+        )
+        self.cursor.attach(self.buffer)
+
+    def test_begin_search_on_empty_buffer_is_noop(self) -> None:
+        cursor = OutputCursor(EventBus())
+        cursor.attach(OutputBuffer("empty"))
+        self.assertFalse(cursor.begin_search())
+        self.assertIsNone(cursor.composer_mode)
+
+    def test_extend_jumps_to_first_match_live(self) -> None:
+        self.cursor.begin_search()
+        for ch in "ERR":
+            self.cursor.extend_composer(ch)
+        self.assertEqual(self.cursor.composer_buffer, "ERR")
+        # First line containing "err" (case-insensitive) is the first
+        # ERROR line at index 2.
+        self.assertEqual(self.cursor.line_number, 2)
+
+    def test_search_is_case_insensitive(self) -> None:
+        self.cursor.begin_search()
+        for ch in "error":
+            self.cursor.extend_composer(ch)
+        self.assertEqual(self.cursor.search_match_count, 2)
+        self.assertEqual(self.cursor.line_number, 2)
+
+    def test_no_matches_leaves_position_untouched(self) -> None:
+        self.cursor.begin_search()
+        self.cursor.extend_composer("z")
+        self.assertEqual(self.cursor.search_match_count, 0)
+        # Cursor stayed on the line we attached to (last line).
+        self.assertEqual(self.cursor.line_number, 5)
+
+    def test_next_and_prev_cycle_matches(self) -> None:
+        self.cursor.begin_search()
+        for ch in "error":
+            self.cursor.extend_composer(ch)
+        self.cursor.commit_composer()
+        self.assertIsNone(self.cursor.composer_mode)
+        line = self.cursor.next_match()
+        assert line is not None
+        self.assertEqual(line.line_number, 4)
+        line = self.cursor.next_match()
+        assert line is not None
+        # Wrap around back to the first match.
+        self.assertEqual(line.line_number, 2)
+        line = self.cursor.prev_match()
+        assert line is not None
+        self.assertEqual(line.line_number, 4)
+
+    def test_next_match_without_search_is_noop(self) -> None:
+        self.assertIsNone(self.cursor.next_match())
+
+    def test_cancel_restores_starting_line(self) -> None:
+        self.cursor.move_to_start()  # line 0
+        self.cursor.begin_search()
+        for ch in "error":
+            self.cursor.extend_composer(ch)
+        self.assertEqual(self.cursor.line_number, 2)
+        self.cursor.cancel_composer()
+        self.assertIsNone(self.cursor.composer_mode)
+        self.assertEqual(self.cursor.line_number, 0)
+
+    def test_backspace_recomputes_matches(self) -> None:
+        self.cursor.begin_search()
+        for ch in "giving":
+            self.cursor.extend_composer(ch)
+        self.assertEqual(self.cursor.line_number, 5)
+        self.cursor.backspace_composer()  # "givin"
+        self.assertEqual(self.cursor.search_match_count, 1)
+        self.cursor.backspace_composer()  # "givi"
+        self.cursor.backspace_composer()  # "giv"
+        self.cursor.backspace_composer()  # "gi"
+        self.assertGreaterEqual(self.cursor.search_match_count, 1)
+
+
+class GotoComposerTests(unittest.TestCase):
+    """F16: `g<number>` jumps directly to a 1-based line."""
+
+    def setUp(self) -> None:
+        self.bus = EventBus()
+        self.cursor = OutputCursor(self.bus)
+        self.buffer = _buffer_with(
+            "c1",
+            [(f"line-{i}", STDOUT) for i in range(10)],
+        )
+        self.cursor.attach(self.buffer)
+
+    def test_goto_jumps_to_one_based_line(self) -> None:
+        self.cursor.begin_goto()
+        self.cursor.extend_composer("3")
+        self.cursor.commit_composer()
+        self.assertEqual(self.cursor.line_number, 2)  # 1-based 3 -> index 2
+        self.assertIsNone(self.cursor.composer_mode)
+
+    def test_goto_rejects_non_digits(self) -> None:
+        self.cursor.begin_goto()
+        self.cursor.extend_composer("a")  # ignored
+        self.cursor.extend_composer("2")
+        self.cursor.extend_composer("b")  # ignored
+        self.assertEqual(self.cursor.composer_buffer, "2")
+
+    def test_goto_clamps_beyond_end(self) -> None:
+        self.cursor.begin_goto()
+        for ch in "999":
+            self.cursor.extend_composer(ch)
+        self.cursor.commit_composer()
+        self.assertEqual(self.cursor.line_number, 9)
+
+    def test_goto_commit_with_empty_buffer_is_noop(self) -> None:
+        start = self.cursor.line_number
+        self.cursor.begin_goto()
+        self.cursor.commit_composer()
+        self.assertEqual(self.cursor.line_number, start)
+
+    def test_jump_to_line_direct_api(self) -> None:
+        self.cursor.jump_to_line(4)
+        self.assertEqual(self.cursor.line_number, 4)
+
+
 if __name__ == "__main__":
     unittest.main()
