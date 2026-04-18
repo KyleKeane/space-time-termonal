@@ -37,8 +37,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Optional, Protocol
 
-from asat.event_bus import EventBus
-from asat.events import Event, EventType
+from asat.event_bus import EventBus, publish_event
+from asat.events import EventType
 from asat.notebook import FocusMode, NotebookCursor
 from asat.output_buffer import OutputRecorder, STDERR, STDOUT
 from asat.output_cursor import OutputCursor
@@ -162,15 +162,14 @@ class ActionMenu:
         self._index = -1
         context = self._context
         self._context = None
-        self._bus.publish(
-            Event(
-                event_type=EventType.ACTION_MENU_CLOSED,
-                payload={
-                    "focus_mode": context.focus_mode.value if context else None,
-                    "cell_id": context.cell_id if context else None,
-                },
-                source=self.SOURCE,
-            )
+        publish_event(
+            self._bus,
+            EventType.ACTION_MENU_CLOSED,
+            {
+                "focus_mode": context.focus_mode.value if context else None,
+                "cell_id": context.cell_id if context else None,
+            },
+            source=self.SOURCE,
         )
 
     def current_item(self) -> Optional[MenuItem]:
@@ -197,17 +196,16 @@ class ActionMenu:
         context = self._context
         if item is None or context is None:
             return None
-        self._bus.publish(
-            Event(
-                event_type=EventType.ACTION_MENU_ITEM_INVOKED,
-                payload={
-                    "item_id": item.id,
-                    "label": item.label,
-                    "focus_mode": context.focus_mode.value,
-                    "cell_id": context.cell_id,
-                },
-                source=self.SOURCE,
-            )
+        publish_event(
+            self._bus,
+            EventType.ACTION_MENU_ITEM_INVOKED,
+            {
+                "item_id": item.id,
+                "label": item.label,
+                "focus_mode": context.focus_mode.value,
+                "cell_id": context.cell_id,
+            },
+            source=self.SOURCE,
         )
         item.handler(context)
         self.close()
@@ -231,31 +229,29 @@ class ActionMenu:
         items: tuple[MenuItem, ...],
     ) -> None:
         """Publish ACTION_MENU_OPENED with the item labels for this context."""
-        self._bus.publish(
-            Event(
-                event_type=EventType.ACTION_MENU_OPENED,
-                payload={
-                    "focus_mode": context.focus_mode.value,
-                    "cell_id": context.cell_id,
-                    "item_ids": [item.id for item in items],
-                    "labels": [item.label for item in items],
-                },
-                source=self.SOURCE,
-            )
+        publish_event(
+            self._bus,
+            EventType.ACTION_MENU_OPENED,
+            {
+                "focus_mode": context.focus_mode.value,
+                "cell_id": context.cell_id,
+                "item_ids": [item.id for item in items],
+                "labels": [item.label for item in items],
+            },
+            source=self.SOURCE,
         )
 
     def _publish_focus(self, item: MenuItem) -> None:
         """Publish ACTION_MENU_ITEM_FOCUSED for the given item."""
-        self._bus.publish(
-            Event(
-                event_type=EventType.ACTION_MENU_ITEM_FOCUSED,
-                payload={
-                    "item_id": item.id,
-                    "label": item.label,
-                    "index": self._index,
-                },
-                source=self.SOURCE,
-            )
+        publish_event(
+            self._bus,
+            EventType.ACTION_MENU_ITEM_FOCUSED,
+            {
+                "item_id": item.id,
+                "label": item.label,
+                "index": self._index,
+            },
+            source=self.SOURCE,
         )
 
 
@@ -281,16 +277,15 @@ def default_actions(
     def _copy(context: ActionContext, text: str, source_label: str) -> None:
         """Store text on the clipboard and publish CLIPBOARD_COPIED."""
         clipboard.set_text(text)
-        bus.publish(
-            Event(
-                event_type=EventType.CLIPBOARD_COPIED,
-                payload={
-                    "cell_id": context.cell_id,
-                    "source": source_label,
-                    "length": len(text),
-                },
-                source="actions",
-            )
+        publish_event(
+            bus,
+            EventType.CLIPBOARD_COPIED,
+            {
+                "cell_id": context.cell_id,
+                "source": source_label,
+                "length": len(text),
+            },
+            source="actions",
         )
 
     def notebook_items(context: ActionContext) -> tuple[MenuItem, ...]:

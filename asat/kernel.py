@@ -28,8 +28,8 @@ from pathlib import Path
 from typing import Optional
 
 from asat.cell import Cell
-from asat.event_bus import EventBus
-from asat.events import Event, EventType
+from asat.event_bus import EventBus, publish_event
+from asat.events import EventType
 from asat.execution import ExecutionMode, ExecutionRequest, ExecutionResult
 from asat.runner import ProcessRunner
 
@@ -153,6 +153,4 @@ class ExecutionKernel:
 
     def _publish(self, event_type: EventType, **payload) -> None:
         """Publish an Event on the bus with the kernel as the source."""
-        self._bus.publish(
-            Event(event_type=event_type, payload=payload, source=self.SOURCE)
-        )
+        publish_event(self._bus, event_type, payload, source=self.SOURCE)

@@ -32,8 +32,8 @@ from dataclasses import asdict
 from typing import Optional
 
 from asat.ansi import AnsiParser
-from asat.event_bus import EventBus
-from asat.events import Event, EventType
+from asat.event_bus import EventBus, publish_event
+from asat.events import EventType
 from asat.interactive import InteractiveMenu, detect
 from asat.screen import DEFAULT_COLS, DEFAULT_ROWS, VirtualScreen
 
@@ -125,17 +125,16 @@ class TuiBridge:
     def _publish_screen_update(self) -> None:
         """Publish a SCREEN_UPDATED event containing the text rows."""
         snapshot = self._screen.snapshot()
-        self._bus.publish(
-            Event(
-                event_type=EventType.SCREEN_UPDATED,
-                payload={
-                    "cell_id": self._cell_id,
-                    "cursor_row": snapshot.cursor_row,
-                    "cursor_col": snapshot.cursor_col,
-                    "rows": snapshot.text_rows(),
-                },
-                source=self.SOURCE,
-            )
+        publish_event(
+            self._bus,
+            EventType.SCREEN_UPDATED,
+            {
+                "cell_id": self._cell_id,
+                "cursor_row": snapshot.cursor_row,
+                "cursor_col": snapshot.cursor_col,
+                "rows": snapshot.text_rows(),
+            },
+            source=self.SOURCE,
         )
 
     def _publish_menu_event(
@@ -144,28 +143,26 @@ class TuiBridge:
         menu: InteractiveMenu,
     ) -> None:
         """Publish a menu lifecycle event describing the detected items."""
-        self._bus.publish(
-            Event(
-                event_type=event_type,
-                payload={
-                    "cell_id": self._cell_id,
-                    "detection": menu.detection,
-                    "selected_index": menu.selected_index,
-                    "selected_text": menu.selected_text,
-                    "items": [asdict(item) for item in menu.items],
-                },
-                source=self.SOURCE,
-            )
+        publish_event(
+            self._bus,
+            event_type,
+            {
+                "cell_id": self._cell_id,
+                "detection": menu.detection,
+                "selected_index": menu.selected_index,
+                "selected_text": menu.selected_text,
+                "items": [asdict(item) for item in menu.items],
+            },
+            source=self.SOURCE,
         )
 
     def _publish_menu_cleared(self) -> None:
         """Publish INTERACTIVE_MENU_CLEARED without menu contents."""
-        self._bus.publish(
-            Event(
-                event_type=EventType.INTERACTIVE_MENU_CLEARED,
-                payload={"cell_id": self._cell_id},
-                source=self.SOURCE,
-            )
+        publish_event(
+            self._bus,
+            EventType.INTERACTIVE_MENU_CLEARED,
+            {"cell_id": self._cell_id},
+            source=self.SOURCE,
         )
 
 
