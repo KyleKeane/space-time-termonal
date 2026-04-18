@@ -35,7 +35,7 @@ state with the screen.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Callable, ClassVar
 
 from asat.ansi import (
     CSIToken,
@@ -82,6 +82,14 @@ class ScreenSnapshot:
         return tuple(cell.attrs for cell in self.rows[row_index])
 
 
+def _param_or(token: CSIToken, index: int, default: int) -> int:
+    """Return the param at index or default when missing or -1."""
+    if index >= len(token.params):
+        return default
+    value = token.params[index]
+    return default if value < 0 else value
+
+
 @dataclass
 class VirtualScreen:
     """Mutable 2D grid updated by applying ANSI tokens."""
@@ -102,6 +110,21 @@ class VirtualScreen:
     def cursor(self) -> tuple[int, int]:
         """Return (row, col) of the current cursor position."""
         return self._cursor_row, self._cursor_col
+
+    @property
+    def cursor_row(self) -> int:
+        """Zero-based row index of the cursor."""
+        return self._cursor_row
+
+    @property
+    def cursor_col(self) -> int:
+        """Zero-based column index of the cursor."""
+        return self._cursor_col
+
+    @property
+    def attrs(self) -> frozenset[str]:
+        """Current SGR attribute set applied to newly written cells."""
+        return self._attrs
 
     def apply(self, token: Token) -> None:
         """Mutate the screen by applying a single token."""
@@ -168,8 +191,8 @@ class VirtualScreen:
             self._cursor_col = min(next_stop, self.cols - 1)
 
     def _apply_csi(self, token: CSIToken) -> None:
-        """Dispatch a CSI token to the matching handler."""
-        handler = _CSI_HANDLERS.get(token.final)
+        """Dispatch a CSI token to the matching bound method."""
+        handler = self._CSI_HANDLERS.get(token.final)
         if handler is None:
             return
         handler(self, token)
@@ -182,131 +205,108 @@ class VirtualScreen:
         self._cursor_row = max(0, min(self._cursor_row, self.rows - 1))
         self._cursor_col = max(0, min(self._cursor_col, self.cols - 1))
 
+    def _cursor_up(self, token: CSIToken) -> None:
+        """CUU: move cursor up N rows, clamping at top."""
+        self._cursor_row -= max(1, _param_or(token, 0, 1))
+        self._clamp_cursor()
 
-def _param_or(token: CSIToken, index: int, default: int) -> int:
-    """Return the param at index or default when missing or -1."""
-    if index >= len(token.params):
-        return default
-    value = token.params[index]
-    return default if value < 0 else value
+    def _cursor_down(self, token: CSIToken) -> None:
+        """CUD: move cursor down N rows, clamping at bottom."""
+        self._cursor_row += max(1, _param_or(token, 0, 1))
+        self._clamp_cursor()
 
+    def _cursor_forward(self, token: CSIToken) -> None:
+        """CUF: move cursor right N columns."""
+        self._cursor_col += max(1, _param_or(token, 0, 1))
+        self._clamp_cursor()
 
-def _cursor_up(screen: VirtualScreen, token: CSIToken) -> None:
-    """CUU: move cursor up N rows, clamping at top."""
-    screen._cursor_row -= max(1, _param_or(token, 0, 1))
-    screen._clamp_cursor()
+    def _cursor_back(self, token: CSIToken) -> None:
+        """CUB: move cursor left N columns."""
+        self._cursor_col -= max(1, _param_or(token, 0, 1))
+        self._clamp_cursor()
 
+    def _cursor_position(self, token: CSIToken) -> None:
+        """CUP: absolute cursor position (one-based)."""
+        self._cursor_row = max(1, _param_or(token, 0, 1)) - 1
+        self._cursor_col = max(1, _param_or(token, 1, 1)) - 1
+        self._clamp_cursor()
 
-def _cursor_down(screen: VirtualScreen, token: CSIToken) -> None:
-    """CUD: move cursor down N rows, clamping at bottom."""
-    screen._cursor_row += max(1, _param_or(token, 0, 1))
-    screen._clamp_cursor()
+    def _set_column(self, token: CSIToken) -> None:
+        """CHA: move cursor to absolute column (one-based)."""
+        self._cursor_col = max(1, _param_or(token, 0, 1)) - 1
+        self._clamp_cursor()
 
+    def _erase_in_display(self, token: CSIToken) -> None:
+        """ED: erase in display. 0=after cursor, 1=before, 2=all."""
+        mode = _param_or(token, 0, 0)
+        if mode == 2:
+            self.reset()
+            return
+        if mode == 0:
+            self._erase_line_from_cursor()
+            for row_index in range(self._cursor_row + 1, self.rows):
+                self._grid[row_index] = self._blank_row()
+        elif mode == 1:
+            self._erase_line_to_cursor()
+            for row_index in range(0, self._cursor_row):
+                self._grid[row_index] = self._blank_row()
 
-def _cursor_forward(screen: VirtualScreen, token: CSIToken) -> None:
-    """CUF: move cursor right N columns."""
-    screen._cursor_col += max(1, _param_or(token, 0, 1))
-    screen._clamp_cursor()
+    def _erase_in_line(self, token: CSIToken) -> None:
+        """EL: erase in line. 0=to end, 1=to start, 2=entire row."""
+        mode = _param_or(token, 0, 0)
+        if mode == 0:
+            self._erase_line_from_cursor()
+        elif mode == 1:
+            self._erase_line_to_cursor()
+        elif mode == 2:
+            self._grid[self._cursor_row] = self._blank_row()
 
+    def _erase_line_from_cursor(self) -> None:
+        """Blank cells from the cursor column to the end of the current row."""
+        row = self._grid[self._cursor_row]
+        for col in range(self._cursor_col, self.cols):
+            row[col] = Cell()
 
-def _cursor_back(screen: VirtualScreen, token: CSIToken) -> None:
-    """CUB: move cursor left N columns."""
-    screen._cursor_col -= max(1, _param_or(token, 0, 1))
-    screen._clamp_cursor()
+    def _erase_line_to_cursor(self) -> None:
+        """Blank cells from column 0 to and including the cursor column."""
+        row = self._grid[self._cursor_row]
+        for col in range(0, self._cursor_col + 1):
+            row[col] = Cell()
 
+    def _sgr(self, token: CSIToken) -> None:
+        """SGR: apply Select Graphic Rendition updates to current attributes."""
+        params = token.params or (0,)
+        attrs = set(self._attrs)
+        for raw in params:
+            code = 0 if raw < 0 else raw
+            if code == 0:
+                attrs.clear()
+            elif code == 1:
+                attrs.add(ATTR_BOLD)
+            elif code == 2:
+                attrs.add(ATTR_DIM)
+            elif code == 4:
+                attrs.add(ATTR_UNDERLINE)
+            elif code == 7:
+                attrs.add(ATTR_REVERSE)
+            elif code == 22:
+                attrs.discard(ATTR_BOLD)
+                attrs.discard(ATTR_DIM)
+            elif code == 24:
+                attrs.discard(ATTR_UNDERLINE)
+            elif code == 27:
+                attrs.discard(ATTR_REVERSE)
+        self._attrs = frozenset(attrs)
 
-def _cursor_position(screen: VirtualScreen, token: CSIToken) -> None:
-    """CUP: absolute cursor position (one-based)."""
-    row = max(1, _param_or(token, 0, 1)) - 1
-    col = max(1, _param_or(token, 1, 1)) - 1
-    screen._cursor_row = row
-    screen._cursor_col = col
-    screen._clamp_cursor()
-
-
-def _erase_in_display(screen: VirtualScreen, token: CSIToken) -> None:
-    """ED: erase in display. 0=after cursor, 1=before, 2=all."""
-    mode = _param_or(token, 0, 0)
-    if mode == 2:
-        screen.reset()
-        return
-    if mode == 0:
-        _erase_line_from_cursor(screen)
-        for row_index in range(screen._cursor_row + 1, screen.rows):
-            screen._grid[row_index] = screen._blank_row()
-    elif mode == 1:
-        _erase_line_to_cursor(screen)
-        for row_index in range(0, screen._cursor_row):
-            screen._grid[row_index] = screen._blank_row()
-
-
-def _erase_in_line(screen: VirtualScreen, token: CSIToken) -> None:
-    """EL: erase in line. 0=to end, 1=to start, 2=entire row."""
-    mode = _param_or(token, 0, 0)
-    if mode == 0:
-        _erase_line_from_cursor(screen)
-    elif mode == 1:
-        _erase_line_to_cursor(screen)
-    elif mode == 2:
-        screen._grid[screen._cursor_row] = screen._blank_row()
-
-
-def _erase_line_from_cursor(screen: VirtualScreen) -> None:
-    """Blank cells from the cursor column to the end of the row."""
-    row = screen._grid[screen._cursor_row]
-    for col in range(screen._cursor_col, screen.cols):
-        row[col] = Cell()
-
-
-def _erase_line_to_cursor(screen: VirtualScreen) -> None:
-    """Blank cells from column 0 to and including the cursor column."""
-    row = screen._grid[screen._cursor_row]
-    for col in range(0, screen._cursor_col + 1):
-        row[col] = Cell()
-
-
-def _sgr(screen: VirtualScreen, token: CSIToken) -> None:
-    """SGR: apply Select Graphic Rendition updates to current attributes."""
-    params = token.params or (0,)
-    attrs = set(screen._attrs)
-    for raw in params:
-        code = 0 if raw < 0 else raw
-        if code == 0:
-            attrs.clear()
-        elif code == 1:
-            attrs.add(ATTR_BOLD)
-        elif code == 2:
-            attrs.add(ATTR_DIM)
-        elif code == 4:
-            attrs.add(ATTR_UNDERLINE)
-        elif code == 7:
-            attrs.add(ATTR_REVERSE)
-        elif code == 22:
-            attrs.discard(ATTR_BOLD)
-            attrs.discard(ATTR_DIM)
-        elif code == 24:
-            attrs.discard(ATTR_UNDERLINE)
-        elif code == 27:
-            attrs.discard(ATTR_REVERSE)
-    screen._attrs = frozenset(attrs)
-
-
-def _set_column(screen: VirtualScreen, token: CSIToken) -> None:
-    """CHA: move cursor to absolute column (one-based)."""
-    col = max(1, _param_or(token, 0, 1)) - 1
-    screen._cursor_col = col
-    screen._clamp_cursor()
-
-
-_CSI_HANDLERS = {
-    "A": _cursor_up,
-    "B": _cursor_down,
-    "C": _cursor_forward,
-    "D": _cursor_back,
-    "G": _set_column,
-    "H": _cursor_position,
-    "f": _cursor_position,
-    "J": _erase_in_display,
-    "K": _erase_in_line,
-    "m": _sgr,
-}
+    _CSI_HANDLERS: ClassVar[dict[str, Callable[["VirtualScreen", CSIToken], None]]] = {
+        "A": _cursor_up,
+        "B": _cursor_down,
+        "C": _cursor_forward,
+        "D": _cursor_back,
+        "G": _set_column,
+        "H": _cursor_position,
+        "f": _cursor_position,
+        "J": _erase_in_display,
+        "K": _erase_in_line,
+        "m": _sgr,
+    }
