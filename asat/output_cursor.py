@@ -50,6 +50,20 @@ class OutputCursor:
         self._page_size = page_size
         self._buffer: Optional[OutputBuffer] = None
         self._index: int = -1
+        # F16 search / goto-line overlay. `_composer_mode` is None
+        # unless the user is actively typing a search query or a line
+        # number; in those states the router intercepts every key and
+        # hands it to `extend_composer`, `backspace_composer`,
+        # `commit_composer`, or `cancel_composer`. `_search_matches`
+        # persists after commit so `next_match` / `prev_match` can keep
+        # cycling through hits until the user searches again or
+        # detaches the cursor.
+        self._composer_mode: Optional[str] = None
+        self._composer_buffer: str = ""
+        self._search_matches: tuple[int, ...] = ()
+        self._search_position: int = -1
+        self._composer_origin: int = -1
+        self._last_search_query: str = ""
 
     @property
     def page_size(self) -> int:
@@ -74,6 +88,7 @@ class OutputCursor:
         Returns the newly focused line, or None if the buffer is empty.
         """
         self._buffer = buffer
+        self._clear_composer_state()
         if len(buffer) == 0:
             self._index = -1
             return None
@@ -86,6 +101,7 @@ class OutputCursor:
         """Drop the attached buffer without publishing any event."""
         self._buffer = None
         self._index = -1
+        self._clear_composer_state()
 
     def current_line(self) -> Optional[OutputLine]:
         """Return the currently focused OutputLine, or None if empty."""
@@ -122,6 +138,157 @@ class OutputCursor:
         if self._buffer is None or len(self._buffer) == 0:
             return None
         return self._seek(len(self._buffer) - 1)
+
+    @property
+    def composer_mode(self) -> Optional[str]:
+        """Return "search", "goto", or None when no composer is active."""
+        return self._composer_mode
+
+    @property
+    def composer_buffer(self) -> str:
+        """Return the in-progress query / line number the user is typing."""
+        return self._composer_buffer
+
+    @property
+    def search_query(self) -> str:
+        """Return the query used by the most recent search (empty if none)."""
+        return self._composer_buffer if self._composer_mode == "search" else self._last_search_query
+
+    @property
+    def search_match_count(self) -> int:
+        """Return the number of matches for the current / last search."""
+        return len(self._search_matches)
+
+    def begin_search(self) -> bool:
+        """Enter SEARCH composer mode; returns False when no buffer lines."""
+        return self._begin_composer("search")
+
+    def begin_goto(self) -> bool:
+        """Enter GOTO-LINE composer mode; returns False when no buffer lines."""
+        return self._begin_composer("goto")
+
+    def extend_composer(self, char: str) -> None:
+        """Append a character to the composer buffer.
+
+        In GOTO mode only digits are accepted; anything else is a silent
+        no-op so a user who hits `g` and then a letter doesn't corrupt
+        the line number buffer. In SEARCH mode the match list is
+        recomputed on every keystroke and the cursor jumps to the first
+        match so listening to the buffer narrates the hits live.
+        """
+        if self._composer_mode is None:
+            return
+        if len(char) != 1:
+            raise ValueError("extend_composer expects exactly one character")
+        if self._composer_mode == "goto" and not char.isdigit():
+            return
+        self._composer_buffer += char
+        if self._composer_mode == "search":
+            self._recompute_matches(jump_to_first=True)
+
+    def backspace_composer(self) -> None:
+        """Trim one character from the composer buffer."""
+        if self._composer_mode is None or not self._composer_buffer:
+            return
+        self._composer_buffer = self._composer_buffer[:-1]
+        if self._composer_mode == "search":
+            self._recompute_matches(jump_to_first=True)
+
+    def commit_composer(self) -> Optional[OutputLine]:
+        """Apply the composer: jump to the parsed line or stay on match.
+
+        For SEARCH, the cursor is already sitting on the current match
+        (kept in sync by `extend_composer`); commit just closes the
+        composer and preserves `_search_matches` so `next_match` /
+        `prev_match` keep working. For GOTO, parse the buffer as 1-
+        based line number, clamp, and seek there.
+        """
+        mode = self._composer_mode
+        if mode is None:
+            return None
+        buffer_text = self._composer_buffer
+        self._composer_mode = None
+        if mode == "search":
+            self._composer_buffer = ""
+            self._last_search_query = buffer_text
+            return self.current_line()
+        self._composer_buffer = ""
+        if not buffer_text:
+            return None
+        try:
+            target_one_based = int(buffer_text)
+        except ValueError:
+            return None
+        return self._seek(target_one_based - 1)
+
+    def cancel_composer(self) -> Optional[OutputLine]:
+        """Discard the composer and restore the line the user started on."""
+        if self._composer_mode is None:
+            return None
+        origin = self._composer_origin
+        self._clear_composer_state()
+        if origin < 0:
+            return self.current_line()
+        return self._seek(origin)
+
+    def next_match(self) -> Optional[OutputLine]:
+        """Cycle to the next search match; no-op if there are none."""
+        if not self._search_matches:
+            return None
+        self._search_position = (self._search_position + 1) % len(self._search_matches)
+        return self._seek(self._search_matches[self._search_position])
+
+    def prev_match(self) -> Optional[OutputLine]:
+        """Cycle to the previous search match; no-op if there are none."""
+        if not self._search_matches:
+            return None
+        self._search_position = (self._search_position - 1) % len(self._search_matches)
+        return self._seek(self._search_matches[self._search_position])
+
+    def jump_to_line(self, line_number: int) -> Optional[OutputLine]:
+        """Focus the given zero-based line number (clamped to the buffer)."""
+        return self._seek(line_number)
+
+    def _begin_composer(self, mode: str) -> bool:
+        """Shared entry point for `begin_search` and `begin_goto`."""
+        if self._buffer is None or len(self._buffer) == 0:
+            return False
+        self._composer_mode = mode
+        self._composer_buffer = ""
+        self._composer_origin = self._index
+        if mode == "search":
+            self._search_matches = ()
+            self._search_position = -1
+        return True
+
+    def _clear_composer_state(self) -> None:
+        """Reset every composer field back to its detached defaults."""
+        self._composer_mode = None
+        self._composer_buffer = ""
+        self._search_matches = ()
+        self._search_position = -1
+        self._composer_origin = -1
+        self._last_search_query = ""
+
+    def _recompute_matches(self, jump_to_first: bool) -> None:
+        """Rebuild the match list from the current buffer and query."""
+        if self._buffer is None or not self._composer_buffer:
+            self._search_matches = ()
+            self._search_position = -1
+            return
+        query = self._composer_buffer.lower()
+        matches = tuple(
+            line.line_number
+            for line in self._buffer
+            if query in line.text.lower()
+        )
+        self._search_matches = matches
+        if not matches:
+            self._search_position = -1
+            return
+        if jump_to_first:
+            self._search_position = 0
+            self._seek(matches[0])
 
     def _seek(self, target: int) -> Optional[OutputLine]:
         """Clamp target into range, move, and publish if actually changed."""

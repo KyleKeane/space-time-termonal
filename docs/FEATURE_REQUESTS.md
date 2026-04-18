@@ -320,6 +320,8 @@ the default bank's `cell_created` cue actually fires.
 
 ## F16 — Output search + jump-to-line
 
+**Status: Done.**
+
 **Gap.** OUTPUT mode has no search, no "jump to line N", no
 "next/previous error line" navigation. Long outputs are walked one
 line at a time with Up/Down only.
@@ -329,12 +331,15 @@ output means holding Down until you hear "FAILED". A stderr-only
 filter is useful but the Action menu's "copy stderr only" is
 itself unreachable (F14).
 
-**Sketch.** Add an in-OUTPUT-mode overlay state for search: `/`
-enters the search prompt, typed chars narrate matches as you type,
-Enter lands on the first match, `n`/`N` walk next/previous. Add
-`g<number>` for jump-to-line. Use the existing `OutputBuffer` line
-index; no new event types needed — `OUTPUT_LINE_FOCUSED` already
-fires on every jump.
+**Sketch (shipped).** `OutputCursor` gained a composer state —
+`begin_search` / `begin_goto` + `extend_composer` / `backspace_composer`
+/ `commit_composer` / `cancel_composer`. The router binds `/` to
+search, `g` to jump-to-line, and `n` / `N` to next / previous
+match. Typed characters live-narrow matches and the cursor jumps
+to the first hit on every keystroke (relying on the already-firing
+`OUTPUT_LINE_FOCUSED` event). Escape restores the line the user
+started on; arrow keys are swallowed while a composer is open so
+they don't silently dismiss the overlay.
 
 ---
 

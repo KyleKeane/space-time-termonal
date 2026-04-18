@@ -89,6 +89,11 @@ def default_bindings() -> BindingMap:
         Up/Down walk one line at a time,
         PageUp/PageDown jump a page,
         Home/End jump to the first or last captured line,
+        `/` opens the search composer (typed chars narrow matches
+        live, Enter commits, Escape cancels), `n` / `N` cycle to
+        next / previous match,
+        `g` opens the goto-line composer (type a line number then
+        Enter),
         F2 (or Ctrl+.) opens the contextual actions menu,
         Escape returns to notebook mode.
 
@@ -143,6 +148,10 @@ def default_bindings() -> BindingMap:
             kc.HOME: "output_to_start",
             kc.END: "output_to_end",
             kc.ESCAPE: "exit_output",
+            Key.printable("/"): "output_search_begin",
+            Key.printable("g"): "output_goto_begin",
+            Key.printable("n"): "output_search_next",
+            Key.printable("N"): "output_search_prev",
             kc.F2: "open_action_menu",
             menu_open: "open_action_menu",
         },
@@ -193,6 +202,7 @@ HELP_LINES: tuple[str, ...] = (
     "           Backspace/Delete cut, Left/Right walk, Home/End jump (or Ctrl+A/E).",
     "           Ctrl+W kills word, Ctrl+U kills to start, Ctrl+K kills to end.",
     "OUTPUT:    Up/Down step lines, PageUp/PageDown page, Escape leaves.",
+    "           / search (type query, Enter commits), n / N next / prev hit, g jump-to-line.",
     "SETTINGS:  Up/Down walk, Right/Enter descend, Left/Escape ascend, e edit, Ctrl+S save, Ctrl+Q close.",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
     "Meta:      :help, :settings, :save, :quit, :delete, :duplicate (INPUT then Enter).",
@@ -256,6 +266,8 @@ class InputRouter:
         mode = self._cursor.focus.mode
         if mode == FocusMode.SETTINGS and self._settings_active_editing():
             return self._dispatch_settings_edit_key(key)
+        if mode == FocusMode.OUTPUT and self._output_composing():
+            return self._dispatch_output_composer_key(key)
         mode_map = self._bindings.get(mode, {})
         action = mode_map.get(key)
         if action is not None:
@@ -288,6 +300,45 @@ class InputRouter:
         if key == kc.ESCAPE:
             self._invoke("menu_close", key)
             return "menu_close"
+        return None
+
+    def _output_composing(self) -> bool:
+        """Return True when the output cursor is in a search/goto composer."""
+        return (
+            self._output_cursor is not None
+            and self._output_cursor.composer_mode is not None
+        )
+
+    def _dispatch_output_composer_key(self, key: Key) -> Optional[str]:
+        """Route keys while the user is typing a `/` search or `g` line jump.
+
+        Printable characters extend the query / line number, Backspace
+        trims, Enter commits, Escape cancels. Every other key is
+        swallowed so arrow motions don't leak through and silently
+        cancel the composer.
+        """
+        assert self._output_cursor is not None
+        if key == kc.ENTER:
+            self._invoke("output_composer_commit", key)
+            return "output_composer_commit"
+        if key == kc.ESCAPE:
+            self._invoke("output_composer_cancel", key)
+            return "output_composer_cancel"
+        if key == kc.BACKSPACE:
+            self._invoke("output_composer_backspace", key)
+            return "output_composer_backspace"
+        if key.is_printable() and key.char is not None:
+            self._output_cursor.extend_composer(key.char)
+            self._publish_action(
+                "output_composer_extend",
+                key,
+                {
+                    "char": key.char,
+                    "mode": self._output_cursor.composer_mode,
+                    "query": self._output_cursor.composer_buffer,
+                },
+            )
+            return "output_composer_extend"
         return None
 
     def _settings_active_editing(self) -> bool:
@@ -574,6 +625,14 @@ class InputRouter:
             "duplicate_cell": _void(self._cursor.duplicate_focused_cell),
             "move_cell_up": _void(lambda: self._cursor.move_focused_cell(-1)),
             "move_cell_down": _void(lambda: self._cursor.move_focused_cell(+1)),
+            "output_search_begin": self._output_search_begin,
+            "output_goto_begin": self._output_goto_begin,
+            "output_search_next": self._output_search_next,
+            "output_search_prev": self._output_search_prev,
+            "output_composer_extend": lambda: None,
+            "output_composer_backspace": self._output_composer_backspace,
+            "output_composer_commit": self._output_composer_commit,
+            "output_composer_cancel": self._output_composer_cancel,
         }
         if action not in handlers:
             raise KeyError(f"Unknown action: {action}")
@@ -587,6 +646,62 @@ class InputRouter:
         if self._output_cursor is None:
             return
         operation(self._output_cursor)
+
+    def _output_search_begin(self) -> Optional[dict[str, object]]:
+        """Open the `/` search composer on the attached output cursor."""
+        if self._output_cursor is None:
+            return None
+        started = self._output_cursor.begin_search()
+        return {"opened": started}
+
+    def _output_goto_begin(self) -> Optional[dict[str, object]]:
+        """Open the `g` line-jump composer on the attached output cursor."""
+        if self._output_cursor is None:
+            return None
+        started = self._output_cursor.begin_goto()
+        return {"opened": started}
+
+    def _output_search_next(self) -> Optional[dict[str, object]]:
+        """Cycle to the next search hit (no-op without prior matches)."""
+        if self._output_cursor is None:
+            return None
+        line = self._output_cursor.next_match()
+        if line is None:
+            return {"matched": False}
+        return {"matched": True, "line_number": line.line_number}
+
+    def _output_search_prev(self) -> Optional[dict[str, object]]:
+        """Cycle to the previous search hit (no-op without prior matches)."""
+        if self._output_cursor is None:
+            return None
+        line = self._output_cursor.prev_match()
+        if line is None:
+            return {"matched": False}
+        return {"matched": True, "line_number": line.line_number}
+
+    def _output_composer_backspace(self) -> None:
+        """Trim the in-progress query or line-number buffer by one char."""
+        if self._output_cursor is not None:
+            self._output_cursor.backspace_composer()
+
+    def _output_composer_commit(self) -> Optional[dict[str, object]]:
+        """Apply the in-progress composer; report where we landed."""
+        if self._output_cursor is None:
+            return None
+        mode = self._output_cursor.composer_mode
+        query = self._output_cursor.composer_buffer
+        line = self._output_cursor.commit_composer()
+        payload: dict[str, object] = {"mode": mode, "query": query}
+        if line is not None:
+            payload["line_number"] = line.line_number
+        return payload
+
+    def _output_composer_cancel(self) -> Optional[dict[str, object]]:
+        """Discard the composer and restore the line the user started on."""
+        if self._output_cursor is None:
+            return None
+        self._output_cursor.cancel_composer()
+        return None
 
     def _publish_key(self, key: Key) -> None:
         """Publish a KEY_PRESSED event describing the keystroke."""

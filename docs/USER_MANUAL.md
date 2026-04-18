@@ -222,6 +222,9 @@ command's narration flew by and you want to re-hear line 47.
 | Up / Down   | Previous / next line.                             |
 | PageUp / PageDown | Jump a page.                                |
 | Home / End  | Jump to the first / last captured line.           |
+| `/`         | Search: type a query (case-insensitive). The cursor jumps to the first match as you type. Enter commits, Escape restores your starting line. |
+| `n` / `N`   | After a committed search, cycle to the next / previous match. |
+| `g`         | Jump to line: type a 1-based line number, Enter commits. |
 | Escape      | Return to NOTEBOOK mode.                          |
 
 Each step plays the `focus_shift` cue and the narrator reads the
@@ -375,6 +378,9 @@ Every key you need, one table.
 | OUTPUT     | Up / Down         | Prev / next line                      |
 | OUTPUT     | PageUp / PageDown | Jump a page                           |
 | OUTPUT     | Home / End        | First / last line                     |
+| OUTPUT     | `/`               | Search (live), Enter commits, Escape restores |
+| OUTPUT     | `n` / `N`         | Next / previous search match          |
+| OUTPUT     | `g<number>` Enter | Jump to 1-based line number           |
 | OUTPUT     | Escape            | Back to NOTEBOOK                      |
 | OUTPUT     | F2 / Ctrl+.       | Open actions menu                     |
 | MENU       | Up / Down         | Prev / next item                      |

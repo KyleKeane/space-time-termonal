@@ -717,6 +717,133 @@ class ActionMenuBindingTests(unittest.TestCase):
         self.assertEqual(router.handle_key(F2), "open_action_menu")
 
 
+class OutputSearchAndGotoBindingTests(unittest.TestCase):
+    """F16: `/` opens search, `g` opens goto-line, `n`/`N` cycle matches."""
+
+    def _stack(
+        self,
+        lines: list[tuple[str, str]],
+    ) -> tuple[EventBus, NotebookCursor, InputRouter, OutputCursor]:
+        bus = EventBus()
+        session = Session.new()
+        cell = Cell.new("echo")
+        session.add_cell(cell)
+        cursor = NotebookCursor(session, bus)
+        output_cursor = OutputCursor(bus, page_size=3)
+        buffer = OutputBuffer(cell_id=cell.cell_id)
+        for text, stream in lines:
+            buffer.append(text, stream=stream)
+        output_cursor.attach(buffer)
+        cursor.view_output_mode()
+        router = InputRouter(cursor, bus, output_cursor=output_cursor)
+        return bus, cursor, router, output_cursor
+
+    def test_slash_opens_search_composer(self) -> None:
+        _, _, router, oc = self._stack([("alpha", "stdout"), ("beta", "stdout")])
+        self.assertEqual(router.handle_key(Key.printable("/")), "output_search_begin")
+        self.assertEqual(oc.composer_mode, "search")
+
+    def test_typed_chars_extend_search_and_narrow_matches(self) -> None:
+        _, _, router, oc = self._stack(
+            [("one", "stdout"), ("two", "stdout"), ("three", "stdout"), ("four", "stdout")]
+        )
+        router.handle_key(Key.printable("/"))
+        router.handle_key(Key.printable("t"))
+        # First match is "two" at index 1.
+        self.assertEqual(oc.line_number, 1)
+        router.handle_key(Key.printable("h"))
+        # Now only "three" matches (index 2).
+        self.assertEqual(oc.line_number, 2)
+
+    def test_enter_commits_search_and_leaves_composer(self) -> None:
+        _, _, router, oc = self._stack([("hi", "stdout"), ("hello", "stdout")])
+        router.handle_key(Key.printable("/"))
+        router.handle_key(Key.printable("h"))
+        router.handle_key(Key.printable("e"))
+        result = router.handle_key(ENTER)
+        self.assertEqual(result, "output_composer_commit")
+        self.assertIsNone(oc.composer_mode)
+        self.assertEqual(oc.line_number, 1)
+
+    def test_escape_cancels_search_and_restores_position(self) -> None:
+        _, _, router, oc = self._stack([("a", "stdout"), ("b", "stdout"), ("c", "stdout")])
+        oc.move_to_start()
+        router.handle_key(Key.printable("/"))
+        router.handle_key(Key.printable("c"))
+        self.assertEqual(oc.line_number, 2)
+        result = router.handle_key(ESCAPE)
+        self.assertEqual(result, "output_composer_cancel")
+        self.assertIsNone(oc.composer_mode)
+        self.assertEqual(oc.line_number, 0)
+
+    def test_n_cycles_to_next_match_after_commit(self) -> None:
+        _, _, router, oc = self._stack(
+            [("error 1", "stdout"), ("ok", "stdout"), ("error 2", "stdout")]
+        )
+        router.handle_key(Key.printable("/"))
+        for ch in "error":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        self.assertEqual(oc.line_number, 0)
+        self.assertEqual(router.handle_key(Key.printable("n")), "output_search_next")
+        self.assertEqual(oc.line_number, 2)
+        self.assertEqual(router.handle_key(Key.printable("N")), "output_search_prev")
+        self.assertEqual(oc.line_number, 0)
+
+    def test_g_opens_goto_and_digits_extend(self) -> None:
+        _, _, router, oc = self._stack(
+            [(f"line-{i}", "stdout") for i in range(12)]
+        )
+        self.assertEqual(router.handle_key(Key.printable("g")), "output_goto_begin")
+        self.assertEqual(oc.composer_mode, "goto")
+        router.handle_key(Key.printable("5"))
+        self.assertEqual(oc.composer_buffer, "5")
+        router.handle_key(ENTER)
+        self.assertIsNone(oc.composer_mode)
+        # 1-based 5 -> index 4.
+        self.assertEqual(oc.line_number, 4)
+
+    def test_goto_non_digits_are_swallowed(self) -> None:
+        _, _, router, oc = self._stack([(f"l{i}", "stdout") for i in range(5)])
+        router.handle_key(Key.printable("g"))
+        router.handle_key(Key.printable("x"))  # swallowed
+        router.handle_key(Key.printable("3"))
+        self.assertEqual(oc.composer_buffer, "3")
+
+    def test_backspace_trims_composer_buffer(self) -> None:
+        _, _, router, oc = self._stack([("alpha", "stdout"), ("beta", "stdout")])
+        router.handle_key(Key.printable("/"))
+        for ch in "al":
+            router.handle_key(Key.printable(ch))
+        self.assertEqual(oc.composer_buffer, "al")
+        result = router.handle_key(BACKSPACE)
+        self.assertEqual(result, "output_composer_backspace")
+        self.assertEqual(oc.composer_buffer, "a")
+
+    def test_motion_keys_are_swallowed_during_composer(self) -> None:
+        """Arrow keys must NOT step the line cursor while a composer is
+        open — that would silently dismiss the search / goto."""
+        _, _, router, oc = self._stack([("a", "stdout"), ("b", "stdout"), ("c", "stdout")])
+        router.handle_key(Key.printable("/"))
+        router.handle_key(Key.printable("a"))
+        landing = oc.line_number
+        self.assertIsNone(router.handle_key(UP))
+        self.assertEqual(oc.line_number, landing)
+        self.assertEqual(oc.composer_mode, "search")
+
+    def test_search_without_output_cursor_is_noop(self) -> None:
+        # Router with no OutputCursor: the binding still dispatches but
+        # the handler guards against the missing collaborator.
+        bus = EventBus()
+        session = Session.new()
+        cell = Cell.new("echo")
+        session.add_cell(cell)
+        cursor = NotebookCursor(session, bus)
+        cursor.view_output_mode()
+        router = InputRouter(cursor, bus)
+        self.assertEqual(router.handle_key(Key.printable("/")), "output_search_begin")
+
+
 class CellLifecycleBindingTests(unittest.TestCase):
     """F15: cell-level ops bound to NOTEBOOK keystrokes and meta-commands."""
 
