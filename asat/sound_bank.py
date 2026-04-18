@@ -1,8 +1,8 @@
 """SoundBank: the data model behind ASAT's parametric audio framework.
 
 A SoundBank tells the runtime what to do when each Event flies past on
-the bus. Rather than hard-coding a table in Python (which Phase 3's
-VoiceRouter does today) the mapping lives in data:
+the bus. Rather than hard-coding a routing table in Python, the
+mapping lives in data:
 
     Voice       - a parametric TTS configuration. Engine, rate, pitch,
                   volume, plus a spatial azimuth and elevation so the

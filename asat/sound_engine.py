@@ -1,21 +1,19 @@
 """SoundEngine: data-driven audio dispatcher for events.
 
-The SoundEngine ties together the three previous audio phases:
+The SoundEngine ties together the audio phases:
 
 - SoundBank (A1) — voices, sound recipes, and event bindings as data.
 - SoundGenerator (A2) — synthesises mono AudioBuffers from recipes.
-- TTSEngine + Spatializer + AudioSink (phase 3) — the playback stack.
+- TTSEngine + Spatializer + AudioSink — the underlying playback stack.
 
 When an event flies past on the bus, the engine looks up every binding
 whose `event_type` matches, filters by the binding's `predicate`,
 renders the `say_template` against the event payload, synthesises the
 voice (if any) and the sound recipe (if any), spatialises both by
 their azimuth / elevation, mixes the two, and hands the result to the
-AudioSink.
-
-Unlike the Phase-3 `SpatialAudioEngine`, nothing here is hard-coded:
-swap in a different SoundBank and the engine starts reacting to a
-different set of events the moment `set_bank(...)` returns.
+AudioSink. Swap in a different SoundBank and the engine starts
+reacting to a different set of events the moment `set_bank(...)`
+returns.
 
 Predicates are evaluated by a pluggable `PredicateEvaluator`. The
 default one supports three forms, enough for the common cases without

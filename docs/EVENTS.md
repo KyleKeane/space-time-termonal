@@ -135,13 +135,26 @@ is a tuple of dicts with `row`, `text`, `selected`.
 
 ## Audio engine
 
-Producer: `asat.audio_engine.VoiceRouter` today; to be replaced by the
-data-driven `AudioEngine` described in [AUDIO.md](AUDIO.md).
+Producer: `asat.sound_engine.SoundEngine` (`source="sound_engine"`).
+See [AUDIO.md](AUDIO.md) for the full reference.
 
-| EventType           | Payload keys                           |
-|---------------------|----------------------------------------|
-| `AUDIO_SPOKEN`      | `event_type`, `text`, `voice_id`       |
-| `AUDIO_INTERRUPTED` | `event_type`                           |
+| EventType           | Payload keys                                                 |
+|---------------------|--------------------------------------------------------------|
+| `AUDIO_SPOKEN`      | `event_type`, `binding_id`, `text`, `voice_id`, `sound_id`   |
+| `AUDIO_INTERRUPTED` | `event_type`                                                 |
+
+## Settings editor
+
+Producer: `asat.settings_editor.SettingsEditor`
+(`source="settings_editor"`).
+
+| EventType                | Payload keys                                                        |
+|--------------------------|---------------------------------------------------------------------|
+| `SETTINGS_OPENED`        | `section`, `record_count`                                           |
+| `SETTINGS_CLOSED`        | `dirty`                                                             |
+| `SETTINGS_FOCUSED`       | `level`, `section`, (optional) `record_index`, `record_id`, `field`, `value` |
+| `SETTINGS_VALUE_EDITED`  | `section`, `record_index`, `field`, `old_value`, `new_value`        |
+| `SETTINGS_SAVED`         | `path`                                                              |
 
 ---
 
