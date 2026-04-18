@@ -160,8 +160,15 @@ or when you press Enter from NOTEBOOK mode.
 
 | Key       | What it does                                      |
 |-----------|---------------------------------------------------|
-| Any char  | Appended to the input buffer.                     |
-| Backspace | Removes the last character.                       |
+| Any char  | Inserted at the caret.                            |
+| Backspace | Deletes the character before the caret.           |
+| Delete    | Deletes the character under the caret.            |
+| Left / Right | Move the caret one character.                  |
+| Home / End | Jump the caret to the start / end of the line.   |
+| Ctrl+A / Ctrl+E | Alias for Home / End (readline-style).       |
+| Ctrl+W    | Delete the word immediately before the caret.     |
+| Ctrl+U    | Delete from the start of the line up to the caret. |
+| Ctrl+K    | Delete from the caret to the end of the line.    |
 | Enter     | Submits the command to the execution kernel.      |
 | Escape    | Commits the buffer into the cell and returns to NOTEBOOK (does not run). |
 
@@ -312,7 +319,14 @@ Every key you need, one table.
 | NOTEBOOK   | Ctrl+O            | Enter OUTPUT mode                     |
 | NOTEBOOK   | Ctrl+,            | Open settings editor                  |
 | INPUT      | Enter             | Submit command                        |
-| INPUT      | Backspace         | Delete last char                      |
+| INPUT      | Backspace         | Delete char before caret              |
+| INPUT      | Delete            | Delete char under caret               |
+| INPUT      | Left / Right      | Move caret one character              |
+| INPUT      | Home / End        | Caret to start / end                  |
+| INPUT      | Ctrl+A / Ctrl+E   | Caret to start / end (readline)       |
+| INPUT      | Ctrl+W            | Delete word before caret              |
+| INPUT      | Ctrl+U            | Delete from start of line to caret    |
+| INPUT      | Ctrl+K            | Delete from caret to end of line      |
 | INPUT      | Escape            | Leave INPUT without running           |
 | INPUT      | `:help`⏎          | Narrate + print the cheat sheet       |
 | INPUT      | `:settings`⏎      | Open settings editor                  |

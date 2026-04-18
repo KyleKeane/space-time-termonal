@@ -10,15 +10,18 @@ from asat.events import Event, EventType
 from asat.input_router import InputRouter, default_bindings
 from asat.keys import (
     BACKSPACE,
+    DELETE,
     DOWN,
     END,
     ENTER,
     ESCAPE,
     HOME,
     Key,
+    LEFT,
     Modifier,
     PAGE_DOWN,
     PAGE_UP,
+    RIGHT,
     UP,
 )
 from asat.notebook import FocusMode, NotebookCursor
@@ -158,6 +161,81 @@ class InputModeDispatchTests(unittest.TestCase):
         self.assertIsNone(router.handle_key(Key.combo("n", Modifier.CTRL)))
         self.assertEqual(len(session), before)
         self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+
+
+class InLineBufferEditingBindingTests(unittest.TestCase):
+    """F13: the INPUT-mode binding map wires caret motion + kill keys
+    through to the NotebookCursor."""
+
+    def _enter_with_buffer(self, command: str) -> tuple[NotebookCursor, InputRouter]:
+        _, _, cursor, router, _ = _build([command])
+        router.handle_key(ENTER)
+        return cursor, router
+
+    def test_left_and_right_move_caret(self) -> None:
+        cursor, router = self._enter_with_buffer("echo hi")
+        router.handle_key(LEFT)
+        router.handle_key(LEFT)
+        self.assertEqual(cursor.focus.cursor_position, len("echo hi") - 2)
+        router.handle_key(RIGHT)
+        self.assertEqual(cursor.focus.cursor_position, len("echo hi") - 1)
+
+    def test_home_and_end_jump_caret(self) -> None:
+        cursor, router = self._enter_with_buffer("echo hi")
+        router.handle_key(HOME)
+        self.assertEqual(cursor.focus.cursor_position, 0)
+        router.handle_key(END)
+        self.assertEqual(cursor.focus.cursor_position, len("echo hi"))
+
+    def test_ctrl_a_and_ctrl_e_mirror_home_and_end(self) -> None:
+        cursor, router = self._enter_with_buffer("echo hi")
+        router.handle_key(Key.combo("a", Modifier.CTRL))
+        self.assertEqual(cursor.focus.cursor_position, 0)
+        router.handle_key(Key.combo("e", Modifier.CTRL))
+        self.assertEqual(cursor.focus.cursor_position, len("echo hi"))
+
+    def test_delete_removes_character_under_caret(self) -> None:
+        cursor, router = self._enter_with_buffer("echo hi")
+        router.handle_key(HOME)
+        router.handle_key(DELETE)
+        self.assertEqual(cursor.focus.input_buffer, "cho hi")
+
+    def test_insert_respects_caret_position(self) -> None:
+        cursor, router = self._enter_with_buffer("echo hi")
+        router.handle_key(HOME)
+        router.handle_key(Key.printable("X"))
+        self.assertEqual(cursor.focus.input_buffer, "Xecho hi")
+
+    def test_ctrl_w_kills_word_left(self) -> None:
+        cursor, router = self._enter_with_buffer("echo hello")
+        router.handle_key(Key.combo("w", Modifier.CTRL))
+        self.assertEqual(cursor.focus.input_buffer, "echo ")
+
+    def test_ctrl_u_kills_to_start(self) -> None:
+        cursor, router = self._enter_with_buffer("echo hello")
+        # Park the caret between "echo" and " hello", then kill the prefix.
+        for _ in range(len(" hello")):
+            router.handle_key(LEFT)
+        router.handle_key(Key.combo("u", Modifier.CTRL))
+        self.assertEqual(cursor.focus.input_buffer, " hello")
+
+    def test_ctrl_k_kills_to_end(self) -> None:
+        cursor, router = self._enter_with_buffer("echo hello")
+        for _ in range(len(" hello")):
+            router.handle_key(LEFT)
+        router.handle_key(Key.combo("k", Modifier.CTRL))
+        self.assertEqual(cursor.focus.input_buffer, "echo")
+
+    def test_motion_publishes_action_invoked(self) -> None:
+        bus, _, _, router, _ = _build(["echo hi"])
+        router.handle_key(ENTER)
+        recorder = _Recorder(bus)
+        router.handle_key(LEFT)
+        actions = [
+            e.payload["action"]
+            for e in recorder.types_of(EventType.ACTION_INVOKED)
+        ]
+        self.assertIn("cursor_left", actions)
 
 
 class ActionEventPayloadTests(unittest.TestCase):
