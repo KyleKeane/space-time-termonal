@@ -77,6 +77,7 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.SETTINGS_FOCUSED,
     EventType.SETTINGS_VALUE_EDITED,
     EventType.SETTINGS_SAVED,
+    EventType.HELP_REQUESTED,
 })
 
 
@@ -478,6 +479,21 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             voice_id="system",
             sound_id="settings_save",
             say_template="settings saved",
+            priority=220,
+        ),
+
+        # Help: speak a short summary so :help is useful without a
+        # visible terminal trace. The TerminalRenderer prints the full
+        # cheat sheet on the same event.
+        EventBinding(
+            id="help_requested",
+            event_type=EventType.HELP_REQUESTED.value,
+            voice_id="system",
+            sound_id="settings_chime",
+            say_template=(
+                "help. Escape leaves any mode. Ctrl plus comma opens "
+                "settings. Type colon quit to exit."
+            ),
             priority=220,
         ),
     )

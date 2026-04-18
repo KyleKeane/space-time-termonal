@@ -26,6 +26,7 @@ import sys
 from pathlib import Path
 from typing import Optional, Sequence
 
+from asat import __version__
 from asat.app import Application
 from asat.audio_sink import (
     AudioSink,
@@ -34,7 +35,7 @@ from asat.audio_sink import (
     WavFileSink,
     pick_live_sink,
 )
-from asat.keyboard import KeyboardReader, pick_default
+from asat.keyboard import KeyboardNotAvailable, KeyboardReader, pick_default
 from asat.session import Session
 from asat.sound_bank import SoundBank
 from asat.terminal import TerminalRenderer
@@ -43,7 +44,25 @@ from asat.terminal import TerminalRenderer
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Parse args, build the Application, and drive the read-dispatch loop."""
     args = _parse_args(argv)
-    sink = _make_sink(args.wav_dir, args.live)
+    if args.version:
+        print(f"asat {__version__}")
+        return 0
+    sink = _make_sink(args.wav_dir, args.live, quiet=args.quiet)
+    if (
+        not args.quiet
+        and not args.check
+        and not args.live
+        and args.wav_dir is None
+    ):
+        # Tell first-time users why they are hearing silence without
+        # forcing them to read the docs. Suppressed once any audio
+        # destination is requested explicitly, and when --check is
+        # printing its own diagnostic report.
+        print(
+            "[asat] audio is going to the in-memory sink. Pass --live "
+            "(Windows) or --wav-dir DIR to hear or capture it.",
+            file=sys.stderr,
+        )
     bank = SoundBank.load(args.bank) if args.bank is not None else None
     session = Session.load(args.session) if args.session is not None else None
     app = Application.build(
@@ -53,11 +72,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         session=session,
         session_path=args.session,
     )
+    if args.check:
+        _print_check_report(app, args)
+        app.close()
+        return 0
     if not args.quiet:
         # Attach AFTER Application.build so the renderer does not
         # double-print the startup banner into its own buffer.
         TerminalRenderer(app.bus)
-    keyboard: KeyboardReader = pick_default()
+    try:
+        keyboard: KeyboardReader = pick_default()
+    except KeyboardNotAvailable as exc:
+        print(f"[asat] cannot start: {exc}", file=sys.stderr)
+        app.close()
+        return 2
     try:
         _run(app, keyboard)
     except KeyboardInterrupt:
@@ -68,6 +96,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         keyboard.close()
         app.close()
     return 0
+
+
+def _print_check_report(app: Application, args: argparse.Namespace) -> None:
+    """Write a diagnostic summary and return without starting the loop."""
+    lines = [
+        f"asat {__version__}",
+        f"platform       {sys.platform}",
+        f"stdin tty      {sys.stdin.isatty()}",
+        f"sink           {type(app.sink).__name__}",
+        f"bank path      {args.bank if args.bank is not None else '(built-in default)'}",
+        f"session path   {args.session if args.session is not None else '(fresh)'}",
+        f"session id     {app.session.session_id}",
+        f"bindings       {sum(len(m) for m in app.router.bindings.values())}",
+    ]
+    for line in lines:
+        print(line)
 
 
 def _run(app: Application, keyboard: KeyboardReader) -> None:
@@ -123,10 +167,30 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         default=None,
         help="Load an existing Session from this JSON file; saved on exit.",
     )
+    parser.add_argument(
+        "--version",
+        action="store_true",
+        help="Print the asat version string and exit.",
+    )
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help=(
+            "Build the Application, print a diagnostic summary "
+            "(sink, bank, session, TTY state), and exit without "
+            "entering the key-read loop. Useful for smoke-testing "
+            "a fresh install."
+        ),
+    )
     return parser.parse_args(argv)
 
 
-def _make_sink(wav_dir: Optional[Path], live: bool) -> AudioSink:
+def _make_sink(
+    wav_dir: Optional[Path],
+    live: bool,
+    *,
+    quiet: bool = False,
+) -> AudioSink:
     """Compose the sink chain based on the requested flags.
 
     Priority: `--live` drives the primary sink when available.
@@ -140,7 +204,16 @@ def _make_sink(wav_dir: Optional[Path], live: bool) -> AudioSink:
         try:
             primary = pick_live_sink()
         except LiveAudioUnavailable as exc:
-            print(f"[asat] --live unavailable: {exc}", file=sys.stderr)
+            if not quiet:
+                print(f"[asat] --live unavailable: {exc}", file=sys.stderr)
+                if wav_dir is None:
+                    print(
+                        "[asat] falling back to the in-memory sink. "
+                        "Pair with --wav-dir DIR to capture audio as WAVs "
+                        "you can play back (tracked as F6 in "
+                        "docs/FEATURE_REQUESTS.md).",
+                        file=sys.stderr,
+                    )
             primary = MemorySink()
     else:
         primary = MemorySink()

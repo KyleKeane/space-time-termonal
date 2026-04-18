@@ -194,6 +194,15 @@ Producer: `asat.settings_editor.SettingsEditor`
 | `SETTINGS_VALUE_EDITED`  | `section`, `record_index`, `field`, `old_value`, `new_value`        |
 | `SETTINGS_SAVED`         | `path`                                                              |
 
+## Help surface
+
+Producer: `asat.input_router.InputRouter` (`source="input_router"`),
+fired when the user submits the `:help` meta-command.
+
+| EventType        | Payload keys                                     |
+|------------------|--------------------------------------------------|
+| `HELP_REQUESTED` | `lines` (list of str: the cheat-sheet lines from `asat.input_router.HELP_LINES`) |
+
 ---
 
 ## Adding a new event

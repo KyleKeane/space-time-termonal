@@ -138,6 +138,18 @@ def decode_windows_special(code: int) -> Optional[Key]:
     return _WINDOWS_SPECIAL.get(code)
 
 
+class KeyboardNotAvailable(RuntimeError):
+    """Raised when the process has no usable interactive keyboard.
+
+    The most common trigger is a non-TTY stdin: someone runs
+    `echo :quit | python -m asat`, or launches from a sandbox that
+    pipes stdin, or runs under a CI harness. In those cases the
+    Posix / Windows adapters cannot put the terminal into cbreak
+    mode and would otherwise surface a raw `termios.error` or an
+    IO error as an unexplained traceback.
+    """
+
+
 class PosixKeyboard:
     """Read keystrokes from stdin in cbreak mode and decode them."""
 
@@ -146,6 +158,13 @@ class PosixKeyboard:
         import termios
         import tty
 
+        if not sys.stdin.isatty():
+            raise KeyboardNotAvailable(
+                "ASAT needs an interactive terminal (a TTY). "
+                "stdin is not a TTY, so keystrokes cannot be read. "
+                "Launch from a real terminal, or use ScriptedKeyboard "
+                "in tests."
+            )
         self._termios = termios
         self._fd = sys.stdin.fileno()
         self._original = termios.tcgetattr(self._fd)
@@ -188,6 +207,12 @@ class WindowsKeyboard:
         """Import msvcrt; there is no terminal state to save."""
         import msvcrt
 
+        if not sys.stdin.isatty():
+            raise KeyboardNotAvailable(
+                "ASAT needs an interactive Windows console. "
+                "stdin is not a TTY, so keystrokes cannot be read. "
+                "Launch from cmd, PowerShell, or Windows Terminal."
+            )
         self._msvcrt = msvcrt
 
     def read_key(self) -> Optional[Key]:

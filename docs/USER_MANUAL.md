@@ -22,6 +22,8 @@ python -m asat --wav-dir /tmp/asat  # also write every rendered buffer to WAV
 python -m asat --quiet              # suppress the text trace, audio only
 python -m asat --bank mybank.json   # start from a saved SoundBank
 python -m asat --session s.json     # resume an existing session; saved on exit
+python -m asat --check              # build, print a diagnostic summary, exit
+python -m asat --version            # print the version string and exit
 ```
 
 Every flag is optional and they compose. The common launch recipes:
@@ -38,6 +40,22 @@ Every flag is optional and they compose. The common launch recipes:
 - **Resume a session:** `python -m asat --session work.json`. The
   session loads, you hear a "loaded" narration, and the same file is
   rewritten on exit with whatever cells you ran this time.
+- **Sanity-check your install:** `python -m asat --check`. Builds the
+  Application, prints the picked sink, bank, session, and TTY state,
+  and exits without starting the read loop. Useful when you launched
+  once and heard nothing — `--check` tells you which sink you got.
+
+If you run `python -m asat` with no `--live` / `--wav-dir` flag the
+CLI prints a one-line stderr hint: `[asat] audio is going to the in-
+memory sink. Pass --live (Windows) or --wav-dir DIR to hear or
+capture it.` That is not an error; audio is still being rendered and
+processed, it just isn't going anywhere audible.
+
+**If stdin is not a TTY** (you piped input into ASAT, or you're
+inside a sandbox without a real console) the CLI exits cleanly with
+`[asat] cannot start: ASAT needs an interactive terminal (a TTY). …`
+and returns exit code 2, rather than a raw `termios.error`
+traceback. Launch from a real terminal to fix it.
 
 ### What you should hear and see on launch
 
@@ -50,8 +68,9 @@ The moment the binary starts:
    re-launch with `--live` (Windows) or `--wav-dir DIR` (elsewhere)
    and check the `[asat]` line that `--wav-dir` produces.
 2. **Text trace (unless `--quiet`).** One line reading
-   `[asat] session <id> ready. :quit to exit.`, then
-   `[input #<short-id>]` to confirm you are in INPUT mode.
+   `[asat] session <id> ready. Type :help for the keystroke cheat
+   sheet, :quit to exit.`, then `[input #<short-id>]` to confirm you
+   are in INPUT mode.
 
 If neither the chime nor the banner appear, the session did not
 start cleanly — see the troubleshooting table at the end of this
@@ -61,20 +80,25 @@ file.
 
 ## The five-minute tour
 
-1. **Launch** ASAT. You'll hear a short rising chime (the session
-   start) from directly overhead — that means the session is live.
-2. **Type a command** — e.g. `dir`, `python --version`, `git status`.
+1. **Launch** ASAT with the recipe above for your platform
+   (`--live` on Windows, `--wav-dir DIR` on POSIX). You'll hear a
+   short rising chime (the session start) from directly overhead —
+   that means the session is live.
+2. **Type `:help`** then Enter. You'll hear a short spoken summary
+   of the keys, and the text trace prints the full cheat sheet.
+   You can do this any time you get lost.
+3. **Type a command** — e.g. `dir`, `python --version`, `git status`.
    You are automatically in INPUT mode, so keys go into the current
    cell.
-3. **Press Enter**. You'll hear a triangle-wave "submit" cue on the
+4. **Press Enter**. You'll hear a triangle-wave "submit" cue on the
    left, then the narrator reads output lines as they stream, then a
    major-chord "success" chime on Enter's exit code, or a low minor
    "failure" chord on the right if the command failed.
-4. **Press Escape**. You're now in NOTEBOOK mode. Up / Down walks
+5. **Press Escape**. You're now in NOTEBOOK mode. Up / Down walks
    between cells.
-5. **Press Ctrl+O**. You're now in OUTPUT mode, stepping line-by-line
+6. **Press Ctrl+O**. You're now in OUTPUT mode, stepping line-by-line
    through the selected cell's captured output. Escape leaves.
-6. **Press Ctrl+,** (or type `:settings` then Enter in INPUT mode).
+7. **Press Ctrl+,** (or type `:settings` then Enter in INPUT mode).
    You're in the settings editor. Escape or Ctrl+Q leaves.
 
 That's the whole shape. The rest of this manual is the detail behind
@@ -139,6 +163,7 @@ discarded and the cell is not modified.
 
 | Meta-command | Effect                                               |
 |--------------|------------------------------------------------------|
+| `:help`      | Narrate + print the keystroke cheat sheet.           |
 | `:settings`  | Open the settings editor (same as Ctrl+,).           |
 | `:save`      | Save the current session to disk.                    |
 | `:quit`      | Exit ASAT.                                           |
@@ -279,6 +304,7 @@ Every key you need, one table.
 | INPUT      | Enter             | Submit command                        |
 | INPUT      | Backspace         | Delete last char                      |
 | INPUT      | Escape            | Leave INPUT without running           |
+| INPUT      | `:help`⏎          | Narrate + print the cheat sheet       |
 | INPUT      | `:settings`⏎      | Open settings editor                  |
 | INPUT      | `:save`⏎          | Save session                          |
 | INPUT      | `:quit`⏎          | Exit ASAT                             |
@@ -333,16 +359,28 @@ about the terminal itself rather than about your command.
 
 ## Troubleshooting
 
+**`[asat] cannot start: ASAT needs an interactive terminal (a TTY).`**
+Something is piping your stdin into ASAT — maybe `echo :quit | python
+-m asat`, a CI runner, or a sandbox without a real console. Launch
+from a real terminal instead. Exit code 2.
+
+**I launched and heard nothing.**
+Run `python -m asat --check`. It prints the sink class that was picked,
+the bank path, and whether stdin is a TTY. If the sink is `MemorySink`,
+you forgot `--live` (Windows) or `--wav-dir DIR` (any platform).
+
 **I pressed a key and nothing happened.**
 Check your mode. Most keys are mode-scoped; Ctrl+O in INPUT mode
-just types literally because INPUT mode accepts characters.
+just types literally because INPUT mode accepts characters. When in
+doubt, type `:help` + Enter.
 
 **I lost my command in the middle of typing and now I can't get back
 to the input line.**
 Press Escape from wherever you are (twice if you're in the settings
 editor). You'll be in NOTEBOOK mode. Up / Down to find the cell you
 were typing in, Enter to resume INPUT mode on it — the buffer you
-typed is still there.
+typed is still there. If you are completely unsure where you are,
+drop into INPUT mode and type `:help` + Enter.
 
 **Everything is too chatty.**
 Open `:settings`, navigate to the offending binding, press `e` on

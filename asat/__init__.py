@@ -73,6 +73,7 @@ from asat.input_router import BindingMap, InputRouter, default_bindings
 from asat.interactive import InteractiveMenu, MenuItemView, detect
 from asat.kernel import ExecutionKernel
 from asat.keyboard import (
+    KeyboardNotAvailable,
     KeyboardReader,
     PosixKeyboard,
     ScriptedKeyboard,
@@ -127,8 +128,9 @@ __all__ = [
     "InputRouter",
     "InteractiveMenu",
     "Key",
-    "LiveAudioUnavailable",
+    "KeyboardNotAvailable",
     "KeyboardReader",
+    "LiveAudioUnavailable",
     "MemoryClipboard",
     "MemorySink",
     "MenuItem",

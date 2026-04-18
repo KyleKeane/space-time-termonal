@@ -90,6 +90,7 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "new_value": 1.1,
     },
     EventType.SETTINGS_SAVED: {"path": "/tmp/bank.json"},
+    EventType.HELP_REQUESTED: {"lines": ["help"]},
 }
 
 

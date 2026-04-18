@@ -59,6 +59,9 @@ class EventType(str, Enum):
 
     Audio engine:
         AUDIO_SPOKEN, AUDIO_INTERRUPTED
+
+    Help surface:
+        HELP_REQUESTED
     """
 
     SESSION_CREATED = "session.created"
@@ -100,6 +103,8 @@ class EventType(str, Enum):
 
     AUDIO_SPOKEN = "audio.spoken"
     AUDIO_INTERRUPTED = "audio.interrupted"
+
+    HELP_REQUESTED = "help.requested"
 
     SETTINGS_OPENED = "settings.opened"
     SETTINGS_CLOSED = "settings.closed"

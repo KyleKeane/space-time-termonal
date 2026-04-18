@@ -28,6 +28,22 @@ class TerminalRendererTests(unittest.TestCase):
         self._emit(EventType.SESSION_CREATED, {"session_id": "abc123"})
         self.assertIn("session abc123 ready", self.stream.getvalue())
 
+    def test_session_banner_advertises_help_and_quit(self) -> None:
+        self._emit(EventType.SESSION_CREATED, {"session_id": "abc"})
+        out = self.stream.getvalue()
+        self.assertIn(":help", out)
+        self.assertIn(":quit", out)
+
+    def test_help_requested_prints_each_line(self) -> None:
+        self._emit(
+            EventType.HELP_REQUESTED,
+            {"lines": ["line one", "line two", "line three"]},
+        )
+        out = self.stream.getvalue()
+        self.assertIn("line one", out)
+        self.assertIn("line two", out)
+        self.assertIn("line three", out)
+
     def test_session_saved_writes_the_path(self) -> None:
         self._emit(EventType.SESSION_SAVED, {"path": "/tmp/s.json"})
         self.assertIn("/tmp/s.json", self.stream.getvalue())

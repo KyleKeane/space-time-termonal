@@ -11,9 +11,15 @@ from __future__ import annotations
 
 import unittest
 
+import io
+from unittest import mock
+
 from asat import keys as kc
 from asat.keyboard import (
+    KeyboardNotAvailable,
+    PosixKeyboard,
     ScriptedKeyboard,
+    WindowsKeyboard,
     decode_control_byte,
     decode_windows_special,
     parse_csi,
@@ -82,6 +88,30 @@ class ScriptedKeyboardTests(unittest.TestCase):
         self.assertEqual(reader.read_key(), kc.ENTER)
         self.assertEqual(reader.read_key(), Key.printable("a"))
         self.assertIsNone(reader.read_key())
+
+
+class TTYGuardTests(unittest.TestCase):
+    """Both platform adapters must refuse to construct on a non-TTY."""
+
+    def test_posix_keyboard_raises_keyboard_not_available_when_stdin_is_not_a_tty(
+        self,
+    ) -> None:
+        fake_stdin = io.StringIO("")  # StringIO.isatty() -> False
+        with mock.patch("asat.keyboard.sys.stdin", fake_stdin):
+            with self.assertRaises(KeyboardNotAvailable) as ctx:
+                PosixKeyboard()
+        self.assertIn("interactive terminal", str(ctx.exception))
+
+    def test_windows_keyboard_raises_keyboard_not_available_when_stdin_is_not_a_tty(
+        self,
+    ) -> None:
+        fake_stdin = io.StringIO("")
+        fake_msvcrt = mock.MagicMock()
+        with mock.patch.dict("sys.modules", {"msvcrt": fake_msvcrt}):
+            with mock.patch("asat.keyboard.sys.stdin", fake_stdin):
+                with self.assertRaises(KeyboardNotAvailable) as ctx:
+                    WindowsKeyboard()
+        self.assertIn("interactive Windows console", str(ctx.exception))
 
 
 if __name__ == "__main__":
