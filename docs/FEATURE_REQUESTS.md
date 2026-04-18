@@ -267,25 +267,30 @@ etc. action names when ready.
 
 ## F14 — ActionMenu keystroke binding
 
-**Gap.** `asat/actions.py` builds a fully-functional `ActionMenu`
-with default providers that contribute "copy focused line", "copy
-all output", "copy stderr only", "edit command", "explore output",
-etc. No default keystroke opens the menu, so the whole module is
-unreachable from a real user's keyboard today. As a direct
-consequence, clipboard functionality is also unreachable.
+**Status.** Done — `Application.build()` now wires a `MemoryClipboard`,
+an `ActionCatalog` via `default_actions(...)`, and an `ActionMenu`.
+F2 (and Ctrl+. as a fallback) opens the menu from NOTEBOOK, INPUT,
+and OUTPUT modes. While the menu is open, Up/Down cycle items,
+Enter invokes, and Escape closes. SETTINGS mode is excluded so the
+modal editor's keys do not collide.
 
-**Where it surfaces.** A user who wants to copy a single output
-line has no way to do it. Tests drive `ActionMenu.activate(...)`
-programmatically but no key triggers `ACTION_MENU_OPENED`.
+**Gap.** `asat/actions.py` built a fully-functional `ActionMenu`
+with default providers ("copy focused line", "copy all output",
+"copy stderr only", "edit command", "explore output", etc.) but
+no default keystroke opened the menu, so the whole module was
+unreachable from a real user's keyboard. As a direct consequence,
+clipboard functionality was also unreachable.
 
-**Sketch.** `Application.build()` constructs an `ActionCatalog` via
-`default_actions(...)` and an `ActionMenu` wired to the bus. Add
-an `open_action_menu` action in `InputRouter`, bound to a mode-
-agnostic key (F2 or `Menu` key; Ctrl+. as fallback on keyboards
-without F-row). When the menu is open the router routes keys to a
-menu dispatch (Up/Down cycle, Enter activate, Escape close).
-`default_bindings()` gains the one new entry; every other mode
-keeps its current keymap unchanged.
+**Where it surfaced.** A user who wanted to copy a single output
+line had no way to do it. Tests drove `ActionMenu.activate(...)`
+programmatically but no key triggered `ACTION_MENU_OPENED`.
+
+**Sketch (shipped).** `Application.build()` constructs the catalog,
+menu, and clipboard; `InputRouter` gains an `action_menu` parameter
+and an `open_action_menu` action that snapshots the focused cell
+(plus line context in OUTPUT mode) into an `ActionContext` before
+calling `menu.open(...)`. See `asat/input_router.py::_open_action_menu`
+and `_dispatch_menu_key`.
 
 ---
 
