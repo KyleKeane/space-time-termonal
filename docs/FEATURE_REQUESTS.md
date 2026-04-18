@@ -189,24 +189,28 @@ subprocess and publishes `COMMAND_CANCELLED`; bind Ctrl+C to it.
 
 ## F11 — Auto-advance after submit
 
-**Gap.** `NotebookCursor.submit()` drops to NOTEBOOK mode on the
-just-run cell. To run another command the user must press Ctrl+N
+**Status.** Done — `NotebookCursor.submit()` now appends a fresh
+empty cell and enters INPUT on it when the user submits a non-empty
+command from the last cell. Empty submits and submits from middle
+cells still stay on the submitted cell.
+
+**Gap.** `NotebookCursor.submit()` dropped to NOTEBOOK mode on the
+just-run cell. To run another command the user had to press Ctrl+N
 (create a fresh cell + enter INPUT). First-time users expect
 REPL-like "prompt again after Enter" behaviour instead.
 
-**Where it surfaces.** A user typing `echo first`, Enter, then
-`echo second` finds that letters are silently swallowed in NOTEBOOK
-mode; pressing Enter re-enters INPUT on the previous cell with its
-old command pre-loaded and appends to it. Running three commands in
-a row currently produces `echo firstecho secondecho third` in one
-cell. The manual's five-minute tour does not mention Ctrl+N.
+**Where it surfaced.** A user typing `echo first`, Enter, then
+`echo second` found that letters were silently swallowed in
+NOTEBOOK mode; pressing Enter re-entered INPUT on the previous cell
+with its old command pre-loaded and appended to it. Running three
+commands in a row produced `echo firstecho secondecho third` in one
+cell. The manual's five-minute tour did not mention Ctrl+N.
 
-**Sketch.** Either change `NotebookCursor.submit()` to create an
-empty trailing cell and transition to INPUT on it, or have
-`Application._on_action_invoked` append a fresh cell after every
-non-meta submit action. Audit the `FOCUS_CHANGED` / narration flow
-so the transition produces exactly one `[input #…]` banner rather
-than a flicker through NOTEBOOK.
+**Sketch (shipped).** `NotebookCursor.submit()` auto-advances when
+(1) the submitted command is non-empty, and (2) the submitted cell
+is the last cell in the session. The transition goes straight
+INPUT → INPUT so observers see exactly one `[input #…]` banner. See
+`asat/notebook.py::NotebookCursor.submit`.
 
 ---
 
@@ -236,23 +240,28 @@ its own review.
 
 ## F13 — In-line buffer editing
 
-**Gap.** INPUT mode only accepts printable characters and
-Backspace. Left / Right / Home / End / Delete / Ctrl+A / Ctrl+U /
-Ctrl+W / Ctrl+K are all unbound. A typo early in a long command
-forces the user to backspace the entire line.
+**Status.** Done — `FocusState` now carries `cursor_position`, and
+the NotebookCursor exposes `cursor_left` / `cursor_right` /
+`cursor_home` / `cursor_end` / `delete_forward` / `delete_word_left`
+/ `delete_to_start` / `delete_to_end`. INPUT-mode bindings cover
+Left / Right / Home / End / Delete plus the readline shortcuts
+Ctrl+A / Ctrl+E / Ctrl+W / Ctrl+U / Ctrl+K. Motion is published via
+`ACTION_INVOKED`; no new event type was needed.
 
-**Where it surfaces.** Every command of non-trivial length. Blind
+**Gap.** INPUT mode only accepted printable characters and
+Backspace. Left / Right / Home / End / Delete / Ctrl+A / Ctrl+U /
+Ctrl+W / Ctrl+K were all unbound. A typo early in a long command
+forced the user to backspace the entire line.
+
+**Where it surfaced.** Every command of non-trivial length. Blind
 users rely on left/right navigation and word-kill shortcuts to
 correct text without re-typing.
 
-**Sketch.** Add `cursor_position: int` to `FocusState`. Extend
-`NotebookCursor` with `cursor_left`, `cursor_right`, `cursor_home`,
-`cursor_end`, `delete_forward`, `delete_word_left`, `delete_to_start`,
-`delete_to_end`, and teach `insert_character` and `backspace` to
-respect the cursor position. Publish a new `INPUT_CURSOR_MOVED`
-event (or extend `FOCUS_CHANGED`) so the audio engine can cue the
-move without speaking every character. Bind the keys in
-`default_bindings()` and add a default cue to the SoundBank.
+**Not shipped (follow-up).** A dedicated SoundBank cue for caret
+motion is still pending — observers currently hear the existing
+`insert_character` / `backspace` cues but no cue for pure motion.
+Audio designers can wire a new binding against the `cursor_left`
+etc. action names when ready.
 
 ---
 

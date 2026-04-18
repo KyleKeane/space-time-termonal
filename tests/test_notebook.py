@@ -317,5 +317,147 @@ class ResetInputBufferTests(unittest.TestCase):
         self.assertEqual(recorder.events, [])
 
 
+class InLineBufferEditingTests(unittest.TestCase):
+    """F13: caret tracking, in-place insert, and readline-style kill
+    shortcuts inside the input buffer."""
+
+    def setUp(self) -> None:
+        self.bus = EventBus()
+        self.recorder = _Recorder(self.bus)
+        self.session, self.cells = _session_with(["echo hello"])
+        self.cursor = NotebookCursor(self.session, self.bus)
+        self.cursor.enter_input_mode()
+        # Drop the focus-changed event caused by entering input mode.
+        self.recorder.events.clear()
+
+    def test_enter_input_mode_places_caret_at_end(self) -> None:
+        self.assertEqual(self.cursor.focus.cursor_position, len("echo hello"))
+
+    def test_cursor_left_and_right_move_one_character(self) -> None:
+        self.cursor.cursor_left()
+        self.cursor.cursor_left()
+        self.assertEqual(self.cursor.focus.cursor_position, len("echo hello") - 2)
+        self.cursor.cursor_right()
+        self.assertEqual(self.cursor.focus.cursor_position, len("echo hello") - 1)
+
+    def test_cursor_motion_does_not_publish_focus_changed(self) -> None:
+        self.cursor.cursor_left()
+        self.cursor.cursor_right()
+        self.cursor.cursor_home()
+        self.cursor.cursor_end()
+        self.assertEqual(self.recorder.events, [])
+
+    def test_cursor_left_clamps_at_start(self) -> None:
+        self.cursor.cursor_home()
+        self.cursor.cursor_left()
+        self.assertEqual(self.cursor.focus.cursor_position, 0)
+
+    def test_cursor_right_clamps_at_end(self) -> None:
+        # Already at end from setUp.
+        self.cursor.cursor_right()
+        self.assertEqual(self.cursor.focus.cursor_position, len("echo hello"))
+
+    def test_cursor_home_and_end(self) -> None:
+        self.cursor.cursor_home()
+        self.assertEqual(self.cursor.focus.cursor_position, 0)
+        self.cursor.cursor_end()
+        self.assertEqual(self.cursor.focus.cursor_position, len("echo hello"))
+
+    def test_insert_character_inserts_at_caret(self) -> None:
+        self.cursor.cursor_home()
+        self.cursor.insert_character("X")
+        self.assertEqual(self.cursor.focus.input_buffer, "Xecho hello")
+        self.assertEqual(self.cursor.focus.cursor_position, 1)
+
+    def test_insert_character_in_middle(self) -> None:
+        # Move caret between "echo" and " hello".
+        for _ in range(len(" hello")):
+            self.cursor.cursor_left()
+        self.cursor.insert_character("!")
+        self.assertEqual(self.cursor.focus.input_buffer, "echo! hello")
+        self.assertEqual(self.cursor.focus.cursor_position, len("echo!"))
+
+    def test_backspace_deletes_before_caret(self) -> None:
+        # Move caret to the start of "hello"; backspace should eat the space.
+        for _ in range(len("hello")):
+            self.cursor.cursor_left()
+        self.cursor.backspace()
+        self.assertEqual(self.cursor.focus.input_buffer, "echohello")
+        # Caret now sits where the space used to be (index 4).
+        self.assertEqual(self.cursor.focus.cursor_position, 4)
+
+    def test_backspace_at_start_is_noop(self) -> None:
+        self.cursor.cursor_home()
+        self.cursor.backspace()
+        self.assertEqual(self.cursor.focus.input_buffer, "echo hello")
+        self.assertEqual(self.cursor.focus.cursor_position, 0)
+
+    def test_delete_forward_deletes_under_caret(self) -> None:
+        self.cursor.cursor_home()
+        self.cursor.delete_forward()
+        self.assertEqual(self.cursor.focus.input_buffer, "cho hello")
+        self.assertEqual(self.cursor.focus.cursor_position, 0)
+
+    def test_delete_forward_at_end_is_noop(self) -> None:
+        # Caret is at the end after setUp.
+        self.cursor.delete_forward()
+        self.assertEqual(self.cursor.focus.input_buffer, "echo hello")
+
+    def test_delete_word_left_eats_preceding_word(self) -> None:
+        self.cursor.delete_word_left()
+        self.assertEqual(self.cursor.focus.input_buffer, "echo ")
+        self.assertEqual(self.cursor.focus.cursor_position, len("echo "))
+
+    def test_delete_word_left_eats_trailing_whitespace(self) -> None:
+        # "echo hello   " with trailing whitespace — should kill both.
+        for ch in "   ":
+            self.cursor.insert_character(ch)
+        self.cursor.delete_word_left()
+        self.assertEqual(self.cursor.focus.input_buffer, "echo ")
+        self.assertEqual(self.cursor.focus.cursor_position, len("echo "))
+
+    def test_delete_word_left_at_start_is_noop(self) -> None:
+        self.cursor.cursor_home()
+        self.cursor.delete_word_left()
+        self.assertEqual(self.cursor.focus.input_buffer, "echo hello")
+
+    def test_delete_to_start_clears_prefix(self) -> None:
+        # Move caret to just before "hello".
+        for _ in range(len("hello")):
+            self.cursor.cursor_left()
+        self.cursor.delete_to_start()
+        self.assertEqual(self.cursor.focus.input_buffer, "hello")
+        self.assertEqual(self.cursor.focus.cursor_position, 0)
+
+    def test_delete_to_end_clears_suffix(self) -> None:
+        # Caret between "echo" and " hello".
+        for _ in range(len(" hello")):
+            self.cursor.cursor_left()
+        self.cursor.delete_to_end()
+        self.assertEqual(self.cursor.focus.input_buffer, "echo")
+        # Caret position unchanged.
+        self.assertEqual(self.cursor.focus.cursor_position, len("echo"))
+
+    def test_motion_and_edit_outside_input_mode_are_noops(self) -> None:
+        self.cursor.exit_input_mode()
+        self.assertEqual(self.cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.cursor.cursor_left()
+        self.cursor.cursor_right()
+        self.cursor.cursor_home()
+        self.cursor.cursor_end()
+        self.cursor.delete_forward()
+        self.cursor.delete_word_left()
+        self.cursor.delete_to_start()
+        self.cursor.delete_to_end()
+        # None of these should have altered buffer/caret state.
+        self.assertEqual(self.cursor.focus.input_buffer, "")
+        self.assertEqual(self.cursor.focus.cursor_position, 0)
+
+    def test_exiting_input_mode_resets_caret(self) -> None:
+        self.cursor.cursor_home()
+        self.cursor.exit_input_mode()
+        self.assertEqual(self.cursor.focus.cursor_position, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -69,7 +69,13 @@ def default_bindings() -> BindingMap:
         Ctrl+, (comma) opens the settings editor.
 
     INPUT mode:
-        Backspace deletes the last character,
+        Backspace deletes the character before the caret,
+        Delete removes the character under the caret,
+        Left / Right / Home / End move the caret within the buffer
+        (Ctrl+A / Ctrl+E also jump to start / end),
+        Ctrl+W kills the word before the caret,
+        Ctrl+U kills from the start of the buffer to the caret,
+        Ctrl+K kills from the caret to the end of the buffer,
         Enter submits the current command,
         Escape commits and returns to notebook mode.
         Lines beginning with `:` are treated as meta-commands
@@ -102,6 +108,16 @@ def default_bindings() -> BindingMap:
         },
         FocusMode.INPUT: {
             kc.BACKSPACE: "backspace",
+            kc.DELETE: "delete_forward",
+            kc.LEFT: "cursor_left",
+            kc.RIGHT: "cursor_right",
+            kc.HOME: "cursor_home",
+            kc.END: "cursor_end",
+            Key.combo("a", Modifier.CTRL): "cursor_home",
+            Key.combo("e", Modifier.CTRL): "cursor_end",
+            Key.combo("w", Modifier.CTRL): "delete_word_left",
+            Key.combo("u", Modifier.CTRL): "delete_to_start",
+            Key.combo("k", Modifier.CTRL): "delete_to_end",
             kc.ENTER: "submit",
             kc.ESCAPE: "exit_input",
         },
@@ -149,7 +165,9 @@ AMBIENT_META_COMMANDS: frozenset[str] = frozenset({"help", "save"})
 HELP_LINES: tuple[str, ...] = (
     "ASAT quick reference.",
     "NOTEBOOK:  Up/Down walk cells, Enter type, Ctrl+N new, Ctrl+O output, Ctrl+, settings.",
-    "INPUT:     Enter submits, Backspace deletes, Escape leaves without running.",
+    "INPUT:     Enter submits, Escape leaves without running.",
+    "           Backspace/Delete cut, Left/Right walk, Home/End jump (or Ctrl+A/E).",
+    "           Ctrl+W kills word, Ctrl+U kills to start, Ctrl+K kills to end.",
     "OUTPUT:    Up/Down step lines, PageUp/PageDown page, Escape leaves.",
     "SETTINGS:  Up/Down walk, Right/Enter descend, Left/Escape ascend, e edit, Ctrl+S save, Ctrl+Q close.",
     "Meta:      :help, :settings, :save, :quit (type in INPUT mode then Enter).",
@@ -386,6 +404,14 @@ class InputRouter:
             "exit_input": _void(self._cursor.exit_input_mode),
             "new_cell": _void(self._cursor.new_cell),
             "backspace": _void(self._cursor.backspace),
+            "cursor_left": _void(self._cursor.cursor_left),
+            "cursor_right": _void(self._cursor.cursor_right),
+            "cursor_home": _void(self._cursor.cursor_home),
+            "cursor_end": _void(self._cursor.cursor_end),
+            "delete_forward": _void(self._cursor.delete_forward),
+            "delete_word_left": _void(self._cursor.delete_word_left),
+            "delete_to_start": _void(self._cursor.delete_to_start),
+            "delete_to_end": _void(self._cursor.delete_to_end),
             "view_output": _void(self._cursor.view_output_mode),
             "exit_output": _void(self._cursor.exit_output_mode),
             "submit": self._submit,

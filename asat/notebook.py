@@ -57,11 +57,16 @@ class FocusState:
         is empty and nothing is focused.
     input_buffer: the text currently being typed when in INPUT mode.
         Empty in other modes.
+    cursor_position: the caret offset into input_buffer (0 == before
+        the first character, len(buffer) == after the last). Only
+        meaningful in INPUT mode; kept at 0 in other modes. Always
+        satisfies 0 <= cursor_position <= len(input_buffer).
     """
 
     mode: FocusMode = FocusMode.NOTEBOOK
     cell_id: Optional[str] = None
     input_buffer: str = ""
+    cursor_position: int = 0
 
 
 class NotebookCursor:
@@ -122,6 +127,7 @@ class NotebookCursor:
                 mode=FocusMode.NOTEBOOK,
                 cell_id=cell_id,
                 input_buffer="",
+                cursor_position=0,
             )
         )
         return cell
@@ -136,12 +142,17 @@ class NotebookCursor:
                 mode=FocusMode.INPUT,
                 cell_id=cell.cell_id,
                 input_buffer=command,
+                cursor_position=len(command),
             )
         )
         return cell
 
     def enter_input_mode(self) -> Optional[FocusState]:
-        """Switch from notebook to input mode on the focused cell."""
+        """Switch from notebook to input mode on the focused cell.
+
+        The caret lands at the end of the existing command so typing
+        continues to append the way the user expects.
+        """
         if self._state.cell_id is None:
             return None
         cell = self._session.get_cell(self._state.cell_id)
@@ -150,6 +161,7 @@ class NotebookCursor:
                 mode=FocusMode.INPUT,
                 cell_id=cell.cell_id,
                 input_buffer=cell.command,
+                cursor_position=len(cell.command),
             )
         )
         return self._state
@@ -164,6 +176,7 @@ class NotebookCursor:
                 mode=FocusMode.NOTEBOOK,
                 cell_id=self._state.cell_id,
                 input_buffer="",
+                cursor_position=0,
             )
         )
         return self._state
@@ -183,6 +196,7 @@ class NotebookCursor:
                 mode=FocusMode.OUTPUT,
                 cell_id=self._state.cell_id,
                 input_buffer="",
+                cursor_position=0,
             )
         )
         return self._state
@@ -196,6 +210,7 @@ class NotebookCursor:
                 mode=FocusMode.NOTEBOOK,
                 cell_id=self._state.cell_id,
                 input_buffer="",
+                cursor_position=0,
             )
         )
         return self._state
@@ -207,6 +222,7 @@ class NotebookCursor:
                 mode=FocusMode.SETTINGS,
                 cell_id=self._state.cell_id,
                 input_buffer="",
+                cursor_position=0,
             )
         )
         return self._state
@@ -220,6 +236,7 @@ class NotebookCursor:
                 mode=FocusMode.NOTEBOOK,
                 cell_id=self._state.cell_id,
                 input_buffer="",
+                cursor_position=0,
             )
         )
         return self._state
@@ -239,6 +256,7 @@ class NotebookCursor:
                 mode=FocusMode.NOTEBOOK,
                 cell_id=self._state.cell_id,
                 input_buffer="",
+                cursor_position=0,
             )
         )
         return self._state
@@ -257,23 +275,120 @@ class NotebookCursor:
             return
         if not self._state.input_buffer:
             return
-        self._transition(replace(self._state, input_buffer=""))
+        self._transition(replace(self._state, input_buffer="", cursor_position=0))
 
     def insert_character(self, character: str) -> None:
-        """Append a character to the input buffer while in INPUT mode."""
+        """Insert a character at the current caret position.
+
+        The caret advances by one so subsequent inserts chain naturally.
+        """
         if self._state.mode != FocusMode.INPUT:
             return
         if len(character) != 1:
             raise ValueError("insert_character expects exactly one character")
-        self._transition(replace(self._state, input_buffer=self._state.input_buffer + character))
+        position = self._state.cursor_position
+        buffer = self._state.input_buffer
+        new_buffer = buffer[:position] + character + buffer[position:]
+        self._transition(
+            replace(self._state, input_buffer=new_buffer, cursor_position=position + 1)
+        )
 
     def backspace(self) -> None:
-        """Delete the last character from the input buffer."""
+        """Delete the character immediately before the caret."""
         if self._state.mode != FocusMode.INPUT:
             return
-        if not self._state.input_buffer:
+        position = self._state.cursor_position
+        if position == 0:
             return
-        self._transition(replace(self._state, input_buffer=self._state.input_buffer[:-1]))
+        buffer = self._state.input_buffer
+        new_buffer = buffer[: position - 1] + buffer[position:]
+        self._transition(
+            replace(self._state, input_buffer=new_buffer, cursor_position=position - 1)
+        )
+
+    def cursor_left(self) -> None:
+        """Move the caret one character to the left; clamp at start."""
+        if self._state.mode != FocusMode.INPUT:
+            return
+        if self._state.cursor_position == 0:
+            return
+        self._transition(replace(self._state, cursor_position=self._state.cursor_position - 1))
+
+    def cursor_right(self) -> None:
+        """Move the caret one character to the right; clamp at end."""
+        if self._state.mode != FocusMode.INPUT:
+            return
+        if self._state.cursor_position >= len(self._state.input_buffer):
+            return
+        self._transition(replace(self._state, cursor_position=self._state.cursor_position + 1))
+
+    def cursor_home(self) -> None:
+        """Jump the caret to the start of the input buffer."""
+        if self._state.mode != FocusMode.INPUT:
+            return
+        if self._state.cursor_position == 0:
+            return
+        self._transition(replace(self._state, cursor_position=0))
+
+    def cursor_end(self) -> None:
+        """Jump the caret to the end of the input buffer."""
+        if self._state.mode != FocusMode.INPUT:
+            return
+        end = len(self._state.input_buffer)
+        if self._state.cursor_position == end:
+            return
+        self._transition(replace(self._state, cursor_position=end))
+
+    def delete_forward(self) -> None:
+        """Delete the character at the caret (Delete key)."""
+        if self._state.mode != FocusMode.INPUT:
+            return
+        position = self._state.cursor_position
+        buffer = self._state.input_buffer
+        if position >= len(buffer):
+            return
+        new_buffer = buffer[:position] + buffer[position + 1 :]
+        self._transition(replace(self._state, input_buffer=new_buffer))
+
+    def delete_word_left(self) -> None:
+        """Delete the whitespace-delimited word preceding the caret."""
+        if self._state.mode != FocusMode.INPUT:
+            return
+        position = self._state.cursor_position
+        if position == 0:
+            return
+        buffer = self._state.input_buffer
+        # Skip trailing whitespace, then skip the word itself.
+        i = position
+        while i > 0 and buffer[i - 1].isspace():
+            i -= 1
+        while i > 0 and not buffer[i - 1].isspace():
+            i -= 1
+        if i == position:
+            return
+        new_buffer = buffer[:i] + buffer[position:]
+        self._transition(replace(self._state, input_buffer=new_buffer, cursor_position=i))
+
+    def delete_to_start(self) -> None:
+        """Delete everything from the start of the buffer up to the caret."""
+        if self._state.mode != FocusMode.INPUT:
+            return
+        position = self._state.cursor_position
+        if position == 0:
+            return
+        new_buffer = self._state.input_buffer[position:]
+        self._transition(replace(self._state, input_buffer=new_buffer, cursor_position=0))
+
+    def delete_to_end(self) -> None:
+        """Delete everything from the caret to the end of the buffer."""
+        if self._state.mode != FocusMode.INPUT:
+            return
+        position = self._state.cursor_position
+        buffer = self._state.input_buffer
+        if position >= len(buffer):
+            return
+        new_buffer = buffer[:position]
+        self._transition(replace(self._state, input_buffer=new_buffer))
 
     def submit(self) -> Optional[Cell]:
         """Commit the input buffer and return the cell ready for execution.
@@ -308,6 +423,7 @@ class NotebookCursor:
                     mode=FocusMode.INPUT,
                     cell_id=new_cell.cell_id,
                     input_buffer="",
+                    cursor_position=0,
                 )
             )
         else:
@@ -316,6 +432,7 @@ class NotebookCursor:
                     mode=FocusMode.NOTEBOOK,
                     cell_id=cell.cell_id,
                     input_buffer="",
+                    cursor_position=0,
                 )
             )
         return cell
@@ -346,12 +463,14 @@ class NotebookCursor:
     def _transition(self, new_state: FocusState) -> None:
         """Replace the focus state and publish an event if it changed.
 
-        Buffer-only deltas (the user typing into the input buffer) are
-        intentionally silent: they would otherwise fire FOCUS_CHANGED
-        per keystroke and drown the sound bank's `focus_shift` cue and
-        the terminal trace's `[input #…]` banner in noise. Consumers
-        that care about the typed text subscribe to ACTION_INVOKED
-        with `action == "insert_character"` instead.
+        Buffer-and-caret-only deltas (typing, deleting, and moving the
+        caret within the input buffer) are intentionally silent. They
+        would otherwise fire FOCUS_CHANGED per keystroke and drown the
+        sound bank's `focus_shift` cue and the terminal trace's
+        `[input #…]` banner in noise. Consumers that care about text
+        or caret edits subscribe to ACTION_INVOKED instead (actions
+        `insert_character`, `backspace`, `cursor_left`, `cursor_right`,
+        etc., or the richer shortcuts like `delete_word_left`).
         """
         if new_state == self._state:
             return
