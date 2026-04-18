@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://asat.local/schemas/sound_bank.v1.json",
+  "title": "ASAT SoundBank",
+  "description": "Persisted form of asat.sound_bank.SoundBank. Consumed by both the runtime loader and the in-terminal :settings editor.",
+  "type": "object",
+  "required": ["version"],
+  "properties": {
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Incremented when the on-disk shape changes; loaders refuse mismatched versions."
+    },
+    "voices": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/voice" },
+      "default": []
+    },
+    "sounds": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/sound" },
+      "default": []
+    },
+    "bindings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/binding" },
+      "default": []
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "voice": {
+      "type": "object",
+      "required": ["id"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "engine": { "type": "string", "default": "" },
+        "rate": { "type": "number", "exclusiveMinimum": 0, "default": 1.0 },
+        "pitch": { "type": "number", "exclusiveMinimum": 0, "default": 1.0 },
+        "volume": { "type": "number", "minimum": 0, "default": 1.0 },
+        "azimuth": { "type": "number", "minimum": -180, "maximum": 180, "default": 0 },
+        "elevation": { "type": "number", "minimum": -90, "maximum": 90, "default": 0 },
+        "metadata": { "type": "object", "additionalProperties": true, "default": {} }
+      },
+      "additionalProperties": false
+    },
+    "sound": {
+      "type": "object",
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["tone", "chord", "sample", "silence"]
+        },
+        "params": { "type": "object", "additionalProperties": true, "default": {} },
+        "volume": { "type": "number", "minimum": 0, "default": 1.0 },
+        "azimuth": { "type": "number", "minimum": -180, "maximum": 180, "default": 0 },
+        "elevation": { "type": "number", "minimum": -90, "maximum": 90, "default": 0 }
+      },
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "required": ["id", "event_type"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "event_type": {
+          "type": "string",
+          "description": "Matches an EventType.value (e.g. 'cell.created')."
+        },
+        "voice_id": { "type": ["string", "null"], "default": null },
+        "sound_id": { "type": ["string", "null"], "default": null },
+        "say_template": {
+          "type": "string",
+          "default": "",
+          "description": "Python str.format_map template rendered against the event payload."
+        },
+        "predicate": {
+          "type": "string",
+          "default": "",
+          "description": "Opaque guard expression evaluated by the AudioEngine. Empty string means always match."
+        },
+        "priority": { "type": "integer", "default": 100 },
+        "enabled": { "type": "boolean", "default": true }
+      },
+      "additionalProperties": false,
+      "description": "At least one of voice_id, sound_id, or a non-empty say_template must be set."
+    }
+  }
+}
