@@ -103,5 +103,36 @@ class CellSerializationTests(unittest.TestCase):
         self.assertIsInstance(data["created_at"], str)
 
 
+class CellSnapshotTests(unittest.TestCase):
+    """snapshot() returns a detached copy safe to hand to subscribers."""
+
+    def test_snapshot_preserves_all_fields(self) -> None:
+        cell = Cell.new("echo hi", parent_id="p1")
+        cell.mark_completed(stdout="hi\n", stderr="", exit_code=0)
+        cell.metadata["label"] = "one"
+        snap = cell.snapshot()
+        self.assertEqual(snap.cell_id, cell.cell_id)
+        self.assertEqual(snap.command, cell.command)
+        self.assertEqual(snap.stdout, cell.stdout)
+        self.assertEqual(snap.exit_code, cell.exit_code)
+        self.assertEqual(snap.status, cell.status)
+        self.assertEqual(snap.parent_id, cell.parent_id)
+        self.assertEqual(snap.metadata, {"label": "one"})
+
+    def test_snapshot_is_detached_from_source(self) -> None:
+        cell = Cell.new("echo hi")
+        snap = cell.snapshot()
+        cell.mark_completed(stdout="done\n", stderr="", exit_code=0)
+        self.assertEqual(snap.stdout, "")
+        self.assertEqual(snap.status, CellStatus.PENDING)
+
+    def test_snapshot_metadata_is_independent(self) -> None:
+        cell = Cell.new("echo hi")
+        cell.metadata["k"] = "v"
+        snap = cell.snapshot()
+        cell.metadata["k"] = "mutated"
+        self.assertEqual(snap.metadata, {"k": "v"})
+
+
 if __name__ == "__main__":
     unittest.main()
