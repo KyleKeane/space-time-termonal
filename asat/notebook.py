@@ -243,6 +243,22 @@ class NotebookCursor:
         )
         return self._state
 
+    def reset_input_buffer(self) -> None:
+        """Clear the input buffer while staying in INPUT mode.
+
+        Used by "ambient" meta-commands like `:help` and `:save` that
+        consume the typed buffer (so the literal `:help` text does not
+        linger) but leave the user exactly where they were, ready to
+        keep typing. No FOCUS_CHANGED is published — this matches the
+        contract for every other buffer-only mutation (typing a key,
+        Backspace).
+        """
+        if self._state.mode != FocusMode.INPUT:
+            return
+        if not self._state.input_buffer:
+            return
+        self._transition(replace(self._state, input_buffer=""))
+
     def insert_character(self, character: str) -> None:
         """Append a character to the input buffer while in INPUT mode."""
         if self._state.mode != FocusMode.INPUT:

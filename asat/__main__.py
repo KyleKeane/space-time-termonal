@@ -38,7 +38,6 @@ from asat.audio_sink import (
 from asat.keyboard import KeyboardNotAvailable, KeyboardReader, pick_default
 from asat.session import Session
 from asat.sound_bank import SoundBank
-from asat.terminal import TerminalRenderer
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -69,21 +68,24 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"[asat] {exc}", file=sys.stderr)
         return 2
     session = _load_session(args.session)
+    # `--check` prints its own diagnostic report and must not mix the
+    # TerminalRenderer trace into stdout. Every other invocation wants
+    # the renderer attached BEFORE `Application.build` publishes
+    # `SESSION_CREATED`/`FOCUS_CHANGED`, so the launch banner and the
+    # first `[input #…]` line reach the user.
+    trace_stream = None if args.quiet or args.check else sys.stdout
     app = Application.build(
         sink=sink,
         bank=bank,
         bank_path=args.bank,
         session=session,
         session_path=args.session,
+        text_trace=trace_stream,
     )
     if args.check:
         _print_check_report(app, args)
         app.close()
         return 0
-    if not args.quiet:
-        # Attach AFTER Application.build so the renderer does not
-        # double-print the startup banner into its own buffer.
-        TerminalRenderer(app.bus)
     try:
         keyboard: KeyboardReader = pick_default()
     except KeyboardNotAvailable as exc:

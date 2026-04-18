@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TextIO
 
 from asat.audio_sink import AudioSink, MemorySink
 from asat.default_bank import default_sound_bank
@@ -38,6 +38,7 @@ from asat.session import Session
 from asat.settings_controller import SettingsController
 from asat.sound_bank import SoundBank
 from asat.sound_engine import SoundEngine
+from asat.terminal import TerminalRenderer
 
 
 @dataclass
@@ -78,6 +79,7 @@ class Application:
         bank_path: Optional[Path | str] = None,
         session: Optional[Session] = None,
         session_path: Optional[Path | str] = None,
+        text_trace: Optional[TextIO] = None,
     ) -> "Application":
         """Wire every collaborator with sensible defaults.
 
@@ -90,6 +92,12 @@ class Application:
         When `session` is None, a new Session with one empty cell is
         created and the cursor lands in INPUT mode on it so the user
         can start typing immediately.
+
+        When `text_trace` is a writable stream (e.g. `sys.stdout`),
+        a `TerminalRenderer` is attached to the bus BEFORE the startup
+        publishes fire, so the `[asat] session … ready.` banner and
+        the initial `[input #…]` line are captured. Pass `None`
+        (default) to suppress the text trace.
         """
         bus = EventBus()
         seeded = session is None
@@ -113,6 +121,8 @@ class Application:
         )
         resolved_sink: AudioSink = sink if sink is not None else MemorySink()
         sound_engine = SoundEngine(bus, resolved_bank, resolved_sink)
+        if text_trace is not None:
+            TerminalRenderer(bus, stream=text_trace)
         app = cls(
             bus=bus,
             session=resolved_session,
@@ -126,8 +136,9 @@ class Application:
             settings_controller=settings_controller,
             session_path=Path(session_path) if session_path is not None else None,
         )
-        # Everything below fires AFTER sound_engine has subscribed, so
-        # the launch narration actually plays through the sink.
+        # Everything below fires AFTER sound_engine and (if requested)
+        # the TerminalRenderer have subscribed, so the launch banner
+        # both narrates through the sink and prints to the text trace.
         publish_event(
             bus,
             EventType.SESSION_CREATED,
