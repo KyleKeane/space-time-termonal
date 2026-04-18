@@ -11,9 +11,12 @@ self-voicing feedback without ever depending on colour or layout.
 * Self-voicing: every state change produces an auditable event.
 * Keyboard-first: no action requires a mouse, a pointer, or screen
   coordinates.
-* Standard library only (Python >= 3.10): zero third-party runtime
-  dependencies. External backends (TTS engines, sound output) plug in
-  behind small `Protocol`-based interfaces.
+* Standard library only (Python >= 3.10): no third-party runtime
+  dependencies. `numpy` is used opportunistically by `asat/hrtf.py`
+  as an optional accelerator for dense (measured) HRTF kernels; the
+  synthetic profiles shipped by default run pure-Python on a
+  sparse-impulse fast path. External backends (TTS engines, sound
+  output) plug in behind small `Protocol`-based interfaces.
 * Hyper-modular: each concern lives in its own file so contributions
   can land independently and each module can be read in one sitting.
 * Deterministic: the `EventBus` runs synchronously and publishes to
@@ -119,8 +122,10 @@ The user is always in exactly one of four focus modes, owned by
 Mode transitions publish `FOCUS_CHANGED`. The `InputRouter`
 (`asat/input_router.py`) looks up a keystroke under the current mode
 to find an action name, runs the matching handler, and publishes
-`KEY_PRESSED` + `ACTION_INVOKED`. See [INPUT.md](INPUT.md) for the
-binding table (to be added alongside the audio framework).
+`KEY_PRESSED` + `ACTION_INVOKED`. The default binding table per mode
+is printed in [USER_MANUAL.md](USER_MANUAL.md#the-keystroke-cheat-sheet);
+the authoritative source is `default_bindings()` in
+`asat/input_router.py`.
 
 ## Execution path
 
@@ -172,7 +177,11 @@ layer and left the one below it unchanged:
 | 4     | Input router + notebook cursor                 |
 | 5     | Output buffering + contextual action menu      |
 | 6     | ANSI parsing + virtual screen + menu detection |
-| A     | Data-driven audio framework and settings editor |
+| A     | Data-driven audio framework (generators, engine, default bank, editor) |
+| T     | Follow-up polish: TUI wiring, ANSI-level events + per-binding overrides, docs |
+| H     | HRTF sparse-impulse fast path (synthetic profiles bypass full convolution) |
 
-Future phases will add Windows-native TTS and sink adapters plus the
-live-speaker playback stack.
+Open feature requests for the next generation live in
+[FEATURE_REQUESTS.md](FEATURE_REQUESTS.md); the short version is
+Windows-native TTS, live-speaker sinks, settings-editor record
+creation, and command history.

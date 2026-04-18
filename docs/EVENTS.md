@@ -25,8 +25,12 @@ over time.
 
 ## Session lifecycle
 
-Producer: `Session` serialization helpers (phase-2-onward caller code;
-no module publishes these automatically yet).
+Producer: caller code that owns a `Session` — today ASAT does not yet
+ship an automatic publisher for these. Embedding code (the eventual
+entry-point binary) is expected to fire them around `Session`
+construction, `Session.load(...)`, and `Session.save(...)`. Bindings
+in the default bank are already wired so narration lights up the
+instant a producer appears.
 
 | EventType         | Payload keys                      |
 |-------------------|-----------------------------------|
@@ -80,7 +84,10 @@ and `asat.notebook.NotebookCursor` (`source="notebook"`).
 `ACTION_INVOKED` extras:
 
 * `submit` → `cell_id` (of the submitted cell), `command`
-* Every other action → no extras today
+* `insert_character` → `char` (the literal character that was inserted)
+* `settings_edit_extend` → `char` (the literal character appended to
+  the in-progress settings edit buffer)
+* Every other action → no extras
 
 ## Output buffering and cursor
 

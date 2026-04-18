@@ -303,10 +303,19 @@ Open `:settings`, navigate to the offending binding, press `e` on
 `enabled`, type `false`, Enter, then Ctrl+S. The binding is silenced
 but still in the bank so you can re-enable it later.
 
-**I want a new sound for an event.**
-Open `:settings`, add a new `SoundRecipe` in the `sounds` section
-(id, kind, params, volume, azimuth), then find the binding in
-`bindings` and set `sound_id` to your new recipe's id. Ctrl+S.
+**I want to reuse a different existing sound for an event.**
+Open `:settings`, walk to `bindings`, find the binding you want to
+retune, descend to its `sound_id` field, press `e`, type the id of
+another `SoundRecipe` in the bank, Enter, Ctrl+S.
+
+**I want a brand-new sound that does not yet exist in the bank.**
+The in-terminal editor today can retune existing records but cannot
+create new voices, sounds, or bindings (see
+[FEATURE_REQUESTS.md](FEATURE_REQUESTS.md) F2). To add one now: edit
+the on-disk bank JSON directly, add a `SoundRecipe` object (give it
+an `id`, `kind`, and `params`), update the relevant binding's
+`sound_id` to your new id, then reopen ASAT — the new bank loads on
+start-up.
 
 **Output is too fast to follow.**
 The `narrator` voice's `rate` field is a multiplier. Open

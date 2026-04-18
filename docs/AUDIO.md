@@ -220,12 +220,36 @@ so a typo fails loudly at load time.
 
 ## Spatialisation: HRTF
 
-`asat/hrtf.py` holds a synthetic head-related transfer function. The
+`asat/hrtf.py` holds the head-related transfer function pipeline. The
 `Spatializer` convolves a mono buffer with a left / right IR pair
 derived from a `SpatialPosition(azimuth, elevation)`. Two sources at
 different azimuths arrive at different inter-aural times and gains,
 which is enough for the ear to hear "left of centre" vs. "right of
 centre" even through cheap headphones.
+
+Two ways to obtain a profile:
+
+* `HRTFProfile.synthetic(position)` — builds a sparse impulse-response
+  pair (one nonzero tap per ear) modelling only the inter-aural time
+  and level difference. This is the shipping default. It is not a
+  substitute for a measured HRTF but is enough for front-vs-side and
+  left-vs-right discrimination on headphones.
+* `HRTFProfile.from_stereo_wav(path)` — loads a stereo WAV whose two
+  channels are the left-ear and right-ear impulse responses. This is
+  the shape most SOFA-derived HRIR datasets land in after conversion.
+
+`convolve(signal, kernel)` branches on kernel shape:
+
+1. Sparse impulse (one nonzero tap) — delay-and-scale in O(n). Every
+   synthetic profile takes this path; no third-party import needed.
+2. All-zero kernel — returns a zero buffer of length `n + m − 1`.
+3. Dense kernel — `numpy.convolve` when `numpy` is importable, else a
+   pure-Python fallback. Measured HRTFs (128–512 taps) benefit from
+   the numpy path by ~1000× on long narration buffers; without numpy
+   the fallback still produces correct audio, only slower.
+
+numpy is therefore an optional accelerator only — `pip install numpy`
+is never a requirement for ASAT to run.
 
 Conventions used by every module:
 
