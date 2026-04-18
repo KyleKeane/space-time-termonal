@@ -37,9 +37,11 @@ Every flag is optional and they compose. The common launch recipes:
   `/tmp/asat`. Live playback is being worked on
   (FEATURE_REQUESTS.md F6); until then, WAV capture plus a
   screen-reader-friendly player is the recommended path.
-- **Resume a session:** `python -m asat --session work.json`. The
-  session loads, you hear a "loaded" narration, and the same file is
-  rewritten on exit with whatever cells you ran this time.
+- **Resume or start a session:** `python -m asat --session work.json`.
+  If the file exists the session loads and you hear a "loaded"
+  narration; if it does not exist a fresh session starts and the file
+  is created on exit. Either way the same path is rewritten on exit
+  with whatever cells you ran. `:save` (INPUT mode) persists mid-run.
 - **Sanity-check your install:** `python -m asat --check`. Builds the
   Application, prints the picked sink, bank, session, and TTY state,
   and exits without starting the read loop. Useful when you launched
