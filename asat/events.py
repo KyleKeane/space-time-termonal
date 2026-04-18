@@ -49,6 +49,10 @@ class EventType(str, Enum):
     Clipboard:
         CLIPBOARD_COPIED
 
+    ANSI and interactive TUI mapping:
+        SCREEN_UPDATED, INTERACTIVE_MENU_DETECTED,
+        INTERACTIVE_MENU_UPDATED, INTERACTIVE_MENU_CLEARED
+
     Audio engine:
         AUDIO_SPOKEN, AUDIO_INTERRUPTED
     """
@@ -84,6 +88,11 @@ class EventType(str, Enum):
     ACTION_MENU_ITEM_INVOKED = "menu.item.invoked"
 
     CLIPBOARD_COPIED = "clipboard.copied"
+
+    SCREEN_UPDATED = "screen.updated"
+    INTERACTIVE_MENU_DETECTED = "tui.menu.detected"
+    INTERACTIVE_MENU_UPDATED = "tui.menu.updated"
+    INTERACTIVE_MENU_CLEARED = "tui.menu.cleared"
 
     AUDIO_SPOKEN = "audio.spoken"
     AUDIO_INTERRUPTED = "audio.interrupted"
