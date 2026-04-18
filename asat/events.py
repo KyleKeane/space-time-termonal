@@ -39,6 +39,16 @@ class EventType(str, Enum):
     Input and focus router:
         FOCUS_CHANGED, KEY_PRESSED, ACTION_INVOKED
 
+    Output buffering and cursor:
+        OUTPUT_LINE_APPENDED, OUTPUT_LINE_FOCUSED
+
+    Contextual action menu:
+        ACTION_MENU_OPENED, ACTION_MENU_CLOSED,
+        ACTION_MENU_ITEM_FOCUSED, ACTION_MENU_ITEM_INVOKED
+
+    Clipboard:
+        CLIPBOARD_COPIED
+
     Audio engine:
         AUDIO_SPOKEN, AUDIO_INTERRUPTED
     """
@@ -64,6 +74,16 @@ class EventType(str, Enum):
     FOCUS_CHANGED = "focus.changed"
     KEY_PRESSED = "input.key"
     ACTION_INVOKED = "input.action"
+
+    OUTPUT_LINE_APPENDED = "output.line.appended"
+    OUTPUT_LINE_FOCUSED = "output.line.focused"
+
+    ACTION_MENU_OPENED = "menu.opened"
+    ACTION_MENU_CLOSED = "menu.closed"
+    ACTION_MENU_ITEM_FOCUSED = "menu.item.focused"
+    ACTION_MENU_ITEM_INVOKED = "menu.item.invoked"
+
+    CLIPBOARD_COPIED = "clipboard.copied"
 
     AUDIO_SPOKEN = "audio.spoken"
     AUDIO_INTERRUPTED = "audio.interrupted"
