@@ -14,7 +14,7 @@ re-raised together after all handlers have had a chance to react.
 from __future__ import annotations
 
 from collections import defaultdict
-from typing import Callable
+from typing import Any, Callable
 
 from asat.events import Event, EventType
 
@@ -22,6 +22,23 @@ from asat.events import Event, EventType
 Handler = Callable[[Event], None]
 
 WILDCARD = "*"
+
+
+def publish_event(
+    bus: "EventBus",
+    event_type: EventType,
+    payload: dict[str, Any],
+    *,
+    source: str,
+) -> None:
+    """Build an Event and publish it on the bus in one call.
+
+    Every producer in the codebase goes through this helper so there is
+    one place to change if Event construction ever grows a new required
+    field (for example a correlation id or a priority). Keyword-only
+    source avoids accidental swaps with payload.
+    """
+    bus.publish(Event(event_type=event_type, payload=payload, source=source))
 
 
 class EventBusError(Exception):

@@ -28,8 +28,8 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from asat import keys as kc
-from asat.event_bus import EventBus
-from asat.events import Event, EventType
+from asat.event_bus import EventBus, publish_event
+from asat.events import EventType
 from asat.keys import Key, Modifier
 from asat.notebook import FocusMode, NotebookCursor
 from asat.output_cursor import OutputCursor
@@ -190,16 +190,15 @@ class InputRouter:
 
     def _publish_key(self, key: Key) -> None:
         """Publish a KEY_PRESSED event describing the keystroke."""
-        self._bus.publish(
-            Event(
-                event_type=EventType.KEY_PRESSED,
-                payload={
-                    "name": key.name,
-                    "char": key.char,
-                    "modifiers": sorted(m.value for m in key.modifiers),
-                },
-                source=self.SOURCE,
-            )
+        publish_event(
+            self._bus,
+            EventType.KEY_PRESSED,
+            {
+                "name": key.name,
+                "char": key.char,
+                "modifiers": sorted(m.value for m in key.modifiers),
+            },
+            source=self.SOURCE,
         )
 
     def _publish_action(
@@ -216,10 +215,9 @@ class InputRouter:
             "key_name": key.name,
         }
         payload.update(extra)
-        self._bus.publish(
-            Event(
-                event_type=EventType.ACTION_INVOKED,
-                payload=payload,
-                source=self.SOURCE,
-            )
+        publish_event(
+            self._bus,
+            EventType.ACTION_INVOKED,
+            payload,
+            source=self.SOURCE,
         )

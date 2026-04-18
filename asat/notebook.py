@@ -24,8 +24,8 @@ from enum import Enum
 from typing import Optional
 
 from asat.cell import Cell
-from asat.event_bus import EventBus
-from asat.events import Event, EventType
+from asat.event_bus import EventBus, publish_event
+from asat.events import EventType
 from asat.session import Session
 
 
@@ -260,16 +260,15 @@ class NotebookCursor:
             return
         old_state = self._state
         self._state = new_state
-        self._bus.publish(
-            Event(
-                event_type=EventType.FOCUS_CHANGED,
-                payload={
-                    "old_mode": old_state.mode.value,
-                    "new_mode": new_state.mode.value,
-                    "old_cell_id": old_state.cell_id,
-                    "new_cell_id": new_state.cell_id,
-                    "input_buffer": new_state.input_buffer,
-                },
-                source=self.SOURCE,
-            )
+        publish_event(
+            self._bus,
+            EventType.FOCUS_CHANGED,
+            {
+                "old_mode": old_state.mode.value,
+                "new_mode": new_state.mode.value,
+                "old_cell_id": old_state.cell_id,
+                "new_cell_id": new_state.cell_id,
+                "input_buffer": new_state.input_buffer,
+            },
+            source=self.SOURCE,
         )

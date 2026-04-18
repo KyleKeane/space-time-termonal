@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from asat.event_bus import EventBus, EventBusError, WILDCARD
+from asat.event_bus import EventBus, EventBusError, WILDCARD, publish_event
 from asat.events import Event, EventType
 
 
@@ -108,6 +108,30 @@ class EventBusErrorIsolationTests(unittest.TestCase):
         with self.assertRaises(EventBusError) as ctx:
             bus.publish(Event(event_type=EventType.CELL_CREATED))
         self.assertEqual(len(ctx.exception.errors), 2)
+
+
+class PublishEventHelperTests(unittest.TestCase):
+
+    def test_publish_event_builds_and_dispatches_event(self) -> None:
+        bus = EventBus()
+        received: list[Event] = []
+        bus.subscribe(WILDCARD, received.append)
+        publish_event(
+            bus,
+            EventType.CELL_CREATED,
+            {"cell_id": "abc"},
+            source="test",
+        )
+        self.assertEqual(len(received), 1)
+        event = received[0]
+        self.assertEqual(event.event_type, EventType.CELL_CREATED)
+        self.assertEqual(event.payload, {"cell_id": "abc"})
+        self.assertEqual(event.source, "test")
+
+    def test_source_is_keyword_only(self) -> None:
+        bus = EventBus()
+        with self.assertRaises(TypeError):
+            publish_event(bus, EventType.CELL_CREATED, {}, "positional")  # type: ignore[misc]
 
 
 if __name__ == "__main__":

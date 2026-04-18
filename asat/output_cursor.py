@@ -21,8 +21,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from asat.event_bus import EventBus
-from asat.events import Event, EventType
+from asat.event_bus import EventBus, publish_event
+from asat.events import EventType
 from asat.output_buffer import OutputBuffer, OutputLine
 
 
@@ -137,15 +137,14 @@ class OutputCursor:
 
     def _publish_focus(self, line: OutputLine) -> None:
         """Publish an OUTPUT_LINE_FOCUSED event for the given line."""
-        self._bus.publish(
-            Event(
-                event_type=EventType.OUTPUT_LINE_FOCUSED,
-                payload={
-                    "cell_id": line.cell_id,
-                    "line_number": line.line_number,
-                    "stream": line.stream,
-                    "text": line.text,
-                },
-                source=self.SOURCE,
-            )
+        publish_event(
+            self._bus,
+            EventType.OUTPUT_LINE_FOCUSED,
+            {
+                "cell_id": line.cell_id,
+                "line_number": line.line_number,
+                "stream": line.stream,
+                "text": line.text,
+            },
+            source=self.SOURCE,
         )

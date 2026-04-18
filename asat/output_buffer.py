@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterator, Optional
 
-from asat.event_bus import EventBus
+from asat.event_bus import EventBus, publish_event
 from asat.events import Event, EventType
 
 
@@ -177,15 +177,14 @@ class OutputRecorder:
         if not isinstance(cell_id, str) or not isinstance(text, str):
             return
         line = self.buffer_for(cell_id).append(text, stream=stream)
-        self._bus.publish(
-            Event(
-                event_type=EventType.OUTPUT_LINE_APPENDED,
-                payload={
-                    "cell_id": cell_id,
-                    "line_number": line.line_number,
-                    "stream": stream,
-                    "text": text,
-                },
-                source=self.SOURCE,
-            )
+        publish_event(
+            self._bus,
+            EventType.OUTPUT_LINE_APPENDED,
+            {
+                "cell_id": cell_id,
+                "line_number": line.line_number,
+                "stream": stream,
+                "text": text,
+            },
+            source=self.SOURCE,
         )
