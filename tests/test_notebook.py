@@ -219,5 +219,46 @@ class CursorOutputModeTests(unittest.TestCase):
         self.assertEqual(self.cursor.focus.mode, FocusMode.NOTEBOOK)
 
 
+class ResetInputBufferTests(unittest.TestCase):
+    """`reset_input_buffer` is the ambient-meta-command helper: it
+    clears the in-progress buffer while leaving the user in INPUT
+    mode, and is silent on the event bus (buffer-only mutation)."""
+
+    def test_reset_clears_buffer_without_leaving_input_mode(self) -> None:
+        bus = EventBus()
+        session, cells = _session_with([""])
+        cursor = NotebookCursor(session, bus)
+        cursor.enter_input_mode()
+        for ch in ":help":
+            cursor.insert_character(ch)
+        self.assertEqual(cursor.focus.input_buffer, ":help")
+        recorder = _Recorder(bus)
+        cursor.reset_input_buffer()
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(cursor.focus.cell_id, cells[0].cell_id)
+        self.assertEqual(cursor.focus.input_buffer, "")
+        # Buffer-only mutations must NOT publish FOCUS_CHANGED (matches
+        # the contract for insert_character and backspace).
+        self.assertEqual(recorder.events, [])
+
+    def test_reset_outside_input_mode_is_noop(self) -> None:
+        bus = EventBus()
+        session, _ = _session_with(["echo"])
+        cursor = NotebookCursor(session, bus)
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+        cursor.reset_input_buffer()
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+
+    def test_reset_with_empty_buffer_is_noop(self) -> None:
+        bus = EventBus()
+        session, _ = _session_with([""])
+        cursor = NotebookCursor(session, bus)
+        cursor.enter_input_mode()
+        recorder = _Recorder(bus)
+        cursor.reset_input_buffer()
+        self.assertEqual(cursor.focus.input_buffer, "")
+        self.assertEqual(recorder.events, [])
+
+
 if __name__ == "__main__":
     unittest.main()

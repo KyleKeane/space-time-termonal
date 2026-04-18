@@ -200,5 +200,29 @@ class ApplicationSessionEventTests(unittest.TestCase):
             self.assertEqual(seen[0]["path"], str(path))
 
 
+class ApplicationTextTraceTests(unittest.TestCase):
+    """The `text_trace` parameter attaches a TerminalRenderer BEFORE
+    the startup publishes fire, so the launch banner and the initial
+    `[input #…]` line reach the user on first run."""
+
+    def test_text_trace_captures_launch_banner_and_first_input_line(self) -> None:
+        import io
+
+        stream = io.StringIO()
+        Application.build(text_trace=stream)
+        trace = stream.getvalue()
+        self.assertIn("ready", trace)
+        self.assertIn("[input", trace)
+
+    def test_text_trace_none_produces_no_output(self) -> None:
+        # Default behaviour is silent; tests and embedders that want to
+        # observe the stream opt in explicitly.
+        import io
+
+        stream = io.StringIO()
+        Application.build()
+        self.assertEqual(stream.getvalue(), "")
+
+
 if __name__ == "__main__":
     unittest.main()

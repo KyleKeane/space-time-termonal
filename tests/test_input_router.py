@@ -450,6 +450,43 @@ class MetaCommandTests(unittest.TestCase):
         ]
         self.assertEqual(submits[-1].payload["meta_command"], "help")
 
+    def test_colon_help_is_ambient_leaves_user_in_input_mode(self) -> None:
+        """`:help` consumes the buffer but keeps INPUT focus so the
+        user can immediately continue typing their real command."""
+        _, cursor, router, _controller = _build_with_settings([""])
+        router.handle_key(ENTER)
+        for ch in ":help":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(cursor.focus.input_buffer, "")
+        # Typing after :help lands in the (now empty) buffer.
+        for ch in "echo hi":
+            router.handle_key(Key.printable(ch))
+        self.assertEqual(cursor.focus.input_buffer, "echo hi")
+
+    def test_colon_save_is_ambient_leaves_user_in_input_mode(self) -> None:
+        """Same ambient semantics for `:save` — session gets saved by
+        the Application via the ACTION_INVOKED payload, and the user
+        stays exactly where they were."""
+        _, cursor, router, _controller = _build_with_settings([""])
+        router.handle_key(ENTER)
+        for ch in ":save":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(cursor.focus.input_buffer, "")
+
+    def test_colon_quit_still_ejects_to_notebook(self) -> None:
+        """Non-ambient meta-commands (`:quit`, `:settings`) keep the
+        existing behaviour: leave INPUT mode."""
+        _, cursor, router, _controller = _build_with_settings([""])
+        router.handle_key(ENTER)
+        for ch in ":quit":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+
 
 class CustomBindingTests(unittest.TestCase):
 

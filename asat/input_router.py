@@ -134,6 +134,14 @@ def default_bindings() -> BindingMap:
 # back into the cell).
 META_COMMANDS: tuple[str, ...] = ("settings", "save", "quit", "help")
 
+# "Ambient" meta-commands do their job without taking focus away from
+# INPUT mode. `:help` prints a cheat sheet; `:save` persists the
+# session. In both cases the natural next action is to keep typing, so
+# the router clears the in-progress buffer but leaves the user in INPUT
+# mode. Commands NOT in this set (today: `:settings`, `:quit`)
+# inherently require a mode change and go through `abandon_input_mode`.
+AMBIENT_META_COMMANDS: frozenset[str] = frozenset({"help", "save"})
+
 
 # The cheat-sheet lines a `:help` meta-command should surface. Kept in
 # one place so the renderer, the narration, and the docs can all read
@@ -260,7 +268,10 @@ class InputRouter:
         buffer = self._cursor.focus.input_buffer
         meta = _parse_meta_command(buffer)
         if meta is not None:
-            self._cursor.abandon_input_mode()
+            if meta in AMBIENT_META_COMMANDS:
+                self._cursor.reset_input_buffer()
+            else:
+                self._cursor.abandon_input_mode()
             self._handle_meta_command(meta)
             return {"meta_command": meta}
         cell = self._cursor.submit()
