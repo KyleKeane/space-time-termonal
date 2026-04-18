@@ -26,7 +26,7 @@ from typing import Optional
 
 from asat.audio_sink import AudioSink, MemorySink
 from asat.default_bank import default_sound_bank
-from asat.event_bus import EventBus
+from asat.event_bus import EventBus, publish_event
 from asat.events import Event, EventType
 from asat.input_router import InputRouter, default_bindings
 from asat.kernel import ExecutionKernel
@@ -95,8 +95,6 @@ class Application:
         seeded = session is None
         resolved_session = session if session is not None else Session.new()
         cursor = NotebookCursor(resolved_session, bus)
-        if seeded:
-            cursor.new_cell()
         kernel = ExecutionKernel(bus)
         recorder = OutputRecorder(bus)
         output_cursor = OutputCursor(bus)
@@ -115,7 +113,7 @@ class Application:
         )
         resolved_sink: AudioSink = sink if sink is not None else MemorySink()
         sound_engine = SoundEngine(bus, resolved_bank, resolved_sink)
-        return cls(
+        app = cls(
             bus=bus,
             session=resolved_session,
             cursor=cursor,
@@ -128,6 +126,27 @@ class Application:
             settings_controller=settings_controller,
             session_path=Path(session_path) if session_path is not None else None,
         )
+        # Everything below fires AFTER sound_engine has subscribed, so
+        # the launch narration actually plays through the sink.
+        publish_event(
+            bus,
+            EventType.SESSION_CREATED,
+            {"session_id": resolved_session.session_id},
+            source="app",
+        )
+        if not seeded and session_path is not None:
+            publish_event(
+                bus,
+                EventType.SESSION_LOADED,
+                {
+                    "session_id": resolved_session.session_id,
+                    "path": str(session_path),
+                },
+                source="app",
+            )
+        if seeded:
+            cursor.new_cell()
+        return app
 
     def handle_key(self, key: Key) -> Optional[str]:
         """Dispatch a keystroke and return the action name, if any.
@@ -152,6 +171,15 @@ class Application:
         """Flush the sink and persist the session if a path was given."""
         if self.session_path is not None:
             self.session.save(self.session_path)
+            publish_event(
+                self.bus,
+                EventType.SESSION_SAVED,
+                {
+                    "session_id": self.session.session_id,
+                    "path": str(self.session_path),
+                },
+                source="app",
+            )
         self.sink.close()
 
     def _on_action_invoked(self, event: Event) -> None:

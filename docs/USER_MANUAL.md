@@ -16,17 +16,46 @@ need to trigger is a key.
 ## Launching a session
 
 ```
-python -m asat                       # interactive session, MemorySink
-python -m asat --wav-dir /tmp/asat   # also write every buffer to WAV
-python -m asat --bank mybank.json    # start from a saved SoundBank
-python -m asat --session s.json      # resume an existing session
+python -m asat                      # interactive session, text trace on stdout
+python -m asat --live               # play audio on the speaker (Windows today)
+python -m asat --wav-dir /tmp/asat  # also write every rendered buffer to WAV
+python -m asat --quiet              # suppress the text trace, audio only
+python -m asat --bank mybank.json   # start from a saved SoundBank
+python -m asat --session s.json     # resume an existing session; saved on exit
 ```
 
-Every flag is optional. Without `--wav-dir`, audio is rendered into
-an in-memory sink; that is useful for tests and for debugging the
-event stream, but a blind user who wants real sound today needs
-`--wav-dir DIR` and a WAV-capable player. A live-speaker sink is
-tracked as [FEATURE_REQUESTS F6](FEATURE_REQUESTS.md#f6--live-speaker-audio-sink).
+Every flag is optional and they compose. The common launch recipes:
+
+- **On Windows:** `python -m asat --live`. You hear the session-start
+  chime and every subsequent narration on the speaker. The text trace
+  on stdout is secondary; most users will want `--quiet` once they
+  are comfortable driving by ear alone.
+- **On macOS/Linux today:** `python -m asat --wav-dir /tmp/asat`.
+  Each rendered buffer is written to a numbered WAV under
+  `/tmp/asat`. Live playback is being worked on
+  (FEATURE_REQUESTS.md F6); until then, WAV capture plus a
+  screen-reader-friendly player is the recommended path.
+- **Resume a session:** `python -m asat --session work.json`. The
+  session loads, you hear a "loaded" narration, and the same file is
+  rewritten on exit with whatever cells you ran this time.
+
+### What you should hear and see on launch
+
+The moment the binary starts:
+
+1. **Audio.** A short rising chime (the SESSION_CREATED binding in
+   the default SoundBank) plays from directly overhead, followed by
+   the `focus_shift` cue as the cursor drops into INPUT mode on the
+   first empty cell. If you hear neither, your sink is silent —
+   re-launch with `--live` (Windows) or `--wav-dir DIR` (elsewhere)
+   and check the `[asat]` line that `--wav-dir` produces.
+2. **Text trace (unless `--quiet`).** One line reading
+   `[asat] session <id> ready. :quit to exit.`, then
+   `[input #<short-id>]` to confirm you are in INPUT mode.
+
+If neither the chime nor the banner appear, the session did not
+start cleanly — see the troubleshooting table at the end of this
+file.
 
 ---
 

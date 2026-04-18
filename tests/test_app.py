@@ -129,5 +129,45 @@ class ApplicationPersistenceTests(unittest.TestCase):
             self.assertTrue(path.exists())
 
 
+class ApplicationSessionEventTests(unittest.TestCase):
+    """Verify the session lifecycle events fire at the right boundaries.
+
+    SESSION_CREATED fires inside `build()`, before any caller can
+    subscribe directly on the Application's bus, so we witness it
+    through a `RecordingSink` that passively receives every narration
+    the SoundEngine produces for the SESSION_CREATED binding in the
+    default bank. SESSION_SAVED is easier: it fires inside `close()`,
+    which callers can hook before invoking.
+    """
+
+    def test_build_records_a_narration_for_session_created(self) -> None:
+        # The default bank binds SESSION_CREATED to a system-voice
+        # cue, so the sink receives at least one buffer during build.
+        sink = MemorySink()
+        Application.build(sink=sink)
+        self.assertGreater(
+            len(sink.buffers),
+            0,
+            "SoundEngine produced no buffer for SESSION_CREATED; the "
+            "startup narration has probably gone silent.",
+        )
+
+    def test_close_publishes_session_saved_when_path_is_set(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "s.json"
+            app = Application.build(session_path=path)
+            seen: list[dict] = []
+            app.bus.subscribe(
+                EventType.SESSION_SAVED,
+                lambda e: seen.append(dict(e.payload)),
+            )
+            app.close()
+            self.assertEqual(len(seen), 1)
+            self.assertEqual(seen[0]["path"], str(path))
+
+
 if __name__ == "__main__":
     unittest.main()
