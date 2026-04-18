@@ -10,23 +10,13 @@ from the execution kernel, input router, and audio engine.
 from __future__ import annotations
 
 import json
-import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator, Optional
 
 from asat.cell import Cell
-
-
-def _utcnow() -> datetime:
-    """Return the current UTC time with an explicit timezone."""
-    return datetime.now(timezone.utc)
-
-
-def _new_id() -> str:
-    """Return a fresh random identifier as a hex string."""
-    return uuid.uuid4().hex
+from asat.common import new_id, utcnow
 
 
 class SessionError(Exception):
@@ -53,8 +43,8 @@ class Session:
     @classmethod
     def new(cls) -> "Session":
         """Create a fresh empty session."""
-        now = _utcnow()
-        return cls(session_id=_new_id(), created_at=now, updated_at=now)
+        now = utcnow()
+        return cls(session_id=new_id(), created_at=now, updated_at=now)
 
     def __len__(self) -> int:
         """Return the number of cells currently in the session."""
@@ -78,7 +68,7 @@ class Session:
         else:
             self._check_position(position, allow_end=True)
             self.cells.insert(position, cell)
-        self.updated_at = _utcnow()
+        self.updated_at = utcnow()
         return cell
 
     def remove_cell(self, cell_id: str) -> Cell:
@@ -90,7 +80,7 @@ class Session:
         removed = self.cells.pop(index)
         if self.active_cell_id == cell_id:
             self.active_cell_id = None
-        self.updated_at = _utcnow()
+        self.updated_at = utcnow()
         return removed
 
     def move_cell(self, cell_id: str, new_position: int) -> None:
@@ -104,7 +94,7 @@ class Session:
         self._check_position(new_position, allow_end=False)
         cell = self.cells.pop(current)
         self.cells.insert(new_position, cell)
-        self.updated_at = _utcnow()
+        self.updated_at = utcnow()
 
     def get_cell(self, cell_id: str) -> Cell:
         """Return the cell with the given id or raise SessionError."""
@@ -123,7 +113,7 @@ class Session:
         if cell_id is not None:
             self._require_index(cell_id)
         self.active_cell_id = cell_id
-        self.updated_at = _utcnow()
+        self.updated_at = utcnow()
 
     def active_cell(self) -> Optional[Cell]:
         """Return the currently focused cell, or None if no cell is focused."""

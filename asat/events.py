@@ -13,9 +13,11 @@ parser modules.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Any
+
+from asat.common import utcnow
 
 
 class EventType(str, Enum):
@@ -98,11 +100,6 @@ class EventType(str, Enum):
     AUDIO_INTERRUPTED = "audio.interrupted"
 
 
-def _utcnow() -> datetime:
-    """Return the current UTC time with an explicit timezone."""
-    return datetime.now(timezone.utc)
-
-
 @dataclass(frozen=True)
 class Event:
     """An immutable record of something that happened.
@@ -117,4 +114,4 @@ class Event:
     event_type: EventType
     payload: dict[str, Any] = field(default_factory=dict)
     source: str = ""
-    timestamp: datetime = field(default_factory=_utcnow)
+    timestamp: datetime = field(default_factory=utcnow)
