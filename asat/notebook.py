@@ -164,6 +164,38 @@ class NotebookCursor:
         )
         return self._state
 
+    def view_output_mode(self) -> Optional[FocusState]:
+        """Switch from notebook to output mode on the focused cell.
+
+        OUTPUT mode is where line-level navigation through a cell's
+        captured output happens. The cursor simply flips its mode;
+        attaching an OutputCursor to the appropriate buffer is the
+        caller's job.
+        """
+        if self._state.mode != FocusMode.NOTEBOOK or self._state.cell_id is None:
+            return None
+        self._transition(
+            FocusState(
+                mode=FocusMode.OUTPUT,
+                cell_id=self._state.cell_id,
+                input_buffer="",
+            )
+        )
+        return self._state
+
+    def exit_output_mode(self) -> Optional[FocusState]:
+        """Return to notebook mode from output mode."""
+        if self._state.mode != FocusMode.OUTPUT or self._state.cell_id is None:
+            return None
+        self._transition(
+            FocusState(
+                mode=FocusMode.NOTEBOOK,
+                cell_id=self._state.cell_id,
+                input_buffer="",
+            )
+        )
+        return self._state
+
     def insert_character(self, character: str) -> None:
         """Append a character to the input buffer while in INPUT mode."""
         if self._state.mode != FocusMode.INPUT:

@@ -159,5 +159,39 @@ class CursorInputModeTests(unittest.TestCase):
         self.assertEqual(len(self.session), 2)
 
 
+class CursorOutputModeTests(unittest.TestCase):
+
+    def setUp(self) -> None:
+        self.bus = EventBus()
+        self.recorder = _Recorder(self.bus)
+        self.session, self.cells = _session_with(["echo out"])
+        self.cursor = NotebookCursor(self.session, self.bus)
+
+    def test_view_output_mode_transitions(self) -> None:
+        result = self.cursor.view_output_mode()
+        assert result is not None
+        self.assertEqual(self.cursor.focus.mode, FocusMode.OUTPUT)
+        self.assertEqual(self.cursor.focus.cell_id, self.cells[0].cell_id)
+        self.assertEqual(len(self.recorder.events), 1)
+
+    def test_view_output_from_input_mode_is_noop(self) -> None:
+        self.cursor.enter_input_mode()
+        self.recorder.events.clear()
+        self.assertIsNone(self.cursor.view_output_mode())
+        self.assertEqual(self.cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(self.recorder.events, [])
+
+    def test_exit_output_returns_to_notebook(self) -> None:
+        self.cursor.view_output_mode()
+        self.recorder.events.clear()
+        self.cursor.exit_output_mode()
+        self.assertEqual(self.cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertEqual(len(self.recorder.events), 1)
+
+    def test_exit_output_from_notebook_is_noop(self) -> None:
+        self.assertIsNone(self.cursor.exit_output_mode())
+        self.assertEqual(self.cursor.focus.mode, FocusMode.NOTEBOOK)
+
+
 if __name__ == "__main__":
     unittest.main()

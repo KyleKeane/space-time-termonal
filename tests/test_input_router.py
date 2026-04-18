@@ -8,8 +8,22 @@ from asat.cell import Cell
 from asat.event_bus import EventBus
 from asat.events import Event, EventType
 from asat.input_router import InputRouter, default_bindings
-from asat.keys import BACKSPACE, DOWN, ENTER, ESCAPE, HOME, Key, Modifier, UP
+from asat.keys import (
+    BACKSPACE,
+    DOWN,
+    END,
+    ENTER,
+    ESCAPE,
+    HOME,
+    Key,
+    Modifier,
+    PAGE_DOWN,
+    PAGE_UP,
+    UP,
+)
 from asat.notebook import FocusMode, NotebookCursor
+from asat.output_buffer import OutputBuffer, STDOUT
+from asat.output_cursor import OutputCursor
 from asat.session import Session
 
 
@@ -159,6 +173,79 @@ class ActionEventPayloadTests(unittest.TestCase):
         actions = recorder.types_of(EventType.ACTION_INVOKED)
         self.assertEqual(actions[0].payload["action"], "move_down")
         self.assertEqual(actions[0].payload["focus_mode"], FocusMode.NOTEBOOK.value)
+
+
+class OutputModeDispatchTests(unittest.TestCase):
+
+    def _stack(
+        self,
+        lines: list[str],
+    ) -> tuple[NotebookCursor, InputRouter, OutputCursor, OutputBuffer]:
+        bus = EventBus()
+        session = Session.new()
+        cell = Cell.new("echo")
+        session.add_cell(cell)
+        cursor = NotebookCursor(session, bus)
+        output_cursor = OutputCursor(bus, page_size=2)
+        buffer = OutputBuffer(cell_id=cell.cell_id)
+        for text in lines:
+            buffer.append(text, stream=STDOUT)
+        output_cursor.attach(buffer)
+        cursor.view_output_mode()
+        router = InputRouter(cursor, bus, output_cursor=output_cursor)
+        return cursor, router, output_cursor, buffer
+
+    def test_up_moves_output_cursor_up(self) -> None:
+        _, router, output_cursor, _ = self._stack(["a", "b", "c"])
+        result = router.handle_key(UP)
+        self.assertEqual(result, "output_line_up")
+        self.assertEqual(output_cursor.line_number, 1)
+
+    def test_down_moves_output_cursor_down(self) -> None:
+        _, router, output_cursor, _ = self._stack(["a", "b", "c"])
+        output_cursor.move_to_start()
+        self.assertEqual(router.handle_key(DOWN), "output_line_down")
+        self.assertEqual(output_cursor.line_number, 1)
+
+    def test_page_up_and_page_down_use_page_size(self) -> None:
+        _, router, output_cursor, _ = self._stack(["a", "b", "c", "d", "e"])
+        router.handle_key(PAGE_UP)
+        self.assertEqual(output_cursor.line_number, 2)
+        router.handle_key(PAGE_DOWN)
+        self.assertEqual(output_cursor.line_number, 4)
+
+    def test_home_and_end_jump_to_ends(self) -> None:
+        _, router, output_cursor, _ = self._stack(["a", "b", "c"])
+        router.handle_key(HOME)
+        self.assertEqual(output_cursor.line_number, 0)
+        router.handle_key(END)
+        self.assertEqual(output_cursor.line_number, 2)
+
+    def test_escape_exits_output_mode(self) -> None:
+        cursor, router, _, _ = self._stack(["a"])
+        self.assertEqual(router.handle_key(ESCAPE), "exit_output")
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+
+    def test_output_actions_noop_without_output_cursor(self) -> None:
+        bus = EventBus()
+        session = Session.new()
+        cell = Cell.new("echo")
+        session.add_cell(cell)
+        cursor = NotebookCursor(session, bus)
+        cursor.view_output_mode()
+        router = InputRouter(cursor, bus)
+        self.assertEqual(router.handle_key(UP), "output_line_up")
+
+    def test_ctrl_o_enters_output_mode_from_notebook(self) -> None:
+        bus = EventBus()
+        session = Session.new()
+        cell = Cell.new("echo")
+        session.add_cell(cell)
+        cursor = NotebookCursor(session, bus)
+        router = InputRouter(cursor, bus)
+        result = router.handle_key(Key.combo("o", Modifier.CTRL))
+        self.assertEqual(result, "view_output")
+        self.assertEqual(cursor.focus.mode, FocusMode.OUTPUT)
 
 
 class CustomBindingTests(unittest.TestCase):

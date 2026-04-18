@@ -12,9 +12,15 @@ adapter that reads real terminal input and produces Key values is
 left to a later phase; this keeps the router fully testable in
 isolation and lets alternative input sources plug in cleanly.
 
-Default bindings cover the Phase 4 goal: non-visual navigation
-between input cells and basic in-place command editing. They can be
-overridden or extended by passing a custom bindings map.
+Default bindings cover non-visual navigation between input cells,
+in-place command editing, and line-level exploration of a cell's
+captured output. They can be overridden or extended by passing a
+custom bindings map.
+
+An OutputCursor is optional. When one is provided, the router dispatches
+OUTPUT-mode navigation actions to it. When it is absent, those actions
+silently no-op so the router is still usable for sessions that do not
+care about output navigation.
 """
 
 from __future__ import annotations
@@ -26,6 +32,7 @@ from asat.event_bus import EventBus
 from asat.events import Event, EventType
 from asat.keys import Key, Modifier
 from asat.notebook import FocusMode, NotebookCursor
+from asat.output_cursor import OutputCursor
 
 
 BindingMap = dict[FocusMode, dict[Key, str]]
@@ -37,12 +44,19 @@ def default_bindings() -> BindingMap:
     NOTEBOOK mode:
         Up/Down move between cells, Home/End jump to ends,
         Enter enters input mode on the focused cell,
-        Ctrl+N appends a fresh cell and enters input mode.
+        Ctrl+N appends a fresh cell and enters input mode,
+        Ctrl+O opens the captured output of the focused cell.
 
     INPUT mode:
         Backspace deletes the last character,
         Enter submits the current command,
         Escape commits and returns to notebook mode.
+
+    OUTPUT mode:
+        Up/Down walk one line at a time,
+        PageUp/PageDown jump a page,
+        Home/End jump to the first or last captured line,
+        Escape returns to notebook mode.
     """
     return {
         FocusMode.NOTEBOOK: {
@@ -52,11 +66,21 @@ def default_bindings() -> BindingMap:
             kc.END: "move_to_bottom",
             kc.ENTER: "enter_input",
             Key.combo("n", Modifier.CTRL): "new_cell",
+            Key.combo("o", Modifier.CTRL): "view_output",
         },
         FocusMode.INPUT: {
             kc.BACKSPACE: "backspace",
             kc.ENTER: "submit",
             kc.ESCAPE: "exit_input",
+        },
+        FocusMode.OUTPUT: {
+            kc.UP: "output_line_up",
+            kc.DOWN: "output_line_down",
+            kc.PAGE_UP: "output_page_up",
+            kc.PAGE_DOWN: "output_page_down",
+            kc.HOME: "output_to_start",
+            kc.END: "output_to_end",
+            kc.ESCAPE: "exit_output",
         },
     }
 
@@ -71,11 +95,13 @@ class InputRouter:
         cursor: NotebookCursor,
         bus: EventBus,
         bindings: Optional[BindingMap] = None,
+        output_cursor: Optional[OutputCursor] = None,
     ) -> None:
-        """Attach the router to a cursor and an event bus."""
+        """Attach the router to a cursor, event bus, and optional output cursor."""
         self._cursor = cursor
         self._bus = bus
         self._bindings = bindings if bindings is not None else default_bindings()
+        self._output_cursor = output_cursor
 
     @property
     def bindings(self) -> BindingMap:
@@ -118,7 +144,7 @@ class InputRouter:
         self._publish_action(action, key, payload_extra)
 
     def _action_handler(self, action: str) -> Callable[[], None]:
-        """Map an action name to a zero-argument callable on the cursor."""
+        """Map an action name to a zero-argument callable."""
         handlers: dict[str, Callable[[], None]] = {
             "move_up": lambda: self._cursor.move_up(),
             "move_down": lambda: self._cursor.move_down(),
@@ -128,10 +154,39 @@ class InputRouter:
             "exit_input": lambda: self._cursor.exit_input_mode(),
             "new_cell": lambda: self._cursor.new_cell(),
             "backspace": lambda: self._cursor.backspace(),
+            "view_output": lambda: self._cursor.view_output_mode(),
+            "exit_output": lambda: self._cursor.exit_output_mode(),
+            "output_line_up": lambda: self._with_output_cursor(
+                lambda oc: oc.move_line_up()
+            ),
+            "output_line_down": lambda: self._with_output_cursor(
+                lambda oc: oc.move_line_down()
+            ),
+            "output_page_up": lambda: self._with_output_cursor(
+                lambda oc: oc.move_page_up()
+            ),
+            "output_page_down": lambda: self._with_output_cursor(
+                lambda oc: oc.move_page_down()
+            ),
+            "output_to_start": lambda: self._with_output_cursor(
+                lambda oc: oc.move_to_start()
+            ),
+            "output_to_end": lambda: self._with_output_cursor(
+                lambda oc: oc.move_to_end()
+            ),
         }
         if action not in handlers:
             raise KeyError(f"Unknown action: {action}")
         return handlers[action]
+
+    def _with_output_cursor(
+        self,
+        operation: Callable[[OutputCursor], object],
+    ) -> None:
+        """Run an output-cursor operation only if a cursor is attached."""
+        if self._output_cursor is None:
+            return
+        operation(self._output_cursor)
 
     def _publish_key(self, key: Key) -> None:
         """Publish a KEY_PRESSED event describing the keystroke."""
