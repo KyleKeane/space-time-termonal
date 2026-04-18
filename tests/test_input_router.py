@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 
+from asat.actions import ActionMenu, MemoryClipboard, default_actions
 from asat.cell import Cell
 from asat.event_bus import EventBus
 from asat.events import Event, EventType
@@ -15,6 +16,7 @@ from asat.keys import (
     END,
     ENTER,
     ESCAPE,
+    F2,
     HOME,
     Key,
     LEFT,
@@ -25,7 +27,7 @@ from asat.keys import (
     UP,
 )
 from asat.notebook import FocusMode, NotebookCursor
-from asat.output_buffer import OutputBuffer, STDOUT
+from asat.output_buffer import OutputBuffer, OutputRecorder, STDOUT
 from asat.output_cursor import OutputCursor
 from asat.session import Session
 from asat.settings_controller import SettingsController
@@ -587,6 +589,132 @@ class CustomBindingTests(unittest.TestCase):
         router = InputRouter(cursor, bus, bindings=custom)
         self.assertEqual(router.handle_key(Key.printable("j")), "move_down")
         self.assertIsNone(router.handle_key(UP))
+
+
+def _build_with_menu(
+    commands: list[str],
+) -> tuple[EventBus, NotebookCursor, InputRouter, ActionMenu, OutputCursor, OutputRecorder, MemoryClipboard]:
+    """Build a router wired to a real ActionMenu + default providers.
+
+    Mirrors what `Application.build` assembles but keeps the audio and
+    kernel sides out of the way so menu dispatch is the only thing
+    under test.
+    """
+    bus = EventBus()
+    session = Session.new()
+    for command in commands:
+        session.add_cell(Cell.new(command))
+    cursor = NotebookCursor(session, bus)
+    recorder = OutputRecorder(bus)
+    output_cursor = OutputCursor(bus)
+    clipboard = MemoryClipboard()
+    catalog = default_actions(
+        cursor=cursor,
+        recorder=recorder,
+        output_cursor=output_cursor,
+        clipboard=clipboard,
+        bus=bus,
+    )
+    menu = ActionMenu(bus, catalog)
+    router = InputRouter(
+        cursor,
+        bus,
+        output_cursor=output_cursor,
+        action_menu=menu,
+    )
+    return bus, cursor, router, menu, output_cursor, recorder, clipboard
+
+
+class ActionMenuBindingTests(unittest.TestCase):
+    """F14: F2 (and Ctrl+.) open the contextual menu, and while the
+    menu is open Up / Down / Enter / Escape drive it instead of the
+    current focus mode."""
+
+    def test_f2_opens_menu_from_notebook(self) -> None:
+        _, _, router, menu, _, _, _ = _build_with_menu(["echo"])
+        self.assertFalse(menu.is_open)
+        self.assertEqual(router.handle_key(F2), "open_action_menu")
+        self.assertTrue(menu.is_open)
+        # NOTEBOOK providers contribute "enter_input" + "view_output".
+        self.assertEqual([item.id for item in menu.items], ["enter_input", "view_output"])
+
+    def test_ctrl_dot_is_alternate_opener(self) -> None:
+        _, _, router, menu, _, _, _ = _build_with_menu(["echo"])
+        self.assertEqual(
+            router.handle_key(Key.combo(".", Modifier.CTRL)),
+            "open_action_menu",
+        )
+        self.assertTrue(menu.is_open)
+
+    def test_f2_opens_menu_from_input_mode(self) -> None:
+        _, _, router, menu, _, _, _ = _build_with_menu(["echo"])
+        router.handle_key(ENTER)  # enter INPUT
+        router.handle_key(F2)
+        self.assertTrue(menu.is_open)
+        # INPUT providers contribute "submit" + "exit_input".
+        self.assertEqual([item.id for item in menu.items], ["submit", "exit_input"])
+
+    def test_menu_up_and_down_cycle_items(self) -> None:
+        _, _, router, menu, _, _, _ = _build_with_menu(["echo"])
+        router.handle_key(F2)
+        self.assertEqual(menu.current_item().id, "enter_input")
+        self.assertEqual(router.handle_key(DOWN), "menu_next")
+        self.assertEqual(menu.current_item().id, "view_output")
+        self.assertEqual(router.handle_key(UP), "menu_prev")
+        self.assertEqual(menu.current_item().id, "enter_input")
+
+    def test_enter_activates_and_closes(self) -> None:
+        _, cursor, router, menu, _, _, _ = _build_with_menu(["echo"])
+        router.handle_key(F2)
+        # "enter_input" is first; activating it enters INPUT mode.
+        result = router.handle_key(ENTER)
+        self.assertEqual(result, "menu_activate")
+        self.assertFalse(menu.is_open)
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+
+    def test_escape_closes_without_activating(self) -> None:
+        _, cursor, router, menu, _, _, _ = _build_with_menu(["echo"])
+        router.handle_key(F2)
+        result = router.handle_key(ESCAPE)
+        self.assertEqual(result, "menu_close")
+        self.assertFalse(menu.is_open)
+        # NOT in input mode because we cancelled.
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+
+    def test_output_mode_menu_carries_line_context(self) -> None:
+        bus, cursor, router, menu, output_cursor, recorder, clipboard = _build_with_menu(["echo"])
+        cell_id = cursor.focus.cell_id
+        buffer = recorder.buffer_for(cell_id)
+        buffer.append("first", stream=STDOUT)
+        buffer.append("second", stream=STDOUT)
+        output_cursor.attach(buffer)
+        cursor.view_output_mode()
+        output_cursor.move_to_end()
+        router.handle_key(F2)
+        # "copy_line" only appears when line_text was captured.
+        self.assertIn("copy_line", [item.id for item in menu.items])
+        # Focus the "copy_line" item and invoke it.
+        while menu.current_item().id != "copy_line":
+            router.handle_key(DOWN)
+        router.handle_key(ENTER)
+        self.assertEqual(clipboard.text, "second")
+
+    def test_unbound_menu_key_is_swallowed(self) -> None:
+        _, _, router, menu, _, _, _ = _build_with_menu(["echo"])
+        router.handle_key(F2)
+        before_index = menu.items.index(menu.current_item())
+        # A printable key while menu is open should not leak into INPUT
+        # insertion or change the menu focus.
+        self.assertIsNone(router.handle_key(Key.printable("x")))
+        self.assertTrue(menu.is_open)
+        self.assertEqual(menu.items.index(menu.current_item()), before_index)
+
+    def test_menu_no_op_without_action_menu(self) -> None:
+        _, _, _, router, _ = _build(["echo"])
+        # Without an action_menu wired in, F2 maps to "open_action_menu"
+        # but the handler silently no-ops. Router still reports the
+        # matched action so downstream observers see the attempt.
+        self.assertEqual(router.handle_key(F2), "open_action_menu")
 
 
 if __name__ == "__main__":

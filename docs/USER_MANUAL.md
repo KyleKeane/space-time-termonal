@@ -227,6 +227,34 @@ to say "stderr:" every time.
 
 ---
 
+## Actions menu — context-sensitive affordances
+
+The actions menu is the keyboard-driven equivalent of a right-click
+menu. Press **F2** (or **Ctrl+.** as a fallback on keyboards without
+an F-row) from NOTEBOOK, INPUT, or OUTPUT mode and a short list of
+items appears based on where you're focused:
+
+* **NOTEBOOK** — edit the focused command, or explore its output.
+* **INPUT** — submit the command, or cancel editing.
+* **OUTPUT** — copy the focused line, copy the whole buffer, copy
+  just stderr, or return to the notebook.
+
+While the menu is open the keymap is modal:
+
+| Key       | What it does                                      |
+|-----------|---------------------------------------------------|
+| Up / Down | Previous / next item (clamped at the ends).       |
+| Enter     | Invoke the focused item; the menu closes.         |
+| Escape    | Close the menu without invoking anything.         |
+
+Every transition narrates. Opening the menu reads the item labels,
+Up/Down reads the newly-focused label, Enter announces the invocation
+and fires the `menu_activate` cue, and Escape fires `menu_close`.
+Copy items route through the clipboard (in-memory by default;
+platform adapters can plug in an OS backend).
+
+---
+
 ## SETTINGS mode — reshaping audio without restarting
 
 The settings editor is the live control surface for every voice,
@@ -318,6 +346,7 @@ Every key you need, one table.
 | NOTEBOOK   | Ctrl+N            | New empty cell                        |
 | NOTEBOOK   | Ctrl+O            | Enter OUTPUT mode                     |
 | NOTEBOOK   | Ctrl+,            | Open settings editor                  |
+| NOTEBOOK   | F2 / Ctrl+.       | Open actions menu                     |
 | INPUT      | Enter             | Submit command                        |
 | INPUT      | Backspace         | Delete char before caret              |
 | INPUT      | Delete            | Delete char under caret               |
@@ -328,6 +357,7 @@ Every key you need, one table.
 | INPUT      | Ctrl+U            | Delete from start of line to caret    |
 | INPUT      | Ctrl+K            | Delete from caret to end of line      |
 | INPUT      | Escape            | Leave INPUT without running           |
+| INPUT      | F2 / Ctrl+.       | Open actions menu                     |
 | INPUT      | `:help`⏎          | Narrate + print the cheat sheet       |
 | INPUT      | `:settings`⏎      | Open settings editor                  |
 | INPUT      | `:save`⏎          | Save session                          |
@@ -336,6 +366,10 @@ Every key you need, one table.
 | OUTPUT     | PageUp / PageDown | Jump a page                           |
 | OUTPUT     | Home / End        | First / last line                     |
 | OUTPUT     | Escape            | Back to NOTEBOOK                      |
+| OUTPUT     | F2 / Ctrl+.       | Open actions menu                     |
+| MENU       | Up / Down         | Prev / next item                      |
+| MENU       | Enter             | Invoke focused item                   |
+| MENU       | Escape            | Close without invoking                |
 | SETTINGS   | Up / Down         | Prev / next item                      |
 | SETTINGS   | Right / Enter     | Descend                               |
 | SETTINGS   | Left / Escape     | Ascend / close                        |

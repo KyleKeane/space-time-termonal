@@ -24,6 +24,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, TextIO
 
+from asat.actions import (
+    ActionCatalog,
+    ActionMenu,
+    Clipboard,
+    MemoryClipboard,
+    default_actions,
+)
 from asat.audio_sink import AudioSink, MemorySink
 from asat.default_bank import default_sound_bank
 from asat.event_bus import EventBus, publish_event
@@ -62,6 +69,9 @@ class Application:
     sound_engine: SoundEngine
     sink: AudioSink
     settings_controller: SettingsController
+    clipboard: Clipboard
+    action_catalog: ActionCatalog
+    action_menu: ActionMenu
     session_path: Optional[Path] = None
     running: bool = True
 
@@ -112,12 +122,22 @@ class Application:
             resolved_bank,
             save_path=bank_path,
         )
+        clipboard: Clipboard = MemoryClipboard()
+        action_catalog = default_actions(
+            cursor=cursor,
+            recorder=recorder,
+            output_cursor=output_cursor,
+            clipboard=clipboard,
+            bus=bus,
+        )
+        action_menu = ActionMenu(bus, action_catalog)
         router = InputRouter(
             cursor,
             bus,
             bindings=default_bindings(),
             output_cursor=output_cursor,
             settings_controller=settings_controller,
+            action_menu=action_menu,
         )
         resolved_sink: AudioSink = sink if sink is not None else MemorySink()
         sound_engine = SoundEngine(bus, resolved_bank, resolved_sink)
@@ -134,6 +154,9 @@ class Application:
             sound_engine=sound_engine,
             sink=resolved_sink,
             settings_controller=settings_controller,
+            clipboard=clipboard,
+            action_catalog=action_catalog,
+            action_menu=action_menu,
             session_path=Path(session_path) if session_path is not None else None,
         )
         # Everything below fires AFTER sound_engine and (if requested)

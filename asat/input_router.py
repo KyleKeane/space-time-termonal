@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Callable, Optional
 
 from asat import keys as kc
+from asat.actions import ActionContext, ActionMenu
 from asat.event_bus import EventBus, publish_event
 from asat.events import EventType
 from asat.keys import Key, Modifier
@@ -66,7 +67,8 @@ def default_bindings() -> BindingMap:
         Enter enters input mode on the focused cell,
         Ctrl+N appends a fresh cell and enters input mode,
         Ctrl+O opens the captured output of the focused cell,
-        Ctrl+, (comma) opens the settings editor.
+        Ctrl+, (comma) opens the settings editor,
+        F2 (or Ctrl+.) opens the contextual actions menu.
 
     INPUT mode:
         Backspace deletes the character before the caret,
@@ -85,6 +87,7 @@ def default_bindings() -> BindingMap:
         Up/Down walk one line at a time,
         PageUp/PageDown jump a page,
         Home/End jump to the first or last captured line,
+        F2 (or Ctrl+.) opens the contextual actions menu,
         Escape returns to notebook mode.
 
     SETTINGS mode:
@@ -95,6 +98,7 @@ def default_bindings() -> BindingMap:
         Ctrl+S saves the bank, Ctrl+Q closes the editor,
         Escape ascends or (at the top level) closes.
     """
+    menu_open = Key.combo(".", Modifier.CTRL)
     return {
         FocusMode.NOTEBOOK: {
             kc.UP: "move_up",
@@ -105,6 +109,8 @@ def default_bindings() -> BindingMap:
             Key.combo("n", Modifier.CTRL): "new_cell",
             Key.combo("o", Modifier.CTRL): "view_output",
             Key.combo(",", Modifier.CTRL): "open_settings",
+            kc.F2: "open_action_menu",
+            menu_open: "open_action_menu",
         },
         FocusMode.INPUT: {
             kc.BACKSPACE: "backspace",
@@ -120,6 +126,8 @@ def default_bindings() -> BindingMap:
             Key.combo("k", Modifier.CTRL): "delete_to_end",
             kc.ENTER: "submit",
             kc.ESCAPE: "exit_input",
+            kc.F2: "open_action_menu",
+            menu_open: "open_action_menu",
         },
         FocusMode.OUTPUT: {
             kc.UP: "output_line_up",
@@ -129,6 +137,8 @@ def default_bindings() -> BindingMap:
             kc.HOME: "output_to_start",
             kc.END: "output_to_end",
             kc.ESCAPE: "exit_output",
+            kc.F2: "open_action_menu",
+            menu_open: "open_action_menu",
         },
         FocusMode.SETTINGS: {
             kc.UP: "settings_prev",
@@ -170,6 +180,7 @@ HELP_LINES: tuple[str, ...] = (
     "           Ctrl+W kills word, Ctrl+U kills to start, Ctrl+K kills to end.",
     "OUTPUT:    Up/Down step lines, PageUp/PageDown page, Escape leaves.",
     "SETTINGS:  Up/Down walk, Right/Enter descend, Left/Escape ascend, e edit, Ctrl+S save, Ctrl+Q close.",
+    "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
     "Meta:      :help, :settings, :save, :quit (type in INPUT mode then Enter).",
     "Exit:      :quit, or EOF (Ctrl+D on POSIX, Ctrl+Z Enter on Windows).",
     "Docs:      docs/USER_MANUAL.md for the full keystroke reference.",
@@ -188,6 +199,7 @@ class InputRouter:
         bindings: Optional[BindingMap] = None,
         output_cursor: Optional[OutputCursor] = None,
         settings_controller: Optional[SettingsController] = None,
+        action_menu: Optional[ActionMenu] = None,
     ) -> None:
         """Attach the router to a cursor, event bus, and optional cursors.
 
@@ -196,12 +208,20 @@ class InputRouter:
         SETTINGS focus-mode key map, and recognition of `:settings`
         in INPUT mode. When it is absent, those actions silently no-op
         so a test or embedding that ignores audio still works.
+
+        When an `action_menu` is supplied, F2 (and Ctrl+.) open the
+        contextual actions menu from NOTEBOOK / INPUT / OUTPUT mode.
+        While the menu is open, Up/Down cycle items, Enter invokes the
+        focused item, and Escape closes the menu without activating.
+        Without an `action_menu` the `open_action_menu` action is a
+        silent no-op.
         """
         self._cursor = cursor
         self._bus = bus
         self._bindings = bindings if bindings is not None else default_bindings()
         self._output_cursor = output_cursor
         self._settings_controller = settings_controller
+        self._action_menu = action_menu
 
     @property
     def bindings(self) -> BindingMap:
@@ -217,6 +237,8 @@ class InputRouter:
         no binding.
         """
         self._publish_key(key)
+        if self._action_menu is not None and self._action_menu.is_open:
+            return self._dispatch_menu_key(key)
         mode = self._cursor.focus.mode
         if mode == FocusMode.SETTINGS and self._settings_active_editing():
             return self._dispatch_settings_edit_key(key)
@@ -229,6 +251,29 @@ class InputRouter:
             self._cursor.insert_character(key.char)
             self._publish_action("insert_character", key, {"char": key.char})
             return "insert_character"
+        return None
+
+    def _dispatch_menu_key(self, key: Key) -> Optional[str]:
+        """Route keys while the actions menu is open.
+
+        Up / Down cycle the focused item, Enter invokes it (which then
+        closes the menu), and Escape closes without activating. Every
+        other key is swallowed so they do not leak into the underlying
+        focus mode — opening the menu is modal by design.
+        """
+        assert self._action_menu is not None
+        if key == kc.UP:
+            self._invoke("menu_prev", key)
+            return "menu_prev"
+        if key == kc.DOWN:
+            self._invoke("menu_next", key)
+            return "menu_next"
+        if key == kc.ENTER:
+            self._invoke("menu_activate", key)
+            return "menu_activate"
+        if key == kc.ESCAPE:
+            self._invoke("menu_close", key)
+            return "menu_close"
         return None
 
     def _settings_active_editing(self) -> bool:
@@ -387,6 +432,64 @@ class InputRouter:
         if self._settings_controller is not None:
             self._settings_controller.backspace_edit()
 
+    def _open_action_menu(self) -> Optional[dict[str, object]]:
+        """Open the contextual actions menu against the current focus.
+
+        Snapshots the current focus (mode + cell) plus, in OUTPUT mode,
+        the focused line number / stream / text so OUTPUT providers can
+        offer `Copy focused line`. A no-op when no `action_menu` was
+        supplied or when the SETTINGS editor is open (the settings UI
+        is modal and its keys would collide with the menu's).
+        """
+        if self._action_menu is None:
+            return None
+        mode = self._cursor.focus.mode
+        if mode == FocusMode.SETTINGS:
+            return None
+        context = self._build_action_context(mode)
+        self._action_menu.open(context)
+        return {"item_count": len(self._action_menu.items)}
+
+    def _build_action_context(self, mode: FocusMode) -> ActionContext:
+        """Assemble the ActionContext consumed by ActionCatalog providers."""
+        cell_id = self._cursor.focus.cell_id
+        line_number: Optional[int] = None
+        line_stream: Optional[str] = None
+        line_text: Optional[str] = None
+        if mode == FocusMode.OUTPUT and self._output_cursor is not None:
+            current = self._output_cursor.current_line()
+            if current is not None:
+                line_number = current.line_number
+                line_stream = current.stream
+                line_text = current.text
+        return ActionContext(
+            focus_mode=mode,
+            cell_id=cell_id,
+            line_number=line_number,
+            line_stream=line_stream,
+            line_text=line_text,
+        )
+
+    def _menu_prev(self) -> None:
+        """Move the menu focus to the previous item (no-op when closed)."""
+        if self._action_menu is not None:
+            self._action_menu.focus_prev()
+
+    def _menu_next(self) -> None:
+        """Move the menu focus to the next item (no-op when closed)."""
+        if self._action_menu is not None:
+            self._action_menu.focus_next()
+
+    def _menu_activate(self) -> None:
+        """Invoke the focused menu item; the menu closes itself."""
+        if self._action_menu is not None:
+            self._action_menu.activate()
+
+    def _menu_close(self) -> None:
+        """Close the menu without invoking anything."""
+        if self._action_menu is not None:
+            self._action_menu.close()
+
     def _action_handler(self, action: str) -> ActionHandler:
         """Map an action name to a zero-argument callable.
 
@@ -444,6 +547,11 @@ class InputRouter:
             "settings_edit_commit": self._settings_edit_commit,
             "settings_edit_cancel": _void(self._settings_edit_cancel),
             "settings_edit_backspace": _void(self._settings_edit_backspace),
+            "open_action_menu": self._open_action_menu,
+            "menu_prev": _void(self._menu_prev),
+            "menu_next": _void(self._menu_next),
+            "menu_activate": _void(self._menu_activate),
+            "menu_close": _void(self._menu_close),
         }
         if action not in handlers:
             raise KeyError(f"Unknown action: {action}")
