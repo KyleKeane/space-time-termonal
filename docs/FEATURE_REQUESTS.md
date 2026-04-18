@@ -187,6 +187,302 @@ subprocess and publishes `COMMAND_CANCELLED`; bind Ctrl+C to it.
 
 ---
 
+## F11 — Auto-advance after submit
+
+**Gap.** `NotebookCursor.submit()` drops to NOTEBOOK mode on the
+just-run cell. To run another command the user must press Ctrl+N
+(create a fresh cell + enter INPUT). First-time users expect
+REPL-like "prompt again after Enter" behaviour instead.
+
+**Where it surfaces.** A user typing `echo first`, Enter, then
+`echo second` finds that letters are silently swallowed in NOTEBOOK
+mode; pressing Enter re-enters INPUT on the previous cell with its
+old command pre-loaded and appends to it. Running three commands in
+a row currently produces `echo firstecho secondecho third` in one
+cell. The manual's five-minute tour does not mention Ctrl+N.
+
+**Sketch.** Either change `NotebookCursor.submit()` to create an
+empty trailing cell and transition to INPUT on it, or have
+`Application._on_action_invoked` append a fresh cell after every
+non-meta submit action. Audit the `FOCUS_CHANGED` / narration flow
+so the transition produces exactly one `[input #…]` banner rather
+than a flicker through NOTEBOOK.
+
+---
+
+## F12 — Shell mode + persistent session CWD
+
+**Gap.** `ExecutionMode.ARGV` is the default, so pipes, redirects,
+globbing, `$VAR` expansion, and shell builtins do not work. `cd
+/tmp` fails with `No such file or directory: 'cd'` (cd is a
+builtin). There is no session-level working directory either, so
+even if `cd` launched, subsequent cells would not inherit it.
+
+**Where it surfaces.** `echo a | grep a` outputs `a | grep a`
+verbatim. `ls *.py` runs `ls` with a literal `*.py` argument.
+Directory navigation is impossible.
+
+**Sketch.** Two parts. (1) CLI-level shell toggle: `--shell` flag
+and `:shell on/off` meta-command that flips
+`ExecutionKernel._default_mode` to `SHELL`. (2) Session CWD: add a
+`cwd: Optional[Path]` field to `Session`, pass it into
+`ExecutionKernel.execute`, intercept `cd <path>` as a `:cd` meta-
+command (and, under shell mode, capture post-run CWD via a `pwd`
+suffix or an explicit shell-keepalive approach). Worth a design
+doc before coding: the security trust model of shell mode deserves
+its own review.
+
+---
+
+## F13 — In-line buffer editing
+
+**Gap.** INPUT mode only accepts printable characters and
+Backspace. Left / Right / Home / End / Delete / Ctrl+A / Ctrl+U /
+Ctrl+W / Ctrl+K are all unbound. A typo early in a long command
+forces the user to backspace the entire line.
+
+**Where it surfaces.** Every command of non-trivial length. Blind
+users rely on left/right navigation and word-kill shortcuts to
+correct text without re-typing.
+
+**Sketch.** Add `cursor_position: int` to `FocusState`. Extend
+`NotebookCursor` with `cursor_left`, `cursor_right`, `cursor_home`,
+`cursor_end`, `delete_forward`, `delete_word_left`, `delete_to_start`,
+`delete_to_end`, and teach `insert_character` and `backspace` to
+respect the cursor position. Publish a new `INPUT_CURSOR_MOVED`
+event (or extend `FOCUS_CHANGED`) so the audio engine can cue the
+move without speaking every character. Bind the keys in
+`default_bindings()` and add a default cue to the SoundBank.
+
+---
+
+## F14 — ActionMenu keystroke binding
+
+**Gap.** `asat/actions.py` builds a fully-functional `ActionMenu`
+with default providers that contribute "copy focused line", "copy
+all output", "copy stderr only", "edit command", "explore output",
+etc. No default keystroke opens the menu, so the whole module is
+unreachable from a real user's keyboard today. As a direct
+consequence, clipboard functionality is also unreachable.
+
+**Where it surfaces.** A user who wants to copy a single output
+line has no way to do it. Tests drive `ActionMenu.activate(...)`
+programmatically but no key triggers `ACTION_MENU_OPENED`.
+
+**Sketch.** `Application.build()` constructs an `ActionCatalog` via
+`default_actions(...)` and an `ActionMenu` wired to the bus. Add
+an `open_action_menu` action in `InputRouter`, bound to a mode-
+agnostic key (F2 or `Menu` key; Ctrl+. as fallback on keyboards
+without F-row). When the menu is open the router routes keys to a
+menu dispatch (Up/Down cycle, Enter activate, Escape close).
+`default_bindings()` gains the one new entry; every other mode
+keeps its current keymap unchanged.
+
+---
+
+## F15 — Cell delete / move / duplicate from keyboard
+
+**Gap.** `Session.remove_cell(cell_id)` and `Session.move_cell(...)`
+exist and are tested, but no keystroke or meta-command reaches
+them. Ctrl+N is the only cell-level op bound today, and it only
+appends.
+
+**Where it surfaces.** A user who makes a typo in one cell, runs
+it, and wants a clean session has to quit and relaunch — there is
+no way to delete cells mid-session. Moving a cell to reorganise a
+session is equally impossible.
+
+**Sketch.** Add `NotebookCursor.delete_focused_cell()` /
+`duplicate_focused_cell()` / `move_focused_cell(delta)` thin
+wrappers, plus `:delete`, `:duplicate` meta-commands and
+NOTEBOOK-mode keystrokes (`d` for delete with a confirm, `Alt+Up/
+Down` to move). Fire `CELL_REMOVED` / `CELL_CREATED` / `CELL_MOVED`
+as today.
+
+---
+
+## F16 — Output search + jump-to-line
+
+**Gap.** OUTPUT mode has no search, no "jump to line N", no
+"next/previous error line" navigation. Long outputs are walked one
+line at a time with Up/Down only.
+
+**Where it surfaces.** Reading the failing line in `pytest`'s
+output means holding Down until you hear "FAILED". A stderr-only
+filter is useful but the Action menu's "copy stderr only" is
+itself unreachable (F14).
+
+**Sketch.** Add an in-OUTPUT-mode overlay state for search: `/`
+enters the search prompt, typed chars narrate matches as you type,
+Enter lands on the first match, `n`/`N` walk next/previous. Add
+`g<number>` for jump-to-line. Use the existing `OutputBuffer` line
+index; no new event types needed — `OUTPUT_LINE_FOCUSED` already
+fires on every jump.
+
+---
+
+## F17 — Richer meta-commands
+
+**Gap.** Meta-commands are case-sensitive, take no arguments, and
+the set is small. `:Help`, `:HELP`, `:help settings`, `:save-as
+foo.json`, `:cd /tmp`, `:new`, `:load`, `:pwd`, `:clear` are all
+unsupported. A mistyped meta-command (e.g., `:setings`) silently
+falls through to the shell and fails.
+
+**Where it surfaces.** A user resuming a session (`python -m asat
+--session a.json`) cannot switch to another session without
+relaunching. A user who forgets to pass `--session` at launch
+cannot persist their work without quitting and relaunching.
+
+**Sketch.** Case-insensitive comparison in `_parse_meta_command`.
+Support a single trailing argument: `:cd /tmp`, `:load foo.json`,
+`:save-as bar.json`, `:help <topic>`. Add a typo-suggest hint when
+a `:xxx` doesn't match any known command ("`:setings` — did you
+mean `:settings`? Line ignored."). Add `:pwd`, `:commands`,
+`:clear` (reset session), `:new` (start a fresh session without
+touching disk).
+
+---
+
+## F18 — OS clipboard adapter
+
+**Gap.** `MemoryClipboard` is the only `Clipboard` implementation.
+Even if F14 unlocked the menu, "copy output line" would store text
+in-process and nothing would land on the system clipboard.
+
+**Where it surfaces.** A user cannot paste an ASAT-copied line
+into another application.
+
+**Sketch.** Add a `SystemClipboard` adapter in `asat/actions.py`
+(or a new `asat/clipboard.py` if we want platform specialisation).
+On Windows use `ctypes` against `user32`/`kernel32`; on macOS
+subprocess `pbcopy`; on Linux try `wl-copy` then `xclip`/`xsel`.
+Fall back to `MemoryClipboard` with a one-line warning on first
+copy. `Application.build` picks the best available adapter unless
+tests pass one in explicitly.
+
+---
+
+## F19 — Prompt context (exit code, CWD)
+
+**Gap.** The `[input #…]` banner that fires on entering INPUT mode
+carries no context about the prior command's exit code, the
+current working directory, or the session's git branch. Blind
+users re-typing into a fresh cell have no quick auditory cue for
+"last thing failed" or "you moved directory".
+
+**Where it surfaces.** After a failure the user hears the failure
+chord but, when they start typing again, there is no residual
+indicator of the exit code. A user who ran `cd` (post-F12) has no
+cue that CWD changed.
+
+**Sketch.** Extend the `FOCUS_CHANGED` payload, or add a new
+`PROMPT_REFRESH` event, carrying the trailing context. The
+TerminalRenderer prints it; a default binding narrates it briefly
+via the `system` voice ("input; last exit 1; /tmp"). Keep it one
+compact line so fast typists can skip past it.
+
+---
+
+## F20 — First-run onboarding
+
+**Gap.** The very first launch of ASAT on a fresh machine is
+indistinguishable from the 100th. The session banner is identical;
+nothing walks a newcomer through `--live` vs `--wav-dir` vs
+`:help`.
+
+**Where it surfaces.** A user who follows the README's quick start
+hears a chime, sees `[input #…]`, and stalls. The existing
+`[asat] in-memory sink…` stderr hint is useful but one-line.
+
+**Sketch.** Detect first-run via a sentinel file (e.g.,
+`~/.asat/first-run-done`). On first run, queue a longer spoken
+tour: "Welcome. Press colon, h, e, l, p, Enter for the keystroke
+cheat sheet. Press Escape any time to return to notebook mode."
+Skip on subsequent launches and on any run with `--quiet`.
+
+---
+
+## F21 — Settings: undo, search, and reset
+
+**Gap.** The settings editor has no undo, no search, and no "reset
+this field / record / whole bank to defaults". A user who mistypes
+a value and commits it has to remember the old value and re-enter it.
+
+**Where it surfaces.** Mis-editing a `voice.rate` to `10.0`
+suddenly makes the narrator frantic, and recovering requires
+remembering the previous rate. There is no way to find a binding
+by `event_type` without walking every record.
+
+**Sketch.** Three sub-features that share infrastructure.
+`SettingsEditor.undo()` / `redo()` with a bounded stack of
+applied edits. A `/` search overlay at any level, matching the
+record's id / event_type / label. A `:reset` meta-command (or
+Ctrl+R keystroke) with a confirm to reload the built-in defaults
+for the current record, the current section, or the whole bank.
+Pairs naturally with F2 (create/delete) and F3 (reload from disk).
+
+---
+
+## F22 — Diagnostic log file
+
+**Gap.** There is no way to record a session's events to disk for
+later review. A blind user who wants to post-mortem what happened
+during a long-running command has only what the audio engine and
+text trace produced in real time.
+
+**Where it surfaces.** Debugging an intermittent audio issue, or
+sharing a reproduction with a maintainer, requires the user to
+remember exactly what they heard.
+
+**Sketch.** `--log path.jsonl` CLI flag attaches a bus subscriber
+that writes one JSON line per event. The events already carry
+everything needed (`event_type`, `payload`, `source`, `timestamp`).
+Post-run, a screen reader or a little pretty-printer can replay
+the session.
+
+---
+
+## F23 — Tab completion
+
+**Gap.** Tab in INPUT mode echoes a literal tab into the buffer.
+There is no completion of command names, filenames, or history
+entries.
+
+**Where it surfaces.** Every command that takes a path argument.
+Real terminals have had this for forty years; its absence is the
+second-most-felt gap after command history (F4).
+
+**Sketch.** Bind Tab in INPUT mode to a `complete` action.
+Implementation: look at the current buffer, detect the "word under
+cursor", and offer completions from (a) `$PATH` executables for
+the first word, (b) filesystem entries relative to CWD for
+subsequent words, (c) `readline`-style cycling on repeated Tab.
+Narrate the first candidate on Tab, the next candidate on each
+subsequent Tab, and full-accept on any non-Tab key. Needs to
+coordinate with F12 (CWD) to be useful.
+
+---
+
+## F24 — Continuous output playback
+
+**Gap.** OUTPUT mode steps line-by-line. There is no "play the
+whole captured output end-to-end" mode for catching up on a long
+build log.
+
+**Where it surfaces.** A user who ran `pytest` on 2000 tests walks
+down 2000 lines one at a time. Current cue design gives no
+"continuous" alternative.
+
+**Sketch.** Add a new OUTPUT sub-mode `OUTPUT_PLAYBACK` entered
+via `p` or `Space`. While active, the engine auto-advances through
+lines at a user-tunable rate (a new `voices.narrator.playback_rate`
+field), pausable with any key, cancellable with Escape. Pairs
+naturally with F16 (search for starting point) and F19 (stream
+context).
+
+---
+
 ## How to add an entry
 
 Append a section using the template:
