@@ -12,11 +12,12 @@ status and lineage.
 
 from __future__ import annotations
 
-import uuid
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
+from datetime import datetime
 from enum import Enum
 from typing import Any, Optional
+
+from asat.common import new_id, utcnow
 
 
 class CellStatus(str, Enum):
@@ -34,16 +35,6 @@ class CellStatus(str, Enum):
     COMPLETED = "completed"
     FAILED = "failed"
     CANCELLED = "cancelled"
-
-
-def _utcnow() -> datetime:
-    """Return the current UTC time with an explicit timezone."""
-    return datetime.now(timezone.utc)
-
-
-def _new_id() -> str:
-    """Return a fresh random identifier as a hex string."""
-    return uuid.uuid4().hex
 
 
 @dataclass
@@ -75,9 +66,9 @@ class Cell:
         cell. It lets the session preserve the original cell as history
         while treating the new cell as its branch.
         """
-        now = _utcnow()
+        now = utcnow()
         return cls(
-            cell_id=_new_id(),
+            cell_id=new_id(),
             command=command,
             created_at=now,
             updated_at=now,
@@ -87,7 +78,7 @@ class Cell:
     def mark_running(self) -> None:
         """Transition this cell to the RUNNING state."""
         self.status = CellStatus.RUNNING
-        self.updated_at = _utcnow()
+        self.updated_at = utcnow()
 
     def mark_completed(self, stdout: str, stderr: str, exit_code: int) -> None:
         """Record a completed execution and set status from the exit code."""
@@ -95,12 +86,12 @@ class Cell:
         self.stderr = stderr
         self.exit_code = exit_code
         self.status = CellStatus.COMPLETED if exit_code == 0 else CellStatus.FAILED
-        self.updated_at = _utcnow()
+        self.updated_at = utcnow()
 
     def mark_cancelled(self) -> None:
         """Record that the user cancelled this cell before completion."""
         self.status = CellStatus.CANCELLED
-        self.updated_at = _utcnow()
+        self.updated_at = utcnow()
 
     def update_command(self, new_command: str) -> None:
         """Edit the input command and reset output-related state.
@@ -114,7 +105,7 @@ class Cell:
         self.stderr = ""
         self.exit_code = None
         self.status = CellStatus.PENDING
-        self.updated_at = _utcnow()
+        self.updated_at = utcnow()
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize this cell to a JSON-compatible dictionary."""
