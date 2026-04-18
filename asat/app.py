@@ -192,5 +192,28 @@ class Application:
             is_meta = payload.get("meta_command") is not None
             if cell_id is not None and not is_meta and str(command).strip():
                 self._pending.append(str(cell_id))
-            if payload.get("meta_command") == "quit":
+            meta = payload.get("meta_command")
+            if meta == "quit":
                 self.running = False
+            elif meta == "save":
+                self._save_session()
+
+    def _save_session(self) -> None:
+        """Persist the session to `session_path` if one was configured.
+
+        With no `--session` path given, `:save` has nothing to persist
+        — the `session saved` audio cue still fires so the user hears
+        that their input was received.
+        """
+        if self.session_path is None:
+            return
+        self.session.save(self.session_path)
+        publish_event(
+            self.bus,
+            EventType.SESSION_SAVED,
+            {
+                "session_id": self.session.session_id,
+                "path": str(self.session_path),
+            },
+            source="app",
+        )

@@ -26,7 +26,7 @@ from typing import Optional
 from asat.cell import Cell
 from asat.event_bus import EventBus, publish_event
 from asat.events import EventType
-from asat.session import Session
+from asat.session import Session, SessionError
 
 
 class FocusMode(str, Enum):
@@ -302,11 +302,37 @@ class NotebookCursor:
         return cell
 
     def _transition(self, new_state: FocusState) -> None:
-        """Replace the focus state and publish an event if it changed."""
+        """Replace the focus state and publish an event if it changed.
+
+        Buffer-only deltas (the user typing into the input buffer) are
+        intentionally silent: they would otherwise fire FOCUS_CHANGED
+        per keystroke and drown the sound bank's `focus_shift` cue and
+        the terminal trace's `[input #…]` banner in noise. Consumers
+        that care about the typed text subscribe to ACTION_INVOKED
+        with `action == "insert_character"` instead.
+        """
         if new_state == self._state:
             return
         old_state = self._state
+        mode_changed = old_state.mode != new_state.mode
+        cell_changed = old_state.cell_id != new_state.cell_id
+        if not mode_changed and not cell_changed:
+            # Buffer-only change: update state but stay silent.
+            self._state = new_state
+            return
+        if mode_changed:
+            transition = "mode"
+        elif cell_changed:
+            transition = "cell"
+        else:
+            transition = "buffer"
         self._state = new_state
+        command = ""
+        if new_state.cell_id is not None:
+            try:
+                command = self._session.get_cell(new_state.cell_id).command
+            except SessionError:
+                command = ""
         publish_event(
             self._bus,
             EventType.FOCUS_CHANGED,
@@ -316,6 +342,8 @@ class NotebookCursor:
                 "old_cell_id": old_state.cell_id,
                 "new_cell_id": new_state.cell_id,
                 "input_buffer": new_state.input_buffer,
+                "transition": transition,
+                "command": command,
             },
             source=self.SOURCE,
         )
