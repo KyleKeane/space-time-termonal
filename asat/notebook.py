@@ -137,6 +137,7 @@ class NotebookCursor:
         cell = Cell.new(command)
         self._session.add_cell(cell)
         self._session.set_active(cell.cell_id)
+        self._publish_cell_created(cell, len(self._session.cells) - 1)
         self._transition(
             FocusState(
                 mode=FocusMode.INPUT,
@@ -146,6 +147,105 @@ class NotebookCursor:
             )
         )
         return cell
+
+    def delete_focused_cell(self) -> Optional[Cell]:
+        """Remove the focused cell and land on a sensible neighbor.
+
+        Legal only from NOTEBOOK mode. Returns the removed Cell so a
+        caller can restore it from a payload if needed. When the last
+        cell is removed the cursor lands on None / the empty session;
+        otherwise it focuses the cell that slid into the removed
+        position, or the new last cell if the removed one was at the
+        tail. Publishes CELL_REMOVED so the sound bank's cue fires.
+        """
+        if self._state.mode != FocusMode.NOTEBOOK:
+            return None
+        cell_id = self._state.cell_id
+        if cell_id is None:
+            return None
+        removed_index = self._session.index_of(cell_id)
+        removed = self._session.remove_cell(cell_id)
+        publish_event(
+            self._bus,
+            EventType.CELL_REMOVED,
+            {
+                "cell_id": removed.cell_id,
+                "command": removed.command,
+                "index": removed_index,
+            },
+            source=self.SOURCE,
+        )
+        if not self._session.cells:
+            self._transition(FocusState(mode=FocusMode.NOTEBOOK, cell_id=None))
+            return removed
+        next_index = min(removed_index, len(self._session.cells) - 1)
+        self.focus_cell(self._session.cells[next_index].cell_id)
+        return removed
+
+    def duplicate_focused_cell(self) -> Optional[Cell]:
+        """Insert a copy of the focused cell immediately after it.
+
+        The duplicate is a fresh PENDING cell carrying the same command
+        text, so re-running it does not inherit the original's stale
+        output. Cursor focuses the duplicate in NOTEBOOK mode (not
+        INPUT — users who want to edit can press Enter next). Publishes
+        CELL_CREATED.
+        """
+        if self._state.mode != FocusMode.NOTEBOOK:
+            return None
+        cell_id = self._state.cell_id
+        if cell_id is None:
+            return None
+        source = self._session.get_cell(cell_id)
+        duplicate = Cell.new(source.command)
+        target_index = self._session.index_of(cell_id) + 1
+        self._session.add_cell(duplicate, position=target_index)
+        self._publish_cell_created(duplicate, target_index)
+        self.focus_cell(duplicate.cell_id)
+        return duplicate
+
+    def move_focused_cell(self, delta: int) -> bool:
+        """Shift the focused cell up (-1) or down (+1) within the list.
+
+        Returns True when the move succeeded. Returns False when the
+        cursor is not in NOTEBOOK mode, no cell is focused, or the cell
+        is already at the requested boundary. Publishes CELL_MOVED with
+        the old and new indices so the sound engine can play its cue.
+        """
+        if self._state.mode != FocusMode.NOTEBOOK:
+            return False
+        cell_id = self._state.cell_id
+        if cell_id is None:
+            return False
+        old_index = self._session.index_of(cell_id)
+        new_index = old_index + delta
+        if new_index < 0 or new_index >= len(self._session.cells):
+            return False
+        self._session.move_cell(cell_id, new_index)
+        publish_event(
+            self._bus,
+            EventType.CELL_MOVED,
+            {
+                "cell_id": cell_id,
+                "old_index": old_index,
+                "new_index": new_index,
+            },
+            source=self.SOURCE,
+        )
+        return True
+
+    def _publish_cell_created(self, cell: Cell, index: int) -> None:
+        """Publish CELL_CREATED with the canonical payload shape."""
+        publish_event(
+            self._bus,
+            EventType.CELL_CREATED,
+            {
+                "cell_id": cell.cell_id,
+                "command": cell.command,
+                "index": index,
+            },
+            source=self.SOURCE,
+        )
 
     def enter_input_mode(self) -> Optional[FocusState]:
         """Switch from notebook to input mode on the focused cell.
@@ -418,6 +518,7 @@ class NotebookCursor:
             new_cell = Cell.new("")
             self._session.add_cell(new_cell)
             self._session.set_active(new_cell.cell_id)
+            self._publish_cell_created(new_cell, len(self._session.cells) - 1)
             self._transition(
                 FocusState(
                     mode=FocusMode.INPUT,

@@ -296,6 +296,8 @@ and `_dispatch_menu_key`.
 
 ## F15 — Cell delete / move / duplicate from keyboard
 
+**Status: Done.**
+
 **Gap.** `Session.remove_cell(cell_id)` and `Session.move_cell(...)`
 exist and are tested, but no keystroke or meta-command reaches
 them. Ctrl+N is the only cell-level op bound today, and it only
@@ -306,12 +308,13 @@ it, and wants a clean session has to quit and relaunch — there is
 no way to delete cells mid-session. Moving a cell to reorganise a
 session is equally impossible.
 
-**Sketch.** Add `NotebookCursor.delete_focused_cell()` /
-`duplicate_focused_cell()` / `move_focused_cell(delta)` thin
-wrappers, plus `:delete`, `:duplicate` meta-commands and
-NOTEBOOK-mode keystrokes (`d` for delete with a confirm, `Alt+Up/
-Down` to move). Fire `CELL_REMOVED` / `CELL_CREATED` / `CELL_MOVED`
-as today.
+**Sketch (shipped).** `NotebookCursor.delete_focused_cell()`,
+`duplicate_focused_cell()`, and `move_focused_cell(delta)` publish
+`CELL_REMOVED` / `CELL_CREATED` / `CELL_MOVED`. NOTEBOOK-mode keys
+`d` / `y` / Alt+Up / Alt+Down drive them, and `:delete` /
+`:duplicate` meta-commands do the same from INPUT mode. `new_cell`
+and the F11 auto-advance path now publish `CELL_CREATED` too, so
+the default bank's `cell_created` cue actually fires.
 
 ---
 

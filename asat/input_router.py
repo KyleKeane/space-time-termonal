@@ -68,6 +68,8 @@ def default_bindings() -> BindingMap:
         Ctrl+N appends a fresh cell and enters input mode,
         Ctrl+O opens the captured output of the focused cell,
         Ctrl+, (comma) opens the settings editor,
+        `d` deletes the focused cell, `y` duplicates it,
+        Alt+Up / Alt+Down move the focused cell within the session,
         F2 (or Ctrl+.) opens the contextual actions menu.
 
     INPUT mode:
@@ -109,6 +111,10 @@ def default_bindings() -> BindingMap:
             Key.combo("n", Modifier.CTRL): "new_cell",
             Key.combo("o", Modifier.CTRL): "view_output",
             Key.combo(",", Modifier.CTRL): "open_settings",
+            Key.printable("d"): "delete_cell",
+            Key.printable("y"): "duplicate_cell",
+            Key.special("up", Modifier.ALT): "move_cell_up",
+            Key.special("down", Modifier.ALT): "move_cell_down",
             kc.F2: "open_action_menu",
             menu_open: "open_action_menu",
         },
@@ -158,7 +164,14 @@ def default_bindings() -> BindingMap:
 # A meta-command short-circuits the normal submit path: the cell is not
 # handed to the kernel and the input buffer is discarded (not written
 # back into the cell).
-META_COMMANDS: tuple[str, ...] = ("settings", "save", "quit", "help")
+META_COMMANDS: tuple[str, ...] = (
+    "settings",
+    "save",
+    "quit",
+    "help",
+    "delete",
+    "duplicate",
+)
 
 # "Ambient" meta-commands do their job without taking focus away from
 # INPUT mode. `:help` prints a cheat sheet; `:save` persists the
@@ -175,13 +188,14 @@ AMBIENT_META_COMMANDS: frozenset[str] = frozenset({"help", "save"})
 HELP_LINES: tuple[str, ...] = (
     "ASAT quick reference.",
     "NOTEBOOK:  Up/Down walk cells, Enter type, Ctrl+N new, Ctrl+O output, Ctrl+, settings.",
+    "           d delete, y duplicate, Alt+Up/Down reorder.",
     "INPUT:     Enter submits, Escape leaves without running.",
     "           Backspace/Delete cut, Left/Right walk, Home/End jump (or Ctrl+A/E).",
     "           Ctrl+W kills word, Ctrl+U kills to start, Ctrl+K kills to end.",
     "OUTPUT:    Up/Down step lines, PageUp/PageDown page, Escape leaves.",
     "SETTINGS:  Up/Down walk, Right/Enter descend, Left/Escape ascend, e edit, Ctrl+S save, Ctrl+Q close.",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
-    "Meta:      :help, :settings, :save, :quit (type in INPUT mode then Enter).",
+    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate (INPUT then Enter).",
     "Exit:      :quit, or EOF (Ctrl+D on POSIX, Ctrl+Z Enter on Windows).",
     "Docs:      docs/USER_MANUAL.md for the full keystroke reference.",
 )
@@ -353,6 +367,10 @@ class InputRouter:
             self._open_settings()
         elif command == "help":
             self._publish_help()
+        elif command == "delete":
+            self._cursor.delete_focused_cell()
+        elif command == "duplicate":
+            self._cursor.duplicate_focused_cell()
 
     def _publish_help(self) -> None:
         """Emit HELP_REQUESTED so the renderer and audio bank can react."""
@@ -552,6 +570,10 @@ class InputRouter:
             "menu_next": _void(self._menu_next),
             "menu_activate": _void(self._menu_activate),
             "menu_close": _void(self._menu_close),
+            "delete_cell": _void(self._cursor.delete_focused_cell),
+            "duplicate_cell": _void(self._cursor.duplicate_focused_cell),
+            "move_cell_up": _void(lambda: self._cursor.move_focused_cell(-1)),
+            "move_cell_down": _void(lambda: self._cursor.move_focused_cell(+1)),
         }
         if action not in handlers:
             raise KeyError(f"Unknown action: {action}")
