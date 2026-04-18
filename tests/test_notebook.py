@@ -459,5 +459,131 @@ class InLineBufferEditingTests(unittest.TestCase):
         self.assertEqual(self.cursor.focus.cursor_position, 0)
 
 
+class CellLifecycleOperationsTests(unittest.TestCase):
+    """F15: delete / duplicate / move from NOTEBOOK mode."""
+
+    def setUp(self) -> None:
+        self.bus = EventBus()
+        self.created: list[Event] = []
+        self.removed: list[Event] = []
+        self.moved: list[Event] = []
+        self.bus.subscribe(EventType.CELL_CREATED, self.created.append)
+        self.bus.subscribe(EventType.CELL_REMOVED, self.removed.append)
+        self.bus.subscribe(EventType.CELL_MOVED, self.moved.append)
+        self.session, self.cells = _session_with(["a", "b", "c"])
+        self.cursor = NotebookCursor(self.session, self.bus)
+
+    def test_delete_removes_focused_cell_and_focuses_neighbor(self) -> None:
+        self.cursor.focus_cell(self.cells[1].cell_id)
+        removed = self.cursor.delete_focused_cell()
+        assert removed is not None
+        self.assertEqual(removed.cell_id, self.cells[1].cell_id)
+        self.assertEqual(len(self.session), 2)
+        # Former index 1 slid into slot 1 -> that's old cells[2].
+        self.assertEqual(self.cursor.focus.cell_id, self.cells[2].cell_id)
+        self.assertEqual(len(self.removed), 1)
+        self.assertEqual(self.removed[0].payload["cell_id"], self.cells[1].cell_id)
+        self.assertEqual(self.removed[0].payload["index"], 1)
+
+    def test_delete_of_last_cell_focuses_new_tail(self) -> None:
+        self.cursor.move_to_bottom()
+        removed = self.cursor.delete_focused_cell()
+        assert removed is not None
+        self.assertEqual(self.cursor.focus.cell_id, self.cells[1].cell_id)
+
+    def test_delete_of_only_cell_clears_focus(self) -> None:
+        session, cells = _session_with(["only"])
+        cursor = NotebookCursor(session, EventBus())
+        removed = cursor.delete_focused_cell()
+        assert removed is not None
+        self.assertEqual(len(session), 0)
+        self.assertIsNone(cursor.focus.cell_id)
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+
+    def test_delete_outside_notebook_mode_is_noop(self) -> None:
+        self.cursor.enter_input_mode()
+        result = self.cursor.delete_focused_cell()
+        self.assertIsNone(result)
+        self.assertEqual(len(self.session), 3)
+        self.assertEqual(self.removed, [])
+
+    def test_delete_on_empty_session_is_noop(self) -> None:
+        session = Session.new()
+        cursor = NotebookCursor(session, EventBus())
+        self.assertIsNone(cursor.delete_focused_cell())
+
+    def test_duplicate_inserts_after_source_and_focuses_it(self) -> None:
+        self.cursor.focus_cell(self.cells[0].cell_id)
+        copy = self.cursor.duplicate_focused_cell()
+        assert copy is not None
+        self.assertEqual(copy.command, "a")
+        self.assertNotEqual(copy.cell_id, self.cells[0].cell_id)
+        self.assertEqual(len(self.session), 4)
+        self.assertEqual(self.session.cells[1].cell_id, copy.cell_id)
+        self.assertEqual(self.cursor.focus.cell_id, copy.cell_id)
+        self.assertEqual(self.cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertEqual(copy.status, CellStatus.PENDING)
+
+    def test_duplicate_publishes_cell_created(self) -> None:
+        self.created.clear()
+        copy = self.cursor.duplicate_focused_cell()
+        assert copy is not None
+        self.assertEqual(len(self.created), 1)
+        payload = self.created[0].payload
+        self.assertEqual(payload["cell_id"], copy.cell_id)
+        self.assertEqual(payload["command"], copy.command)
+
+    def test_duplicate_outside_notebook_mode_is_noop(self) -> None:
+        self.cursor.enter_input_mode()
+        self.assertIsNone(self.cursor.duplicate_focused_cell())
+
+    def test_move_up_shifts_focused_cell(self) -> None:
+        self.cursor.focus_cell(self.cells[2].cell_id)
+        moved = self.cursor.move_focused_cell(-1)
+        self.assertTrue(moved)
+        self.assertEqual(
+            [cell.cell_id for cell in self.session.cells],
+            [self.cells[0].cell_id, self.cells[2].cell_id, self.cells[1].cell_id],
+        )
+        self.assertEqual(self.cursor.focus.cell_id, self.cells[2].cell_id)
+        self.assertEqual(len(self.moved), 1)
+        payload = self.moved[0].payload
+        self.assertEqual(payload["old_index"], 2)
+        self.assertEqual(payload["new_index"], 1)
+
+    def test_move_down_shifts_focused_cell(self) -> None:
+        self.cursor.focus_cell(self.cells[0].cell_id)
+        self.assertTrue(self.cursor.move_focused_cell(+1))
+        self.assertEqual(self.session.cells[1].cell_id, self.cells[0].cell_id)
+
+    def test_move_at_boundary_is_noop(self) -> None:
+        self.cursor.focus_cell(self.cells[0].cell_id)
+        self.assertFalse(self.cursor.move_focused_cell(-1))
+        self.assertEqual(self.moved, [])
+        self.cursor.focus_cell(self.cells[-1].cell_id)
+        self.assertFalse(self.cursor.move_focused_cell(+1))
+        self.assertEqual(self.moved, [])
+
+    def test_move_outside_notebook_mode_is_noop(self) -> None:
+        self.cursor.enter_input_mode()
+        self.assertFalse(self.cursor.move_focused_cell(-1))
+
+    def test_new_cell_publishes_cell_created(self) -> None:
+        before = len(self.created)
+        fresh = self.cursor.new_cell("hello")
+        self.assertEqual(len(self.created) - before, 1)
+        payload = self.created[-1].payload
+        self.assertEqual(payload["cell_id"], fresh.cell_id)
+        self.assertEqual(payload["command"], "hello")
+
+    def test_submit_autoadvance_publishes_cell_created(self) -> None:
+        self.cursor.move_to_bottom()
+        self.cursor.enter_input_mode()
+        self.cursor.insert_character("!")
+        self.created.clear()
+        self.cursor.submit()
+        self.assertEqual(len(self.created), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

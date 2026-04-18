@@ -145,6 +145,9 @@ NOTEBOOK, SETTINGS → close), and the narrator confirms the new mode.
 | Ctrl+N     | Create a new empty cell below.                    |
 | Ctrl+O     | Enter OUTPUT mode on the focused cell's output.   |
 | Ctrl+,     | Open the settings editor.                         |
+| `d`        | Delete the focused cell.                          |
+| `y`        | Duplicate the focused cell (inserts a copy below).|
+| Alt+Up / Alt+Down | Move the focused cell up / down within the session. |
 
 Moving between cells plays the `nav_blip` cue and the narrator reads
 the cell's command so you know what you're standing on. Empty cells
@@ -184,6 +187,8 @@ discarded and the cell is not modified.
 | `:settings`  | Open the settings editor (same as Ctrl+,).           |
 | `:save`      | Save the current session to `--session` path (no-op without one). |
 | `:quit`      | Exit ASAT.                                           |
+| `:delete`    | Delete the focused cell (same as `d` in NOTEBOOK).   |
+| `:duplicate` | Duplicate the focused cell (same as `y` in NOTEBOOK).|
 
 Type the meta-command exactly as shown, then press Enter. If you
 mistype (e.g. `:setings`), the line is treated as a normal command
@@ -346,6 +351,9 @@ Every key you need, one table.
 | NOTEBOOK   | Ctrl+N            | New empty cell                        |
 | NOTEBOOK   | Ctrl+O            | Enter OUTPUT mode                     |
 | NOTEBOOK   | Ctrl+,            | Open settings editor                  |
+| NOTEBOOK   | `d`               | Delete focused cell                   |
+| NOTEBOOK   | `y`               | Duplicate focused cell                |
+| NOTEBOOK   | Alt+Up / Alt+Down | Move focused cell up / down           |
 | NOTEBOOK   | F2 / Ctrl+.       | Open actions menu                     |
 | INPUT      | Enter             | Submit command                        |
 | INPUT      | Backspace         | Delete char before caret              |
@@ -362,6 +370,8 @@ Every key you need, one table.
 | INPUT      | `:settings`⏎      | Open settings editor                  |
 | INPUT      | `:save`⏎          | Save session                          |
 | INPUT      | `:quit`⏎          | Exit ASAT                             |
+| INPUT      | `:delete`⏎        | Delete focused cell                   |
+| INPUT      | `:duplicate`⏎     | Duplicate focused cell                |
 | OUTPUT     | Up / Down         | Prev / next line                      |
 | OUTPUT     | PageUp / PageDown | Jump a page                           |
 | OUTPUT     | Home / End        | First / last line                     |

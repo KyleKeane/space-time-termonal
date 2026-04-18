@@ -717,5 +717,120 @@ class ActionMenuBindingTests(unittest.TestCase):
         self.assertEqual(router.handle_key(F2), "open_action_menu")
 
 
+class CellLifecycleBindingTests(unittest.TestCase):
+    """F15: cell-level ops bound to NOTEBOOK keystrokes and meta-commands."""
+
+    def test_d_deletes_focused_cell(self) -> None:
+        bus, session, cursor, router, cells = _build(["a", "b", "c"])
+        recorder = _Recorder(bus)
+        cursor.focus_cell(cells[1].cell_id)
+        result = router.handle_key(Key.printable("d"))
+        self.assertEqual(result, "delete_cell")
+        self.assertEqual(len(session), 2)
+        removed = recorder.types_of(EventType.CELL_REMOVED)
+        self.assertEqual(len(removed), 1)
+        self.assertEqual(removed[0].payload["cell_id"], cells[1].cell_id)
+
+    def test_y_duplicates_focused_cell(self) -> None:
+        bus, session, cursor, router, cells = _build(["a", "b"])
+        recorder = _Recorder(bus)
+        cursor.focus_cell(cells[0].cell_id)
+        result = router.handle_key(Key.printable("y"))
+        self.assertEqual(result, "duplicate_cell")
+        self.assertEqual(len(session), 3)
+        self.assertEqual(session.cells[1].command, "a")
+        created = recorder.types_of(EventType.CELL_CREATED)
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0].payload["command"], "a")
+
+    def test_alt_up_moves_cell_up(self) -> None:
+        bus, session, cursor, router, cells = _build(["a", "b", "c"])
+        recorder = _Recorder(bus)
+        cursor.focus_cell(cells[2].cell_id)
+        result = router.handle_key(Key.special("up", Modifier.ALT))
+        self.assertEqual(result, "move_cell_up")
+        self.assertEqual(
+            [c.cell_id for c in session.cells],
+            [cells[0].cell_id, cells[2].cell_id, cells[1].cell_id],
+        )
+        moved = recorder.types_of(EventType.CELL_MOVED)
+        self.assertEqual(len(moved), 1)
+        self.assertEqual(moved[0].payload["old_index"], 2)
+        self.assertEqual(moved[0].payload["new_index"], 1)
+
+    def test_alt_down_moves_cell_down(self) -> None:
+        _, session, cursor, router, cells = _build(["a", "b", "c"])
+        cursor.focus_cell(cells[0].cell_id)
+        self.assertEqual(
+            router.handle_key(Key.special("down", Modifier.ALT)),
+            "move_cell_down",
+        )
+        self.assertEqual(session.cells[1].cell_id, cells[0].cell_id)
+
+    def test_alt_up_at_top_is_noop(self) -> None:
+        bus, session, cursor, router, cells = _build(["a", "b"])
+        recorder = _Recorder(bus)
+        cursor.focus_cell(cells[0].cell_id)
+        router.handle_key(Key.special("up", Modifier.ALT))
+        # Order unchanged; no CELL_MOVED event published.
+        self.assertEqual(
+            [c.cell_id for c in session.cells],
+            [cells[0].cell_id, cells[1].cell_id],
+        )
+        self.assertEqual(recorder.types_of(EventType.CELL_MOVED), [])
+
+    def test_d_and_y_do_not_fire_in_input_mode(self) -> None:
+        """F13 already claims printable keys in INPUT; this confirms
+        the cell-op bindings live exclusively on NOTEBOOK mode."""
+        _, session, cursor, router, _ = _build(["a", "b"])
+        router.handle_key(ENTER)  # enter INPUT
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        router.handle_key(Key.printable("d"))
+        router.handle_key(Key.printable("y"))
+        # Both keys were inserted as characters, not dispatched.
+        self.assertEqual(cursor.focus.input_buffer, "ady")
+        self.assertEqual(len(session), 2)
+
+    def test_delete_meta_command_removes_focused_cell(self) -> None:
+        bus, session, cursor, router, cells = _build(["a", "b"])
+        recorder = _Recorder(bus)
+        cursor.focus_cell(cells[0].cell_id)
+        cursor.enter_input_mode()
+        # Clear the existing command so `:delete` is the only buffer text.
+        cursor.reset_input_buffer()
+        for ch in ":delete":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        self.assertEqual(len(session), 1)
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+        removed = recorder.types_of(EventType.CELL_REMOVED)
+        self.assertEqual(len(removed), 1)
+        submit = [
+            e
+            for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "submit"
+        ]
+        self.assertEqual(submit[-1].payload.get("meta_command"), "delete")
+
+    def test_duplicate_meta_command_copies_focused_cell(self) -> None:
+        _, session, cursor, router, cells = _build(["echo hi"])
+        cursor.focus_cell(cells[0].cell_id)
+        cursor.enter_input_mode()
+        cursor.reset_input_buffer()
+        for ch in ":duplicate":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        self.assertEqual(len(session), 2)
+        self.assertEqual(session.cells[1].command, "echo hi")
+
+    def test_help_mentions_cell_ops(self) -> None:
+        from asat.input_router import HELP_LINES
+        joined = "\n".join(HELP_LINES)
+        self.assertIn("d delete", joined)
+        self.assertIn("y duplicate", joined)
+        self.assertIn(":delete", joined)
+        self.assertIn(":duplicate", joined)
+
+
 if __name__ == "__main__":
     unittest.main()
