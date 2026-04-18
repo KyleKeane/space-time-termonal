@@ -53,7 +53,9 @@ class EventType(str, Enum):
 
     ANSI and interactive TUI mapping:
         SCREEN_UPDATED, INTERACTIVE_MENU_DETECTED,
-        INTERACTIVE_MENU_UPDATED, INTERACTIVE_MENU_CLEARED
+        INTERACTIVE_MENU_UPDATED, INTERACTIVE_MENU_CLEARED,
+        ANSI_CURSOR_MOVED, ANSI_SGR_CHANGED, ANSI_DISPLAY_CLEARED,
+        ANSI_LINE_ERASED, ANSI_OSC_RECEIVED, ANSI_BELL
 
     Audio engine:
         AUDIO_SPOKEN, AUDIO_INTERRUPTED
@@ -104,6 +106,13 @@ class EventType(str, Enum):
     SETTINGS_FOCUSED = "settings.focused"
     SETTINGS_VALUE_EDITED = "settings.value.edited"
     SETTINGS_SAVED = "settings.saved"
+
+    ANSI_CURSOR_MOVED = "ansi.cursor.moved"
+    ANSI_SGR_CHANGED = "ansi.sgr.changed"
+    ANSI_DISPLAY_CLEARED = "ansi.display.cleared"
+    ANSI_LINE_ERASED = "ansi.line.erased"
+    ANSI_OSC_RECEIVED = "ansi.osc.received"
+    ANSI_BELL = "ansi.bell"
 
 
 @dataclass(frozen=True)

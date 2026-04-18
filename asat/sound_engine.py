@@ -32,6 +32,7 @@ about key absence (the speech will simply drop the missing fragment).
 from __future__ import annotations
 
 import ast
+from dataclasses import replace
 from typing import Any, Optional, Protocol
 
 from asat.audio import (
@@ -174,11 +175,13 @@ class SoundEngine:
 
         speech_buffer: Optional[AudioBuffer] = None
         if voice is not None and text:
-            speech_buffer = self._synthesise_speech(voice, text)
+            effective_voice = _apply_voice_overrides(voice, binding.voice_overrides)
+            speech_buffer = self._synthesise_speech(effective_voice, text)
 
         sound_buffer: Optional[AudioBuffer] = None
         if sound is not None:
-            sound_buffer = self._synthesise_sound(sound)
+            effective_sound = _apply_sound_overrides(sound, binding.sound_overrides)
+            sound_buffer = self._synthesise_sound(effective_sound)
 
         mixed = _mix_buffers(speech_buffer, sound_buffer, self._sample_rate)
         if mixed is None:
@@ -226,6 +229,22 @@ class SoundEngine:
         """Convolve a mono buffer with a synthetic HRTF for the position."""
         profile = HRTFProfile.synthetic(position, sample_rate=mono.sample_rate)
         return self._spatializer.spatialize(mono, profile)
+
+
+def _apply_voice_overrides(voice: Voice, overrides: dict[str, float]) -> Voice:
+    """Return `voice` with any per-binding field overrides applied."""
+    if not overrides:
+        return voice
+    return replace(voice, **overrides)
+
+
+def _apply_sound_overrides(
+    recipe: SoundRecipe, overrides: dict[str, float]
+) -> SoundRecipe:
+    """Return `recipe` with any per-binding field overrides applied."""
+    if not overrides:
+        return recipe
+    return replace(recipe, **overrides)
 
 
 def _voice_to_profile(voice: Voice) -> VoiceProfile:

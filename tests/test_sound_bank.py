@@ -126,6 +126,55 @@ class EventBindingTests(unittest.TestCase):
         )
         self.assertEqual(binding.priority, 100)
         self.assertTrue(binding.enabled)
+        self.assertEqual(binding.voice_overrides, {})
+        self.assertEqual(binding.sound_overrides, {})
+
+    def test_binding_accepts_voice_and_sound_overrides(self) -> None:
+        binding = EventBinding.from_dict(
+            {
+                "id": "b1",
+                "event_type": "cell.created",
+                "voice_id": "narrator",
+                "sound_id": "ding",
+                "voice_overrides": {"pitch": 0.8, "azimuth": -30.0},
+                "sound_overrides": {"volume": 0.4},
+            }
+        )
+        self.assertEqual(binding.voice_overrides, {"pitch": 0.8, "azimuth": -30.0})
+        self.assertEqual(binding.sound_overrides, {"volume": 0.4})
+
+    def test_binding_rejects_unknown_voice_override_key(self) -> None:
+        with self.assertRaises(SoundBankError):
+            EventBinding.from_dict(
+                {
+                    "id": "b1",
+                    "event_type": "cell.created",
+                    "sound_id": "ding",
+                    "voice_overrides": {"engine": "sapi"},
+                }
+            )
+
+    def test_binding_rejects_unknown_sound_override_key(self) -> None:
+        with self.assertRaises(SoundBankError):
+            EventBinding.from_dict(
+                {
+                    "id": "b1",
+                    "event_type": "cell.created",
+                    "sound_id": "ding",
+                    "sound_overrides": {"kind": "chord"},
+                }
+            )
+
+    def test_binding_roundtrips_overrides_through_dict(self) -> None:
+        binding = EventBinding(
+            id="b1",
+            event_type="cell.created",
+            voice_id="narrator",
+            voice_overrides={"pitch": 1.2},
+            sound_overrides={},
+        )
+        restored = EventBinding.from_dict(binding.to_dict())
+        self.assertEqual(restored, binding)
 
 
 class SoundBankStructureTests(unittest.TestCase):

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from asat.audio import ChannelLayout
+from asat.audio import AudioBuffer, ChannelLayout, VoiceProfile
 from asat.audio_sink import MemorySink
 from asat.event_bus import EventBus, publish_event
 from asat.events import EventType
@@ -15,6 +15,19 @@ from asat.sound_engine import (
     SoundEngine,
     SoundEngineError,
 )
+from asat.tts import ToneTTSEngine
+
+
+class _RecordingTTS:
+    """TTS wrapper that records every VoiceProfile it renders with."""
+
+    def __init__(self, sample_rate: int = 8000) -> None:
+        self._inner = ToneTTSEngine(sample_rate=sample_rate)
+        self.calls: list[VoiceProfile] = []
+
+    def synthesize(self, text: str, voice: VoiceProfile) -> AudioBuffer:
+        self.calls.append(voice)
+        return self._inner.synthesize(text, voice)
 
 
 def _voice(**overrides) -> Voice:
@@ -326,6 +339,84 @@ class SoundEngineDispatchTests(unittest.TestCase):
 
         publish_event(self.bus, EventType.CELL_CREATED, {}, source="notebook")
         self.assertEqual(len(self.sink.buffers), 1)
+
+
+class BindingOverrideTests(unittest.TestCase):
+    """Per-binding voice / sound overrides reshape the record on render."""
+
+    def test_voice_overrides_alter_profile_passed_to_tts(self) -> None:
+        bus = EventBus()
+        tts = _RecordingTTS(sample_rate=8000)
+        sink = MemorySink()
+        voice = _voice(pitch=1.0, rate=1.0, volume=1.0, azimuth=0.0)
+        binding = EventBinding(
+            id="b1",
+            event_type=EventType.CELL_CREATED.value,
+            voice_id="narrator",
+            say_template="hi",
+            voice_overrides={"pitch": 0.5, "azimuth": -60.0},
+        )
+        bank = SoundBank(voices=(voice,), bindings=(binding,))
+        engine = SoundEngine(bus, bank, sink, tts=tts, sample_rate=8000)
+        self.addCleanup(engine.close)
+
+        publish_event(bus, EventType.CELL_CREATED, {"cell_id": "c1"}, source="notebook")
+
+        self.assertEqual(len(tts.calls), 1)
+        profile = tts.calls[0]
+        # pitch multiplier 0.5 against default 140Hz baseline => 70Hz
+        self.assertAlmostEqual(profile.pitch_hz, 70.0, places=3)
+        self.assertAlmostEqual(profile.position.azimuth_degrees, -60.0, places=3)
+
+    def test_no_overrides_passes_voice_parameters_verbatim(self) -> None:
+        bus = EventBus()
+        tts = _RecordingTTS(sample_rate=8000)
+        sink = MemorySink()
+        voice = _voice(pitch=1.2, azimuth=15.0)
+        binding = EventBinding(
+            id="b1",
+            event_type=EventType.CELL_CREATED.value,
+            voice_id="narrator",
+            say_template="hi",
+        )
+        bank = SoundBank(voices=(voice,), bindings=(binding,))
+        engine = SoundEngine(bus, bank, sink, tts=tts, sample_rate=8000)
+        self.addCleanup(engine.close)
+
+        publish_event(bus, EventType.CELL_CREATED, {}, source="notebook")
+
+        profile = tts.calls[0]
+        self.assertAlmostEqual(profile.pitch_hz, 140.0 * 1.2, places=3)
+        self.assertAlmostEqual(profile.position.azimuth_degrees, 15.0, places=3)
+
+    def test_sound_overrides_change_played_volume(self) -> None:
+        bus = EventBus()
+        sink = MemorySink()
+        recipe = _tone(volume=1.0)
+        loud_binding = EventBinding(
+            id="loud",
+            event_type=EventType.CELL_CREATED.value,
+            sound_id="ding",
+        )
+        quiet_binding = EventBinding(
+            id="quiet",
+            event_type=EventType.CELL_UPDATED.value,
+            sound_id="ding",
+            sound_overrides={"volume": 0.1},
+        )
+        bank = SoundBank(
+            sounds=(recipe,), bindings=(loud_binding, quiet_binding)
+        )
+        engine = SoundEngine(bus, bank, sink, sample_rate=8000)
+        self.addCleanup(engine.close)
+
+        publish_event(bus, EventType.CELL_CREATED, {}, source="notebook")
+        publish_event(bus, EventType.CELL_UPDATED, {}, source="notebook")
+
+        self.assertEqual(len(sink.buffers), 2)
+        loud_peak = max(abs(sample) for sample in sink.buffers[0].samples)
+        quiet_peak = max(abs(sample) for sample in sink.buffers[1].samples)
+        self.assertGreater(loud_peak, quiet_peak * 2)
 
 
 class SoundEngineLifecycleTests(unittest.TestCase):

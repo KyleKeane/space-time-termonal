@@ -151,6 +151,12 @@ class CoverageTests(unittest.TestCase):
                 EventType.ACTION_INVOKED,
                 EventType.OUTPUT_LINE_APPENDED,
                 EventType.SCREEN_UPDATED,
+                EventType.ANSI_CURSOR_MOVED,
+                EventType.ANSI_SGR_CHANGED,
+                EventType.ANSI_DISPLAY_CLEARED,
+                EventType.ANSI_LINE_ERASED,
+                EventType.ANSI_OSC_RECEIVED,
+                EventType.ANSI_BELL,
             },
         )
 

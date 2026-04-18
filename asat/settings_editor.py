@@ -40,6 +40,8 @@ from asat.event_bus import EventBus, publish_event
 from asat.events import EventType
 from asat.sound_bank import (
     SOUND_KINDS,
+    SOUND_OVERRIDE_FIELDS,
+    VOICE_OVERRIDE_FIELDS,
     EventBinding,
     SoundBank,
     SoundBankError,
@@ -84,6 +86,8 @@ BINDING_FIELDS = (
     "predicate",
     "priority",
     "enabled",
+    "voice_overrides",
+    "sound_overrides",
 )
 
 # Section order drives both SECTION-level navigation and how the
@@ -358,6 +362,10 @@ def _parse_binding_field(field_name: str, raw: str) -> Any:
         return _parse_int(raw, field_name)
     if field_name == "enabled":
         return _parse_bool(raw, field_name)
+    if field_name == "voice_overrides":
+        return _parse_override_mapping(raw, field_name, VOICE_OVERRIDE_FIELDS)
+    if field_name == "sound_overrides":
+        return _parse_override_mapping(raw, field_name, SOUND_OVERRIDE_FIELDS)
     raise SettingsEditorError(f"unknown binding field {field_name!r}")
 
 
@@ -396,6 +404,21 @@ def _parse_mapping(raw: str, field_name: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise SettingsEditorError(f"{field_name} must be a JSON object, got {type(parsed).__name__}")
     return parsed
+
+
+def _parse_override_mapping(
+    raw: str, field_name: str, allowed: tuple[str, ...]
+) -> dict[str, float]:
+    """Parse a JSON object whose values are floats and keys are allow-listed."""
+    mapping = _parse_mapping(raw, field_name)
+    result: dict[str, float] = {}
+    for key, value in mapping.items():
+        if key not in allowed:
+            raise SettingsEditorError(
+                f"{field_name} has unknown field {key!r}; allowed: {allowed}"
+            )
+        result[key] = _parse_float(str(value), f"{field_name}.{key}")
+    return result
 
 
 def _jsonable(value: Any) -> Any:
