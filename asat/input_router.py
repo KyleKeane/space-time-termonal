@@ -36,6 +36,24 @@ from asat.output_cursor import OutputCursor
 
 
 BindingMap = dict[FocusMode, dict[Key, str]]
+ActionHandler = Callable[[], Optional[dict[str, object]]]
+
+
+def _void(fn: Callable[..., object]) -> ActionHandler:
+    """Wrap a side-effecting callable so it matches the ActionHandler shape.
+
+    Cursor motion helpers return various convenience values (the Cell
+    that moved into focus, the new FocusState, etc.) that the router
+    does not care about. _void invokes the underlying method, discards
+    its return value, and reports None so the dispatch table's type is
+    uniform.
+    """
+
+    def wrapper() -> None:
+        fn()
+        return None
+
+    return wrapper
 
 
 def default_bindings() -> BindingMap:
@@ -130,32 +148,44 @@ class InputRouter:
         return None
 
     def _invoke(self, action: str, key: Key) -> None:
-        """Run a named action and publish ACTION_INVOKED for it."""
-        payload_extra: dict[str, object] = {}
-        if action == "submit":
-            cell = self._cursor.submit()
-            if cell is not None:
-                payload_extra = {
-                    "cell_id": cell.cell_id,
-                    "command": cell.command,
-                }
-        else:
-            self._action_handler(action)()
-        self._publish_action(action, key, payload_extra)
+        """Run a named action and publish ACTION_INVOKED for it.
 
-    def _action_handler(self, action: str) -> Callable[[], None]:
-        """Map an action name to a zero-argument callable."""
-        handlers: dict[str, Callable[[], None]] = {
-            "move_up": lambda: self._cursor.move_up(),
-            "move_down": lambda: self._cursor.move_down(),
-            "move_to_top": lambda: self._cursor.move_to_top(),
-            "move_to_bottom": lambda: self._cursor.move_to_bottom(),
-            "enter_input": lambda: self._cursor.enter_input_mode(),
-            "exit_input": lambda: self._cursor.exit_input_mode(),
-            "new_cell": lambda: self._cursor.new_cell(),
-            "backspace": lambda: self._cursor.backspace(),
-            "view_output": lambda: self._cursor.view_output_mode(),
-            "exit_output": lambda: self._cursor.exit_output_mode(),
+        Every handler returns an optional dict of extra payload fields
+        to merge into the ACTION_INVOKED event. Most simple motions do
+        not contribute extras and return None; "submit" uses the hook
+        to attach the submitted command's cell_id and text.
+        """
+        handler = self._action_handler(action)
+        extra = handler() or {}
+        self._publish_action(action, key, extra)
+
+    def _submit(self) -> Optional[dict[str, object]]:
+        """Commit the current input buffer and return submission extras."""
+        cell = self._cursor.submit()
+        if cell is None:
+            return None
+        return {"cell_id": cell.cell_id, "command": cell.command}
+
+    def _action_handler(self, action: str) -> ActionHandler:
+        """Map an action name to a zero-argument callable.
+
+        Handlers return an optional dict of extra payload fields. Only
+        "submit" contributes extras today; every other handler runs a
+        side effect and returns None via _void, which discards whatever
+        the underlying cursor method returned.
+        """
+        handlers: dict[str, ActionHandler] = {
+            "move_up": _void(self._cursor.move_up),
+            "move_down": _void(self._cursor.move_down),
+            "move_to_top": _void(self._cursor.move_to_top),
+            "move_to_bottom": _void(self._cursor.move_to_bottom),
+            "enter_input": _void(self._cursor.enter_input_mode),
+            "exit_input": _void(self._cursor.exit_input_mode),
+            "new_cell": _void(self._cursor.new_cell),
+            "backspace": _void(self._cursor.backspace),
+            "view_output": _void(self._cursor.view_output_mode),
+            "exit_output": _void(self._cursor.exit_output_mode),
+            "submit": self._submit,
             "output_line_up": lambda: self._with_output_cursor(
                 lambda oc: oc.move_line_up()
             ),
