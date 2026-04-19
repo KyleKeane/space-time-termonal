@@ -234,6 +234,49 @@ class ApplicationMetaCommandTests(unittest.TestCase):
         self.assertEqual(seen, [])
         self.assertTrue(app.running)
 
+    def test_welcome_meta_command_replays_tour_without_rewriting_sentinel(self) -> None:
+        """F44: `:welcome` re-publishes FIRST_RUN_DETECTED through the
+        same coordinator that ran at launch, without rewinding the
+        sentinel. A user who forgot the keystrokes hears the full tour
+        again; the next fresh launch still stays silent."""
+        import tempfile
+        from pathlib import Path
+
+        from asat.event_bus import EventBus
+        from asat.onboarding import OnboardingCoordinator
+
+        with tempfile.TemporaryDirectory() as td:
+            sentinel = Path(td) / "first-run-done"
+
+            def _factory(bus: EventBus) -> OnboardingCoordinator:
+                return OnboardingCoordinator(bus, sentinel)
+
+            app = Application.build(onboarding_factory=_factory)
+            # Launch fired FIRST_RUN_DETECTED once and wrote the sentinel.
+            first_mtime = sentinel.stat().st_mtime_ns
+
+            replays: list[dict] = []
+            app.bus.subscribe(
+                EventType.FIRST_RUN_DETECTED,
+                lambda e: replays.append(dict(e.payload)),
+            )
+            _type(app, ":welcome")
+            app.handle_key(kc.ENTER)
+
+            self.assertEqual(len(replays), 1)
+            self.assertTrue(replays[0]["replay"])
+            self.assertEqual(sentinel.stat().st_mtime_ns, first_mtime)
+            self.assertTrue(app.running, ":welcome must not exit the app")
+
+    def test_welcome_meta_command_is_safe_without_onboarding(self) -> None:
+        """F44: a user running `--quiet` or `--check` has `onboarding=None`.
+        `:welcome` there must be a harmless no-op, not a crash."""
+        app = Application.build()  # no onboarding_factory
+        self.assertIsNone(app.onboarding)
+        _type(app, ":welcome")
+        app.handle_key(kc.ENTER)
+        self.assertTrue(app.running)
+
 
 class ApplicationPersistenceTests(unittest.TestCase):
     def test_close_persists_session_when_path_given(self) -> None:

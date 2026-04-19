@@ -278,6 +278,22 @@ class Application:
                 self.running = False
             elif meta == "save":
                 self._save_session()
+            elif meta == "welcome":
+                self._replay_welcome()
+
+    def _replay_welcome(self) -> None:
+        """Re-invoke the onboarding tour on `:welcome` (F44).
+
+        Re-publishes `FIRST_RUN_DETECTED` with `replay=True` through
+        the same coordinator that ran at launch, so every existing
+        subscriber (audio bank, renderer) reacts just as it did on
+        the first boot. Silently no-ops when onboarding was
+        disabled (`--quiet`, `--check`) so the meta-command stays a
+        harmless tab-completion hit in those modes.
+        """
+        if self.onboarding is None:
+            return
+        self.onboarding.run(force=True)
 
     def _save_session(self) -> None:
         """Persist the session to `session_path` if one was configured.

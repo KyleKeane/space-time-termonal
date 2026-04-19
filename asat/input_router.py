@@ -34,6 +34,7 @@ from asat import keys as kc
 from asat.actions import ActionContext, ActionMenu
 from asat.event_bus import EventBus, publish_event
 from asat.events import EventType
+from asat.help_topics import HELP_TOPICS, lookup as lookup_help_topic, topic_names
 from asat.keys import Key, Modifier
 from asat.notebook import FocusMode, NotebookCursor
 from asat.output_cursor import OutputCursor
@@ -197,6 +198,7 @@ META_COMMANDS: tuple[str, ...] = (
     "pwd",
     "commands",
     "reset",
+    "welcome",
 )
 
 # "Ambient" meta-commands do their job without taking focus away from
@@ -207,7 +209,7 @@ META_COMMANDS: tuple[str, ...] = (
 # mode. Commands NOT in this set (today: `:settings`, `:quit`)
 # inherently require a mode change and go through `abandon_input_mode`.
 AMBIENT_META_COMMANDS: frozenset[str] = frozenset(
-    {"help", "save", "pwd", "commands"}
+    {"help", "save", "pwd", "commands", "welcome"}
 )
 
 # `:name optional-argument` — case-insensitive in the name, everything
@@ -232,8 +234,9 @@ HELP_LINES: tuple[str, ...] = (
     "           Ctrl+Z undo, Ctrl+Y redo edits in the order you made them.",
     "           Ctrl+R resets to defaults at cursor scope (Enter confirms, Escape cancels).",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
-    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :commands, :reset.",
-    "           Meta-commands are case-insensitive and accept a trailing argument.",
+    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :commands, :reset, :welcome.",
+    "           `:help topics` lists focused tours; `:help <topic>` narrates one (navigation, cells, settings, audio, search, meta).",
+    "           `:welcome` replays the first-run tour. Meta-commands are case-insensitive and accept a trailing argument.",
     "Exit:      :quit, or EOF (Ctrl+D on POSIX, Ctrl+Z Enter on Windows).",
     "Docs:      docs/USER_MANUAL.md for the full keystroke reference.",
 )
@@ -532,7 +535,7 @@ class InputRouter:
         if command == "settings":
             self._open_settings()
         elif command == "help":
-            self._publish_help()
+            self._publish_help(argument)
         elif command == "delete":
             self._cursor.delete_focused_cell()
         elif command == "duplicate":
@@ -618,12 +621,53 @@ class InputRouter:
             source=self.SOURCE,
         )
 
-    def _publish_help(self) -> None:
-        """Emit HELP_REQUESTED so the renderer and audio bank can react."""
+    def _publish_help(self, argument: str = "") -> None:
+        """Emit HELP_REQUESTED with either the cheat sheet or a topic tour.
+
+        No argument → the full cheat sheet (HELP_LINES), matching the
+        pre-F38 behaviour. `:help topics` → a listing of every
+        available topic. `:help <topic>` → that topic's micro-tour.
+        Unknown topic → a typo-suggestion hint built from
+        `difflib.get_close_matches` over the topic names, so the user
+        stays in INPUT mode and can correct-and-retry.
+        """
+        topic = argument.strip().lower()
+        if not topic:
+            publish_event(
+                self._bus,
+                EventType.HELP_REQUESTED,
+                {"lines": list(HELP_LINES)},
+                source=self.SOURCE,
+            )
+            return
+        if topic == "topics":
+            lines = ["Available `:help <topic>` tours:"]
+            lines.extend(f"  :help {name}" for name in topic_names())
+            publish_event(
+                self._bus,
+                EventType.HELP_REQUESTED,
+                {"lines": lines, "help_topic": "topics"},
+                source=self.SOURCE,
+            )
+            return
+        body = lookup_help_topic(topic)
+        if body is not None:
+            publish_event(
+                self._bus,
+                EventType.HELP_REQUESTED,
+                {"lines": list(body), "help_topic": topic},
+                source=self.SOURCE,
+            )
+            return
+        lines = [f"Unknown `:help` topic `{argument.strip()}`."]
+        suggestion = difflib.get_close_matches(topic, topic_names(), n=1)
+        if suggestion:
+            lines.append(f"Did you mean `:help {suggestion[0]}`?")
+        lines.append("Type `:help topics` to list every available topic.")
         publish_event(
             self._bus,
             EventType.HELP_REQUESTED,
-            {"lines": list(HELP_LINES)},
+            {"lines": lines, "help_topic_unknown": argument.strip()},
             source=self.SOURCE,
         )
 

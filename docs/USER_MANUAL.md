@@ -212,6 +212,9 @@ discarded and the cell is not modified.
 | Meta-command | Effect                                               |
 |--------------|------------------------------------------------------|
 | `:help`      | Narrate + print the keystroke cheat sheet.           |
+| `:help topics` | List every focused `:help <topic>` micro-tour.     |
+| `:help <topic>` | Narrate one tour: `navigation`, `cells`, `settings`, `audio`, `search`, `meta`. |
+| `:welcome`   | Replay the first-run welcome tour (F44).             |
 | `:settings`  | Open the settings editor (same as Ctrl+,).           |
 | `:save`      | Save the current session to `--session` path (no-op without one). |
 | `:quit`      | Exit ASAT.                                           |

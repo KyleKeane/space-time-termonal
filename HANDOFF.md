@@ -32,7 +32,7 @@ lives in [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md).
 python -m unittest discover -s tests -t .
 ```
 
-Currently **771 passing**.
+Currently **786 passing**.
 
 ## Suggested next PR
 

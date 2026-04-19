@@ -1019,25 +1019,28 @@ temporal frame for long-running output.
 
 ## F38 — Self-voicing help topics
 
-**Gap.** `:help` prints the cheat sheet. A brand-new user — blind,
-with no sighted context — needs a spoken tour that explains the mode
-model, the key keystrokes, and how to discover things like `Ctrl+,`
-for settings. Today the only path is "read the USER_MANUAL in a
-screen reader".
+**Status: Shipped.**
 
-**Where it surfaces.** First-run onboarding (F20 shipped) reads a
-short welcome but doesn't cover navigation, settings, audio tuning,
-or search. A user who wants to learn more has to leave the terminal
-to do so.
+**Gap (at time of shipping).** `:help` printed the cheat sheet. A
+brand-new blind user needed a spoken tour of each mode, the key
+keystrokes, and discovery paths like `Ctrl+,` for settings — the
+only alternative was reading the USER_MANUAL in a screen reader.
 
-**Sketch.** Extend `:help` to accept a topic: `:help navigation`,
-`:help audio`, `:help settings`, `:help cells`, `:help search`,
-`:help topics` (lists the rest). Each topic narrates a 10-20 second
-tour via the `system` voice — short enough to absorb, long enough to
-be useful. Topics live as plain strings in a new
-`asat/help_topics.py` module so they're easy to edit and translate.
-`:help` with no argument keeps the current print-the-cheat-sheet
-behaviour for users who already know the layout.
+**Sketch (shipped).** New `asat/help_topics.py` holds a
+`HELP_TOPICS: dict[str, tuple[str, ...]]` with six topics:
+navigation, cells, settings, audio, search, meta. Each topic is
+a short spoken tour (heading + a handful of body lines).
+`asat/input_router.py` `_publish_help(argument)` dispatches:
+bare `:help` → `HELP_LINES` (unchanged); `:help topics` → an
+enumeration of every registered topic with a `help_topic:
+"topics"` payload key; `:help <topic>` → the topic's lines with
+`help_topic: <name>`; unknown topic → a `HELP_REQUESTED` hint
+with a `difflib.get_close_matches` suggestion and
+`help_topic_unknown` key. Topic lookup is case-insensitive.
+Tests: four new router cases (`test_colon_help_topic_*`) plus
+five in a new `tests/test_help_topics.py`. `HELP_LINES` gained a
+row pointing users at `:help topics` so the self-voicing path is
+discoverable from the cheat sheet itself.
 
 ---
 
@@ -1310,33 +1313,31 @@ mention the tour in `README.md` quick-start.
 
 ## F44 — `:welcome` meta-command to replay onboarding
 
-**Gap.** Once the first-run sentinel at `~/.asat/first-run-done`
-(`asat/__main__.py:232`) is written, there is no supported path
-to re-hear the onboarding narration. A user who missed a word,
-wants to re-learn after a long hiatus, or wants to demo ASAT to
-someone else has to manually delete the sentinel and relaunch.
+**Status: Shipped.**
 
-**Where it surfaces.** Support and teaching — every time
-someone says "wait, what were those key bindings again?" the
-only answer today is `rm ~/.asat/first-run-done && python -m asat`.
+**Gap (at time of shipping).** Once the first-run sentinel at
+`~/.asat/first-run-done` was written, there was no supported
+path to re-hear the onboarding narration. Users who missed a
+word, returned after a hiatus, or wanted to demo ASAT had to
+manually delete the sentinel and relaunch.
 
-**Sketch.** Add a `:welcome` meta-command
-(`asat/input_router.py` `_META_HANDLERS`) that re-invokes
-`OnboardingCoordinator.run(force=True)` on the live bus. The
-coordinator grows a `force: bool = False` parameter that skips
-the sentinel check but does *not* rewrite the sentinel (the
-sentinel's meaning stays "the user has seen this once"). Accepts
-an optional argument: `:welcome tour` runs the F43 guided
-first-command tour as well; bare `:welcome` replays just the
-spoken welcome.
+**Sketch (shipped).** `OnboardingCoordinator.run()` gained a
+keyword-only `force: bool = False` parameter. When
+`force=True`, the coordinator publishes `FIRST_RUN_DETECTED`
+with `replay=True` in the payload and **does not** rewrite the
+sentinel, preserving F20's once-per-machine contract. The F41
+silent-sink hint is also skipped on replays. Added `"welcome"`
+to both `META_COMMANDS` and `AMBIENT_META_COMMANDS` in
+`asat/input_router.py` so `:welcome` propagates as a
+`meta_command: "welcome"` payload on ACTION_INVOKED without
+taking focus out of INPUT mode. `Application._on_action_invoked`
+catches the meta-command and calls `onboarding.run(force=True)`;
+when `onboarding is None` (--quiet or --check) the meta-command
+is a harmless no-op. Tests: three new coordinator cases, two
+Application cases, one router case.
 
-Pairs with F38 (self-voicing help topics) — `:welcome` is the
-one fixed-script tour; `:help <topic>` covers everything else.
-
-**Documentation touch points.** New row in the meta-command
-table at `docs/USER_MANUAL.md:199-208`; mention in the
-"Your first launch" subsection so users know they can re-hear
-it; cross-reference from F38.
+F43 (guided first-command tour) follow-up: `:welcome tour` as a
+richer variant remains on the F43 entry once that lands.
 
 ---
 
