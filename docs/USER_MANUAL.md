@@ -217,6 +217,18 @@ On Enter:
 Cancelling a running command is a future keyboard binding; for now
 let commands finish or send `:quit` to bail out of the whole session.
 
+### Prompt context on re-entry
+
+Every time you step back into INPUT mode on a cell *after at least
+one command has finished*, ASAT emits a `PROMPT_REFRESH` event that
+carries the trailing exit code, the finishing cell id, whether the
+last run timed out, and the current working directory. The visible
+terminal prints a compact line like `[prompt exit=0 cwd=/work]`;
+the system voice stays quiet after a clean run but narrates
+`"last exit 1"` (or whatever the nonzero code was) when the last
+command failed. A pristine session emits nothing until the first
+command finishes, so you won't hear noise on launch.
+
 ---
 
 ## OUTPUT mode — re-reading output

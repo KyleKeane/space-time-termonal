@@ -41,6 +41,7 @@ from asat.keys import Key
 from asat.notebook import FocusMode, NotebookCursor
 from asat.output_buffer import OutputRecorder
 from asat.output_cursor import OutputCursor
+from asat.prompt_context import PromptContext
 from asat.session import Session
 from asat.settings_controller import SettingsController
 from asat.sound_bank import SoundBank
@@ -72,6 +73,7 @@ class Application:
     clipboard: Clipboard
     action_catalog: ActionCatalog
     action_menu: ActionMenu
+    prompt_context: PromptContext
     session_path: Optional[Path] = None
     running: bool = True
 
@@ -153,6 +155,12 @@ class Application:
         )
         resolved_sink: AudioSink = sink if sink is not None else MemorySink()
         sound_engine = SoundEngine(bus, resolved_bank, resolved_sink)
+        # PromptContext must subscribe BEFORE TerminalRenderer so that
+        # when the user transitions into INPUT mode post-command, the
+        # PROMPT_REFRESH event it publishes reaches the renderer in
+        # dispatch order (helpful for test assertions that check the
+        # rendered line sequence).
+        prompt_context = PromptContext(bus)
         if text_trace is not None:
             TerminalRenderer(bus, stream=text_trace)
         app = cls(
@@ -169,6 +177,7 @@ class Application:
             clipboard=clipboard,
             action_catalog=action_catalog,
             action_menu=action_menu,
+            prompt_context=prompt_context,
             session_path=Path(session_path) if session_path is not None else None,
         )
         # Everything below fires AFTER sound_engine and (if requested)
