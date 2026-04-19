@@ -232,6 +232,10 @@ class SettingsEditor:
 
     def enter(self) -> None:
         """Descend one level. Raises at the deepest (FIELD) level."""
+        # Level transition: SECTION → RECORD → FIELD. The cursor descends
+        # one rung of the editor outline; `_publish_focus` narrates the
+        # new context. See docs/USER_MANUAL.md
+        # "SETTINGS mode — reshaping audio without restarting".
         if self._state.level == Level.SECTION:
             if self._record_count() == 0:
                 raise SettingsEditorError(f"section {self._state.section.value!r} is empty")
@@ -244,6 +248,9 @@ class SettingsEditor:
 
     def back(self) -> None:
         """Ascend one level. Raises at the SECTION level."""
+        # Level transition: FIELD → RECORD → SECTION. Inverse of `enter`;
+        # see docs/USER_MANUAL.md
+        # "SETTINGS mode — reshaping audio without restarting".
         if self._state.level == Level.FIELD:
             self._state = replace(self._state, level=Level.RECORD)
         elif self._state.level == Level.RECORD:
@@ -497,6 +504,9 @@ class SettingsEditor:
             # buffer is intentionally preserved so an accidental retap
             # doesn't wipe the query.
             return True
+        # Sub-mode transition: SETTINGS → SETTINGS-SEARCH. The router
+        # diverts every keystroke to the search composer until commit
+        # or cancel. See docs/USER_MANUAL.md "Searching the bank".
         self._search_mode = True
         self._search_buffer = ""
         self._search_matches = ()
@@ -553,6 +563,10 @@ class SettingsEditor:
             return False
         query = self._search_buffer
         match_count = len(self._search_matches)
+        # Sub-mode transition: SETTINGS-SEARCH → SETTINGS (commit). The
+        # cursor stays where the live-jump put it; matches are kept so
+        # next/prev can keep cycling. See docs/USER_MANUAL.md
+        # "Searching the bank".
         self._search_mode = False
         self._search_origin = None
         publish_event(
@@ -573,6 +587,9 @@ class SettingsEditor:
             return False
         query = self._search_buffer
         origin = self._search_origin
+        # Sub-mode transition: SETTINGS-SEARCH → SETTINGS (cancel). The
+        # cursor pops back to its pre-search location and matches are
+        # discarded. See docs/USER_MANUAL.md "Searching the bank".
         self._search_mode = False
         self._search_buffer = ""
         self._search_matches = ()
@@ -660,6 +677,9 @@ class SettingsEditor:
             return True
         if not self._is_scope_applicable(scope):
             return False
+        # Sub-mode transition: SETTINGS → SETTINGS-RESET (confirm). The
+        # router intercepts y / n / Esc until confirm or cancel closes
+        # the overlay. See docs/USER_MANUAL.md "Resetting to defaults".
         self._reset_mode = True
         self._reset_scope = scope
         publish_event(
@@ -705,6 +725,10 @@ class SettingsEditor:
             self._redo_stack.clear()
             self._state = replace(self._state, dirty=self._compute_dirty())
             self._publish_focus()
+        # Sub-mode transition: SETTINGS-RESET → SETTINGS (apply). The
+        # `outcome` payload distinguishes a real reset from a no-op
+        # already-at-default close. See docs/USER_MANUAL.md
+        # "Resetting to defaults".
         self._reset_mode = False
         self._reset_scope = None
         publish_event(
@@ -725,6 +749,9 @@ class SettingsEditor:
         if not self._reset_mode or self._reset_scope is None:
             return False
         scope = self._reset_scope
+        # Sub-mode transition: SETTINGS-RESET → SETTINGS (cancel). The
+        # bank is untouched; the close payload reports `outcome:
+        # "cancelled"`. See docs/USER_MANUAL.md "Resetting to defaults".
         self._reset_mode = False
         self._reset_scope = None
         publish_event(
