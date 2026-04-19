@@ -93,6 +93,12 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
     },
     EventType.SETTINGS_SAVED: {"path": "/tmp/bank.json"},
     EventType.HELP_REQUESTED: {"lines": ["help"]},
+    EventType.PROMPT_REFRESH: {
+        "last_exit_code": 1,
+        "last_cell_id": "c1",
+        "last_timed_out": False,
+        "cwd": "/tmp",
+    },
 }
 
 

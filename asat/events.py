@@ -62,6 +62,9 @@ class EventType(str, Enum):
 
     Help surface:
         HELP_REQUESTED
+
+    Prompt context:
+        PROMPT_REFRESH
     """
 
     SESSION_CREATED = "session.created"
@@ -105,6 +108,8 @@ class EventType(str, Enum):
     AUDIO_INTERRUPTED = "audio.interrupted"
 
     HELP_REQUESTED = "help.requested"
+
+    PROMPT_REFRESH = "prompt.refresh"
 
     SETTINGS_OPENED = "settings.opened"
     SETTINGS_CLOSED = "settings.closed"

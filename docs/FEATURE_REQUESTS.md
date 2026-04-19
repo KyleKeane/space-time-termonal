@@ -422,6 +422,8 @@ clipboard support automatically.
 
 ## F19 — Prompt context (exit code, CWD)
 
+**Status.** Done.
+
 **Gap.** The `[input #…]` banner that fires on entering INPUT mode
 carries no context about the prior command's exit code, the
 current working directory, or the session's git branch. Blind
@@ -438,6 +440,20 @@ cue that CWD changed.
 TerminalRenderer prints it; a default binding narrates it briefly
 via the `system` voice ("input; last exit 1; /tmp"). Keep it one
 compact line so fast typists can skip past it.
+
+**Sketch (shipped).** A new `PROMPT_REFRESH` event carries
+`last_exit_code`, `last_cell_id`, `last_timed_out`, and `cwd`. A
+new `PromptContext` module (`asat/prompt_context.py`) subscribes to
+`COMMAND_COMPLETED` / `COMMAND_FAILED` to remember the trailing
+exit code, then publishes `PROMPT_REFRESH` whenever FOCUS_CHANGED
+transitions into INPUT mode. The first INPUT transition on a
+pristine session (no prior run) is intentionally silent so we
+don't spam `[prompt exit=None]` noise. `TerminalRenderer` prints
+`[prompt exit=N cwd=…]`; the default sound bank only narrates
+non-zero exits via the `system` voice with predicate
+`last_exit_code != 0`, keeping the success path quiet. The CWD
+provider is injectable (defaults to `os.getcwd`) so tests stay
+deterministic.
 
 ---
 

@@ -78,6 +78,7 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.SETTINGS_VALUE_EDITED,
     EventType.SETTINGS_SAVED,
     EventType.HELP_REQUESTED,
+    EventType.PROMPT_REFRESH,
 })
 
 
@@ -511,5 +512,19 @@ def _default_bindings() -> tuple[EventBinding, ...]:
                 "settings. Type colon quit to exit."
             ),
             priority=220,
+        ),
+
+        # Prompt context: when the user lands in INPUT mode AFTER a
+        # command has finished, narrate the trailing exit code so a
+        # blind user has an immediate auditory cue for "that failed".
+        # Success (exit 0) is intentionally silent — the completion
+        # chord already marked it, and this would double the audio.
+        EventBinding(
+            id="prompt_refresh_failure",
+            event_type=EventType.PROMPT_REFRESH.value,
+            voice_id="system",
+            say_template="last exit {last_exit_code}",
+            predicate="last_exit_code != 0",
+            priority=90,
         ),
     )

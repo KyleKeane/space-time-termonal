@@ -83,6 +83,7 @@ from asat.keyboard import (
 )
 from asat.keys import Key, Modifier
 from asat.notebook import FocusMode, FocusState, NotebookCursor
+from asat.prompt_context import PromptContext
 from asat.output_buffer import OutputBuffer, OutputLine, OutputRecorder
 from asat.output_cursor import OutputCursor
 from asat.runner import ProcessRunner
@@ -145,6 +146,7 @@ __all__ = [
     "OutputRecorder",
     "PosixKeyboard",
     "ProcessRunner",
+    "PromptContext",
     "ScreenCell",
     "ScreenSnapshot",
     "ScriptedKeyboard",
