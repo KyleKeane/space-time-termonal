@@ -50,7 +50,13 @@ class SoundGeneratorError(ValueError):
 
 
 class SoundGenerator(Protocol):
-    """Anything that can turn one recipe into a mono AudioBuffer."""
+    """Anything that can turn one recipe into a mono AudioBuffer.
+
+    Implementations in-tree: ``ToneGenerator``, ``ChordGenerator``,
+    ``SampleGenerator``, ``SilenceGenerator`` — one per ``kind`` the
+    default bank uses. Pluggable: register a new generator on a
+    ``SoundGeneratorRegistry`` to add a ``kind="..."`` recipe type.
+    """
 
     def generate(self, recipe: SoundRecipe, *, sample_rate: int) -> AudioBuffer:
         """Render the recipe into a mono AudioBuffer at sample_rate."""

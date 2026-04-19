@@ -11,7 +11,6 @@ from asat.events import EventType
 from asat.sound_bank import EventBinding, SoundBank, SoundRecipe, Voice
 from asat.sound_engine import (
     DefaultPredicateEvaluator,
-    SOURCE_NAME,
     SoundEngine,
     SoundEngineError,
 )
@@ -526,7 +525,7 @@ class SourceFilteringTests(unittest.TestCase):
         engine = SoundEngine(bus, bank, sink, sample_rate=8000)
         self.addCleanup(engine.close)
 
-        publish_event(bus, EventType.CELL_CREATED, {}, source=SOURCE_NAME)
+        publish_event(bus, EventType.CELL_CREATED, {}, source=SoundEngine.SOURCE)
         self.assertEqual(len(sink.buffers), 0)
 
 

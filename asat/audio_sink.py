@@ -39,7 +39,13 @@ from asat.audio import AudioBuffer, ChannelLayout
 
 
 class AudioSink(Protocol):
-    """Final stage of the audio pipeline."""
+    """Final stage of the audio pipeline.
+
+    Implementations in-tree: ``MemorySink`` (tests), ``WavFileSink``
+    (``--wav-dir`` CLI mode), ``WindowsLiveAudioSink`` (``--live`` on
+    Windows). Pluggable: add a new sink by implementing ``play`` and
+    ``close`` with the same signatures.
+    """
 
     def play(self, buffer: AudioBuffer) -> None:
         """Deliver a fully-rendered audio buffer to the sink."""

@@ -73,7 +73,13 @@ ActionProvider = Callable[[ActionContext], tuple[MenuItem, ...]]
 
 
 class Clipboard(Protocol):
-    """Minimal contract for a clipboard backend."""
+    """Minimal contract for a clipboard backend.
+
+    Implementations in-tree: ``MemoryClipboard`` (default / tests),
+    ``SystemClipboard`` (wraps the OS ``pbcopy`` / ``xclip`` /
+    PowerShell helpers). Pluggable: install a custom adapter via
+    ``Application.build(clipboard_factory=...)``.
+    """
 
     def set_text(self, text: str) -> None:
         """Replace the clipboard contents with the given text."""

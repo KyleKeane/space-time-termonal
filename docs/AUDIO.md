@@ -181,7 +181,7 @@ own registry (`SoundGeneratorRegistry(...)`) and passing it to
 `asat/sound_engine.py` subscribes to every `EventType` that the
 active bank's enabled bindings mention. Per event:
 
-1. Skip if `event.source == SOURCE_NAME` (prevents feedback loops:
+1. Skip if `event.source == SoundEngine.SOURCE` (prevents feedback loops:
    `AUDIO_SPOKEN` is itself an event, and a binding that matched it
    would loop forever).
 2. Look up every binding for `event.event_type`, sorted by
