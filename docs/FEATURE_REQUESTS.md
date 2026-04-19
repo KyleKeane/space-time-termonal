@@ -221,10 +221,16 @@ Document the SOFA-to-stereo-WAV conversion recipe in AUDIO.md.
 
 ## F10 — Non-blocking execution + cancel keystroke
 
-**Gap.** `Application.execute(cell_id)` runs the kernel synchronously,
-so while a command is running the entry-point loop cannot read keys.
-That makes F1 (Ctrl+C cancel) impossible to implement without moving
-execution off the main thread.
+**Status: Shipped.** `ExecutionKernel` runs each cell on a worker
+thread under `_cancel_lock`/`_cancelled_cells` state, exposes
+`cancel(cell_id)` that terminates the subprocess and publishes
+`COMMAND_CANCELLED`, and the router binds Ctrl+C in INPUT mode to
+that path (the F1 entry tracks the keystroke shipping).
+
+**Gap (at time of shipping).** `Application.execute(cell_id)` ran the
+kernel synchronously, so while a command was running the entry-point
+loop could not read keys. That made F1 (Ctrl+C cancel) impossible to
+implement without moving execution off the main thread.
 
 **Where it surfaces.** Every long-running command — `pytest`, `npm
 install`, `git clone` — blocks the whole terminal until it finishes.
