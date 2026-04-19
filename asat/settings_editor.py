@@ -890,6 +890,15 @@ class SettingsEditor:
             self._search_position = 0
             section, record_index = matches[0]
             self._goto_record_match(section, record_index)
+        elif not 0 <= self._search_position < len(matches):
+            # F49 regression guard: when the caller opts out of
+            # jumping, a stale `-1` sentinel from a previous
+            # empty-match step (or an out-of-range index from a
+            # shrinking match list) would index the *last* match
+            # via Python negative-index semantics, then make
+            # `prev_search_match` step to the second-to-last.
+            # Normalising to 0 keeps cycling intuitive.
+            self._search_position = 0
         self._publish_search_update(match=matches[self._search_position])
 
     def _goto_record_match(self, section: Section, record_index: int) -> None:

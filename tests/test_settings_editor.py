@@ -703,6 +703,34 @@ class SearchOverlayTests(unittest.TestCase):
         self.assertIs(editor.bank, baseline)
         self.assertFalse(editor.state.dirty)
 
+    def test_recompute_without_jump_normalises_stale_sentinel(self) -> None:
+        """F49 regression guard: ``_recompute_matches(jump_to_first=False)``
+        must not leave ``_search_position`` at the ``-1`` sentinel when
+        matches exist. With ``-1`` and a non-empty match list,
+        ``prev_search_match`` would index ``matches[-2]`` (Python
+        negative wrap) and step to the second-to-last hit instead of
+        the previous-from-current one. Normalising to ``0`` keeps the
+        ``next``/``prev`` pair intuitive for any future caller that
+        opts out of jumping."""
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        # Drive _search_position to -1 by typing a query with no hits,
+        # then call the internal recompute with jump_to_first=False
+        # against a query that matches multiple records.
+        for ch in "zzz":
+            editor.extend_search(ch)
+        self.assertEqual(editor._search_position, -1)
+        editor._search_buffer = "a"  # matches narrator + alert
+        editor._recompute_matches(jump_to_first=False)
+        self.assertGreaterEqual(
+            editor._search_position,
+            0,
+            "F49: stale -1 sentinel persisted after _recompute_matches "
+            "with matches and jump_to_first=False — prev_search_match "
+            "would now wrap to the wrong end of the match list.",
+        )
+        self.assertLess(editor._search_position, len(editor._search_matches))
+
 
 class SaveTests(unittest.TestCase):
 
