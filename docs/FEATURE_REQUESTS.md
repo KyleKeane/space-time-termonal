@@ -598,6 +598,190 @@ context).
 
 ---
 
+## F25 — User-remappable keybindings per mode
+
+**Gap.** Every keystroke binding in `asat/input_router.py` is hard-
+coded in a `BINDINGS` table that maps `(FocusMode, Key)` to an action
+name. Users cannot rebind a single key without editing source. A user
+who prefers Ctrl+P / Ctrl+N over Up / Down for history, or who needs
+to free Ctrl+W because their terminal emulator swallows it, has no
+recourse.
+
+**Where it surfaces.** Any user whose hands know a different editor.
+Screen-reader users often have a muscle-memory layout (JAWS, NVDA, or
+Orca conventions) that ASAT cannot accommodate today. The manual
+describes the bindings as fixed.
+
+**Sketch.** Introduce a keymap file (`~/.asat/keybindings.json`) whose
+schema is `{mode: {key_spec: action_name}}`, where `mode` is one of
+`notebook`/`input`/`output`/`settings`/`menu` and `key_spec` is the
+same `Key.combo(...)` grammar the router already uses internally
+(e.g. `"ctrl+p"`, `"alt+up"`, `"escape"`). On startup `InputRouter`
+loads the default table, then overlays the user file. A `--keymap
+PATH` CLI flag and a `:keymap reload` meta-command drive it. Action
+names stay stable as the public contract; conflict detection rejects
+duplicate mappings with a clear `HELP_REQUESTED` message. Pairs with
+F17 (richer meta-commands) and complements F14 (ActionMenu) so power
+users can bind a single key to any menu entry.
+
+---
+
+## F26 — Cell clipboard: cut / copy / paste one or many cells
+
+**Gap.** `Session` can add, remove, move, and duplicate individual
+cells (F15), and `MemoryClipboard` / `SystemClipboard` (F18) handle
+text, but there is no way to put whole cells on a clipboard and paste
+them elsewhere in the notebook — let alone a contiguous range of
+cells. Re-organising a notebook requires repeated Alt+Up / Alt+Down
+presses or a save-edit-reload round trip.
+
+**Where it surfaces.** A user who prototypes in cells 5-9 and wants
+to move that block to the top of the notebook today has to walk nine
+moves per cell. Copying a reusable setup block into a second
+notebook is impossible.
+
+**Sketch.** Add a notebook-level clipboard slot that holds an
+ordered tuple of `Cell` snapshots (command text, output, cell_id
+reissued on paste). `NotebookCursor` grows `copy_selection()`,
+`cut_selection()`, `paste_after_focus()`. A new anchor + active
+cursor pair drives multi-cell selection (Shift+Up / Shift+Down
+extends, Escape clears). NOTEBOOK-mode keybindings: `y` copies the
+focused cell (or current selection), `x` cuts, `p` pastes after
+focus, `P` pastes before. Publish `CELLS_COPIED`, `CELLS_CUT`,
+`CELLS_PASTED` so the default bank can narrate (e.g. "copied three
+cells"). Cross-notebook paste falls out for free once F29 lands.
+
+---
+
+## F27 — Heading and text cells with hierarchy, navigation, and scope selection
+
+**Gap.** Every cell today is an input / output pair produced by
+`ExecutionKernel`. There is no heading cell, no markdown / text
+cell, and therefore no notebook outline. Users who want to document
+a long exploration have to pile all the narrative into a `#`-prefixed
+shell comment and hope it reads well.
+
+**Where it surfaces.** A session that walks through "set up fixtures
+→ train a model → evaluate" has no auditory table of contents. A
+screen-reader user cannot jump to the next section without Up/Down
+through every intermediate cell. The roadmap items from F16 (output
+search) and F4 (command history) help navigate *within* content but
+not *across* it.
+
+**Sketch.** Three linked pieces:
+
+1. **New cell kinds.** `Cell.kind: Literal["input", "heading",
+   "text"]` with `heading_level: int` (1-6) on headings. Rendering
+   and TTS narration treat heading cells as announce-only ("heading
+   level 2: data preparation") and text cells as prose. Executing a
+   heading or text cell is a no-op.
+2. **Outline navigation.** NOTEBOOK mode gains `]` / `[` for
+   "next / previous heading at the current level or shallower" and
+   `}` / `{` for "jump to parent heading". `:outline` prints a full
+   tree to the output console for screen-reader review. Publish
+   `OUTLINE_NAVIGATED` so the sound bank can cue the level change.
+3. **Scope selection.** A heading's scope is every cell between it
+   and the next heading of the same level or shallower. A new
+   `select_heading_scope()` action selects the focused heading
+   and its whole scope — including nested H3/H4 children. Pairs
+   with F26's clipboard so "copy this whole section" is a single
+   gesture. Scope semantics live in a small `asat/outline.py` with
+   a pure function `scope_range(cells, heading_index) -> (start,
+   end)` that tests can hit directly.
+
+Inspiration from Wolfram notebook grouping, Jupyter markdown cells,
+and VS Code outline view — trimmed to the minimum a blind user
+needs, with zero visual chrome: no tree gutters, no collapse
+triangles, just spoken structure and keybindings.
+
+---
+
+## F28 — Speech output console (programmatic + braille / screen-reader routing)
+
+**Gap.** When a binding fires with a `say_template`, the rendered
+phrase goes straight into `SoundEngine` and out to audio. Nothing
+captures the *text* of what is being spoken in a user- or test-
+visible buffer. Tests assert on event payloads and synthesis calls
+but cannot easily answer "did the narration make sense end to end?".
+A braille user has no way to route spoken content to a refreshable
+display; a screen-reader user has no way to redirect it to their
+own TTS stack instead of ASAT's.
+
+**Where it surfaces.** Authoring a new sound bank today is an
+iterate-listen-edit loop. Regression tests on narration quality
+(e.g. "the prompt refresh line reads naturally after a failed
+command") need an easy textual surrogate. Dual-output users
+(braille + audio, or external screen reader + audio) have no hook.
+
+**Sketch.** Add a `SpeechConsole` module that subscribes to the
+rendered speech stream. Two integration points:
+
+1. **Capture.** Hook `SoundEngine` (or a narrow adapter around it)
+   so every final `say_template` expansion — after predicates fire
+   and before TTS synthesis — is published as a new
+   `SPEECH_RENDERED` event carrying `{text, voice_id, event_source,
+   timestamp}`. `SpeechConsole` keeps a bounded ring of entries
+   with programmatic accessors (`entries()`, `clear()`, `tail(n)`)
+   and a `tee(callable)` so tests and external routers subscribe
+   cleanly.
+2. **Routing.** A pluggable `SpeechRouter` protocol sits next to
+   `AudioSink` — a `BrailleRouter` stub writes to a line-based
+   device, a `ScreenReaderRouter` stub writes to the OS screen
+   reader's IPC (SAPI NVDA controller client on Windows, Orca
+   dbus on Linux). `--speech-route braille:/dev/ttyUSB0` and
+   `--speech-route screen-reader` CLI flags pick a router; default
+   stays "audio only". Testing uses an in-memory router that
+   records what would have been routed.
+
+Pairs with F5 (Windows TTS adapter) and F22 (diagnostic log) — the
+console is effectively a focused, higher-level view of the log
+limited to narration events.
+
+---
+
+## F29 — Notebook tabs with per-tab backend kernel (and optional child notebooks sharing one kernel)
+
+**Gap.** `Application` holds exactly one `Session` and one
+`ExecutionKernel`. There is no concept of a tab, no way to open a
+second notebook without relaunching, and no way to share a running
+Python / shell state between notebooks. The CLI is a single-pane
+experience.
+
+**Where it surfaces.** A user running a long-training notebook and
+wanting a scratch notebook for a quick `ls` has to open a second
+terminal window. A user who wants two views into the same kernel
+(one for input, one for a long output tail) cannot do it today.
+
+**Sketch.** Two features, one API:
+
+1. **Tabs, one kernel per tab by default.** Introduce a `TabBar`
+   at the Application layer — a simple `list[NotebookTab]` with a
+   `focus_index`. `Ctrl+T` opens a fresh tab with a fresh
+   `ExecutionKernel`; `Ctrl+Shift+T` reopens the last closed tab;
+   `Ctrl+Tab` / `Ctrl+Shift+Tab` cycle focus; `Ctrl+W` closes (with
+   confirm if dirty). Tabs are announced on focus change: "tab 2 of
+   3, notebook 'deploy'". Each tab owns its own `Session`, its own
+   `ExecutionKernel`, its own command history (F4), its own
+   prompt-context (F19).
+2. **Child notebooks sharing a kernel.** A `Ctrl+Shift+N` keystroke
+   creates a *child* tab that reuses the currently-focused tab's
+   kernel. Visually a second tab, semantically a second notebook
+   bound to the same backend — so cell outputs from one can feed
+   variable state the other reads. A small `KernelGroup` object
+   owns refcounted access so closing the parent tab doesn't strand
+   running work in a child.
+
+Draw lessons from Wolfram (a notebook is bound to a kernel), Jupyter
+Lab (tabs plus kernel groups), VS Code (Ctrl+\` palette of
+terminals), and Windows Terminal (tab bar with per-tab profile) —
+but strip the UI to: one line at the top announcing
+`[tab N/M: label | kernel-id: XYZ]` on focus change, keyboard-only
+navigation, nothing for the screen reader to wade through. Every
+visual surface stays single-pane and minimal so navigation cost is
+purely in keystrokes, not in spoken chrome.
+
+---
+
 ## How to add an entry
 
 Append a section using the template:
