@@ -91,6 +91,33 @@ user's current focus. It carries the `original_event_type` string
 cover both paths. See
 [FEATURE_REQUESTS.md#f34](FEATURE_REQUESTS.md#f34).
 
+## Execution queue
+
+Producer: `asat.execution_worker.ExecutionWorker`
+(`source="execution_worker"`).
+
+| EventType         | Payload keys                          |
+|-------------------|---------------------------------------|
+| `COMMAND_QUEUED`  | `cell_id`, `queue_depth`              |
+| `QUEUE_DRAINED`   | `last_cell_id`, `queue_depth`         |
+
+`COMMAND_QUEUED` fires the instant `ExecutionWorker.enqueue`
+accepts a submission — before the kernel has started work — so the
+user's keystroke is audibly acknowledged even if earlier cells are
+still running. `queue_depth` includes the just-queued cell plus
+anything already pending or in flight, so `1` means "you're next
+up" and higher numbers mean "waiting behind N".
+
+`QUEUE_DRAINED` fires once the worker has finished every submitted
+cell and has no pending work. `queue_depth` is always `0` on this
+event; `last_cell_id` names the most recently completed cell so a
+subscriber can couple "drained" with "the one you just submitted
+finished". When `async_execution=False` (the default for tests and
+library use, see
+[FEATURE_REQUESTS.md#f62](FEATURE_REQUESTS.md#f62)), neither event
+fires: the synchronous `Application.execute` path bypasses the
+worker entirely.
+
 ## Output streaming
 
 Producer: `asat.kernel.ExecutionKernel` as the subprocess streams.

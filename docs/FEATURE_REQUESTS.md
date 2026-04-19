@@ -3349,6 +3349,66 @@ own.
 
 ---
 
+## F62 — Asynchronous execution queue
+
+**Sketch (shipped).** F60 introduced a persistent shell but the
+submission path stayed synchronous: `app.execute(cell_id)` blocked
+the keyboard read until the shell finished the command. That
+worked while sessions were short and commands fast, but the
+moment a cell takes seconds — a `pip install`, a `docker build`,
+a long test run — the user could not type the next command, use
+the action menu, or even hear a cancel cue. A "run every cell"
+affordance (needed for F55 notebook runs) was literally
+impossible: the driver would have to serialise the submissions
+one kernel call at a time, losing the queue-up ergonomics a
+notebook user expects.
+
+The fix is an `ExecutionWorker` (`asat/execution_worker.py`): one
+daemon thread, one `queue.Queue`, serial consumption. `Application`
+now accepts `async_execution=True` at build time; when set, the
+build spawns the worker and `Application.execute(cell_id)` calls
+`worker.enqueue(cell_id)` instead of `kernel.execute(cell)`
+directly. The worker publishes `COMMAND_QUEUED` with the depth
+(so an audio cue confirms the keystroke landed the instant it
+happens, even if three earlier commands are still running) and
+`QUEUE_DRAINED` once the queue empties. The `EventBus` now holds a
+`threading.RLock` so publishes from the worker thread and the
+main thread cannot interleave; `RLock` (not `Lock`) because
+handlers routinely re-enter `publish` (e.g. `PromptContext`
+publishing `PROMPT_REFRESH` from a `COMMAND_COMPLETED` handler).
+`Application.close()` stops the worker before tearing down the
+runner so a cell in flight finishes against a live shell.
+
+The CLI flips `async_execution=True` for every non-`--check`
+invocation (`asat/__main__.py`); `--check` stays synchronous
+because it never reads keys. Tests keep the synchronous default
+so their deterministic ordering holds.
+
+**Open follow-ups.**
+
+- **Queue-aware cancel.** F1 will need to distinguish "cancel the
+  running cell" (signal the shell) from "cancel the queued cell"
+  (drop from the deque without running). Today `close(drain=False)`
+  is the only off switch and it is binary.
+- **Max-queue-depth policy.** A runaway batch submission could
+  queue hundreds of cells. A soft cap with a narrated warning
+  ("queue depth 50, wait for it to drain?") is the natural
+  companion to F55's run-all affordance.
+- **Drained-for-input narration.** On `QUEUE_DRAINED` today the
+  bank plays a soft tick. F55 may want a richer "all caught up"
+  spoken line so a user who submitted eight cells can walk away
+  and come back on the cue.
+- **Priority submissions.** No way today to slide a cell in front
+  of the queue ("abort my long build, run this first"). Would
+  require a priority queue and a policy for the cell currently
+  held by the shell.
+- **Multi-backend.** Once F50-F55 give each notebook its own
+  backend, each notebook needs its own worker. A per-backend
+  worker is the clean model; the shared `EventBus` lock already
+  handles multi-producer safety.
+
+---
+
 ## How to add an entry
 
 Append a section using the template:

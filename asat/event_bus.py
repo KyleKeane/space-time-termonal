@@ -1,18 +1,27 @@
 """EventBus: synchronous publish/subscribe message router.
 
-The bus is intentionally synchronous for Phase 1. A single publish call
-invokes each subscribed handler in registration order before returning.
-This keeps the event flow deterministic and easy to reason about when
+The bus is intentionally synchronous: a single publish call invokes
+each subscribed handler in registration order before returning. This
+keeps the event flow deterministic and easy to reason about when
 reading the source with a screen reader.
 
 Handlers must be plain callables that accept one Event argument and
 return None. Exceptions raised by one handler do not prevent other
 handlers for the same event from running; they are collected and
 re-raised together after all handlers have had a chance to react.
+
+Thread safety (F62). Since the execution queue runs the kernel on a
+background worker thread, `publish` can now be called from either the
+main thread (e.g. the input-router path that fires `COMMAND_QUEUED`)
+or the worker thread (the kernel publishing `COMMAND_STARTED`,
+`OUTPUT_CHUNK`, etc.). A re-entrant lock serialises every publish so
+handlers always see one event at a time, and re-entrancy keeps nested
+publishes (e.g. a handler that itself calls `publish_event`) working.
 """
 
 from __future__ import annotations
 
+import threading
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -63,6 +72,11 @@ class EventBus:
     def __init__(self) -> None:
         """Initialize an empty subscription registry."""
         self._subscribers: dict[object, list[Handler]] = defaultdict(list)
+        # RLock (not Lock) because handlers are allowed to publish
+        # follow-on events. Example: `PromptContext` reacts to
+        # `COMMAND_COMPLETED` by publishing `PROMPT_REFRESH`, which
+        # re-enters `publish` on the same thread.
+        self._lock = threading.RLock()
 
     def subscribe(self, event_type: EventType | str, handler: Handler) -> None:
         """Register handler to receive events of the given type.
@@ -72,7 +86,8 @@ class EventBus:
         typically used for logging or for recording sessions.
         """
         key = self._key(event_type)
-        self._subscribers[key].append(handler)
+        with self._lock:
+            self._subscribers[key].append(handler)
 
     def unsubscribe(self, event_type: EventType | str, handler: Handler) -> None:
         """Remove a previously registered handler.
@@ -81,13 +96,14 @@ class EventBus:
         teardown code simple and idempotent.
         """
         key = self._key(event_type)
-        handlers = self._subscribers.get(key)
-        if not handlers:
-            return
-        try:
-            handlers.remove(handler)
-        except ValueError:
-            return
+        with self._lock:
+            handlers = self._subscribers.get(key)
+            if not handlers:
+                return
+            try:
+                handlers.remove(handler)
+            except ValueError:
+                return
 
     def publish(self, event: Event) -> None:
         """Deliver the event to every subscribed handler.
@@ -98,21 +114,26 @@ class EventBus:
         aggregating all captured exceptions.
         """
         errors: list[BaseException] = []
-        for handler in list(self._subscribers.get(event.event_type, ())):
-            self._safe_call(handler, event, errors)
-        for handler in list(self._subscribers.get(WILDCARD, ())):
-            self._safe_call(handler, event, errors)
+        with self._lock:
+            exact = list(self._subscribers.get(event.event_type, ()))
+            wildcard = list(self._subscribers.get(WILDCARD, ()))
+            for handler in exact:
+                self._safe_call(handler, event, errors)
+            for handler in wildcard:
+                self._safe_call(handler, event, errors)
         if errors:
             raise EventBusError(event, errors)
 
     def clear(self) -> None:
         """Remove every subscription. Primarily useful in tests."""
-        self._subscribers.clear()
+        with self._lock:
+            self._subscribers.clear()
 
     def subscriber_count(self, event_type: EventType | str) -> int:
         """Return how many handlers are registered for the given type."""
         key = self._key(event_type)
-        return len(self._subscribers.get(key, ()))
+        with self._lock:
+            return len(self._subscribers.get(key, ()))
 
     @staticmethod
     def _key(event_type: EventType | str) -> object:

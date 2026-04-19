@@ -178,6 +178,16 @@ It is **not** Jupyter. Two limits to be aware of from day one:
    parent/child grouping. Up / Down walks every cell linearly.
    Sections and folds are tracked as
    [F61](FEATURE_REQUESTS.md#f61--cell-hierarchy-sections-folds-and-grouping).
+4. **Submissions queue; they don't run in parallel.** Submitting a
+   cell while an earlier cell is still running is fine — the new
+   submission lands in a serial queue, you hear a soft tick
+   confirming the keystroke landed, and it runs the moment the
+   earlier cells finish. Keyboard navigation, the action menu, and
+   meta-commands stay responsive while long commands are still in
+   flight. The queue drains in submission order; there's no way to
+   push a cell to the front or cancel a queued-but-not-started
+   cell yet (tracked as
+   [F62](FEATURE_REQUESTS.md#f62--asynchronous-execution-queue)).
 
 Within those limits the notebook surface is real: edit a previous
 cell, re-run it, walk its captured output line by line in OUTPUT

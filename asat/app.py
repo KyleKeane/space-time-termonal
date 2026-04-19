@@ -37,6 +37,7 @@ from asat.error_tail import StderrTailAnnouncer
 from asat.completion_alert import CompletionFocusWatcher
 from asat.event_bus import EventBus, publish_event
 from asat.events import Event, EventType
+from asat.execution_worker import ExecutionWorker
 from asat.input_router import InputRouter, default_bindings
 from asat.jsonl_logger import JsonlEventLogger
 from asat.kernel import ExecutionKernel
@@ -85,6 +86,12 @@ class Application:
     onboarding: Optional[OnboardingCoordinator] = None
     event_logger: Optional[JsonlEventLogger] = None
     session_path: Optional[Path] = None
+    # F62: when async_execution=True, `execute(cell_id)` hands the id
+    # to this worker's background queue instead of running on the
+    # caller's thread. None means synchronous execution (the default
+    # for tests and library embeddings that expect deterministic
+    # in-line ordering).
+    execution_worker: Optional[ExecutionWorker] = None
     running: bool = True
 
     def __post_init__(self) -> None:
@@ -112,6 +119,7 @@ class Application:
             "Callable[[EventBus], JsonlEventLogger]"
         ] = None,
         runner: Optional[object] = None,
+        async_execution: bool = False,
     ) -> "Application":
         """Wire every collaborator with sensible defaults.
 
@@ -158,6 +166,15 @@ class Application:
         `cd`, `export`, function definitions, and shell options carry
         between cells (F60). The Application owns the lifecycle either
         way and calls `runner.close()` (when present) from `close()`.
+
+        `async_execution` (F62) switches `execute(cell_id)` from
+        synchronous to a background queue. When True, a dedicated
+        daemon thread pulls cell ids one at a time and feeds them to
+        the kernel, so submissions made while a prior cell is still
+        running just land in the queue instead of freezing the
+        keyboard read. Tests and embedding code that rely on
+        deterministic inline ordering leave it False; the CLI flips
+        it on.
         """
         bus = EventBus()
         # Attach the diagnostic logger FIRST so SESSION_CREATED and the
@@ -217,6 +234,13 @@ class Application:
         if text_trace is not None:
             TerminalRenderer(bus, stream=text_trace)
         onboarding = onboarding_factory(bus) if onboarding_factory is not None else None
+        if async_execution:
+            execution_worker: Optional[ExecutionWorker] = ExecutionWorker(
+                bus, kernel, resolved_session
+            )
+            execution_worker.start()
+        else:
+            execution_worker = None
         app = cls(
             bus=bus,
             session=resolved_session,
@@ -238,6 +262,7 @@ class Application:
             onboarding=onboarding,
             event_logger=event_logger,
             session_path=Path(session_path) if session_path is not None else None,
+            execution_worker=execution_worker,
         )
         # Everything below fires AFTER sound_engine and (if requested)
         # the TerminalRenderer have subscribed, so the launch banner
@@ -279,12 +304,27 @@ class Application:
         return pending
 
     def execute(self, cell_id: str) -> None:
-        """Run the cell with the given id through the execution kernel."""
+        """Run the cell with the given id through the execution kernel.
+
+        When `async_execution=True` was passed to `build`, this hands
+        the id off to the background worker and returns immediately —
+        the caller never blocks waiting for the command to finish.
+        Otherwise the call runs synchronously on the caller's thread,
+        matching pre-F62 behaviour.
+        """
+        if self.execution_worker is not None:
+            self.execution_worker.enqueue(cell_id)
+            return
         cell = self.session.get_cell(cell_id)
         self.kernel.execute(cell)
 
     def close(self) -> None:
         """Flush the sink and persist the session if a path was given."""
+        # Stop the worker BEFORE closing the runner so any cell still
+        # in-flight finishes against a live shell instead of racing a
+        # torn-down backend.
+        if self.execution_worker is not None:
+            self.execution_worker.close()
         if self.session_path is not None:
             self.session.save(self.session_path)
             publish_event(

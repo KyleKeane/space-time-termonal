@@ -62,6 +62,8 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.COMMAND_FAILED,
     EventType.COMMAND_FAILED_STDERR_TAIL,
     EventType.COMMAND_CANCELLED,
+    EventType.COMMAND_QUEUED,
+    EventType.QUEUE_DRAINED,
     EventType.OUTPUT_CHUNK,
     EventType.ERROR_CHUNK,
     EventType.FOCUS_CHANGED,
@@ -374,6 +376,24 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             sound_id="cancel",
             say_template="cancelled",
             priority=150,
+        ),
+        # F62: queue lifecycle. COMMAND_QUEUED fires on every
+        # submission when the execution worker is active; a small
+        # tick confirms the keystroke landed even if earlier cells
+        # are still running. QUEUE_DRAINED fires once the queue has
+        # emptied — a soft cue the user can treat as "ready for the
+        # next batch".
+        EventBinding(
+            id="command_queued",
+            event_type=EventType.COMMAND_QUEUED.value,
+            sound_id="soft_tick",
+            priority=90,
+        ),
+        EventBinding(
+            id="queue_drained",
+            event_type=EventType.QUEUE_DRAINED.value,
+            sound_id="soft_tick",
+            priority=80,
         ),
         # F34: distinctive follow-up chime when focus moved away from
         # the cell while it was running. The normal completion binding

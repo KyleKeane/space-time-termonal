@@ -110,6 +110,58 @@ class EventBusErrorIsolationTests(unittest.TestCase):
         self.assertEqual(len(ctx.exception.errors), 2)
 
 
+class EventBusThreadSafetyTests(unittest.TestCase):
+    """F62: publishes from multiple threads must not interleave handlers."""
+
+    def test_concurrent_publishes_run_handlers_serially(self) -> None:
+        import threading
+
+        bus = EventBus()
+        # A handler that holds a local flag while "working". If
+        # another thread publishes concurrently and the bus lets them
+        # interleave, the overlapping flag will trip the assertion.
+        state = {"in_flight": False, "overlap": False}
+        state_lock = threading.Lock()
+
+        def handler(_event: Event) -> None:
+            with state_lock:
+                if state["in_flight"]:
+                    state["overlap"] = True
+                state["in_flight"] = True
+            # Brief work window to widen the interleave window.
+            for _ in range(1000):
+                pass
+            with state_lock:
+                state["in_flight"] = False
+
+        bus.subscribe(EventType.CELL_CREATED, handler)
+
+        def pump() -> None:
+            for _ in range(200):
+                bus.publish(Event(event_type=EventType.CELL_CREATED))
+
+        threads = [threading.Thread(target=pump) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        self.assertFalse(state["overlap"])
+
+    def test_handler_can_publish_nested_event(self) -> None:
+        # RLock (not Lock) because subscribers frequently publish
+        # follow-on events from inside their callback.
+        bus = EventBus()
+        received: list[EventType] = []
+
+        def on_outer(_event: Event) -> None:
+            bus.publish(Event(event_type=EventType.CELL_UPDATED))
+
+        bus.subscribe(EventType.CELL_CREATED, on_outer)
+        bus.subscribe(EventType.CELL_UPDATED, lambda e: received.append(e.event_type))
+        bus.publish(Event(event_type=EventType.CELL_CREATED))
+        self.assertEqual(received, [EventType.CELL_UPDATED])
+
+
 class PublishEventHelperTests(unittest.TestCase):
 
     def test_publish_event_builds_and_dispatches_event(self) -> None:
