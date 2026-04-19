@@ -3255,6 +3255,111 @@ user files a concrete motivator.
 
 ---
 
+## F60 — Persistent computational backend (shared shell / REPL)
+
+**Gap.** Each cell launches its own one-shot `subprocess.Popen` via
+`asat/runner.py:48`. There is no carried state between cells: an
+`export X=hi` in cell 1 is gone by cell 2, `cd /tmp` does not change
+the cwd of any later cell, and there is no persistent Python / Node
+/ shell process the user can build state inside (no Jupyter-style
+kernel, no `tmux send-keys` model). Every cell is effectively a
+fresh `bash -c "<command>"` with the inherited environment of the
+ASAT process and nothing else.
+
+**Where it surfaces.** A blind developer who reasonably expects a
+"notebook of terminal cells" to behave like a single shell session
+runs `cd src` in cell 1, then `ls` in cell 2, and gets the
+launch-time cwd back instead of `src/`. Same with virtualenv
+activation, `source ~/.profile`, in-flight Python state, etc. Today
+USER_MANUAL.md does not state the limitation; the new
+"What a cell *is* (and is not) today" section calls it out and
+links here.
+
+**Sketch.** Give `Session` an optional `backend` (a long-lived
+subprocess) that cells route their command through instead of each
+spawning their own. The simplest first cut is a dedicated shell
+process (`bash -i` / `cmd /K`) addressed by writing to its stdin
+and framing output with sentinel markers (printf a known UUID
+before/after each command so the runner knows when output ends and
+can read the exit code). A richer second cut wraps the
+Jupyter-kernel protocol so non-shell kernels (IPython, Node, etc.)
+work the same way. Either way, the kernel is per-Session, restarts
+explicitly on `:restart` or when corrupted, and old transcripts
+remain valid because each cell still records its captured output
+and exit code.
+
+**Forward-looking notes.**
+
+- **Backend is a session-level setting.** A user might want
+  `bash` here and `ipython` there; record the chosen backend in
+  the Session JSON so resumes pick the same one back up.
+- **Per-cell override.** A `:backend none` meta-command (or a
+  cell-level flag) keeps the existing fresh-subprocess behaviour
+  for one-off invocations like `git status` where shared state
+  is irrelevant or actively unwanted.
+- **Restart semantics.** Crashed kernels need a clear narration
+  ("backend exited code N — press Ctrl+R to restart") and a
+  way to mark every downstream cell as "ran against a different
+  process" so a future re-run does not silently inherit different
+  state.
+- **Security.** A long-lived shell amplifies the blast radius of
+  whatever the user types. Document it; never auto-run cells from
+  a loaded session against the new backend without an explicit
+  prompt.
+
+---
+
+## F61 — Cell hierarchy: sections, folds, and grouping
+
+**Gap.** `Session.cells` is a flat ordered list. There is no
+parent/child relationship, no section header that groups several
+cells together, no fold/collapse, no "this cell depends on that
+cell". The only navigation primitive is "previous / next cell
+linearly" (`asat/notebook.py:546-559`).
+
+**Where it surfaces.** A long session — say twenty exploratory
+shell commands followed by ten cells of a Python data pull —
+walks as a single flat list. A user who wants to "jump back to
+the data-pull section" has to remember roughly where it started
+and Up-arrow there. There is no "collapse the chunk I'm not
+working on", no folding for navigation by section, and no parent
+context narrated when entering a cell.
+
+**Sketch.** Two layered changes, either one shippable on its
+own.
+
+1. **Section headers (lightweight).** Add a new `CellKind`
+   discriminator on `Cell` (`SECTION` vs the existing
+   `COMMAND`). A section cell carries a title string, no
+   command, no output. NOTEBOOK navigation gains
+   "previous / next section" (Ctrl+Up / Ctrl+Down) and the
+   `:state` meta-command additionally narrates "section: <title>"
+   when the cursor is inside one. Sections do not nest in the
+   first cut.
+2. **Folding (deeper).** Each section can be collapsed; while
+   collapsed, Up/Down skips its children and the narrator says
+   "section <title>, <N> cells, collapsed". A `z` keystroke at
+   a section header toggles the fold, mirroring vim.
+
+**Forward-looking notes.**
+
+- **Nested sections.** Real-world workflows want subsections
+  (a top-level "data" section with "load" and "clean"
+  subsections). Defer to a v2 once the flat case settles —
+  nesting adds focus-restoration complexity (where does the
+  cursor land after collapsing the parent of where you were?).
+- **Cross-cell dependencies.** Once F60 ships a persistent
+  backend, sections become natural dependency boundaries (a
+  "setup" section everyone re-runs, a "scratch" section nobody
+  does). Worth recording but out of scope for a first pass.
+- **Macro interaction.** F56's `expect`/`capture` steps will
+  want a way to address "every cell in section X" — give
+  sections stable ids, not just titles.
+- **Persistence.** Bump the `Session` JSON schema_version when
+  sections land so loaders can detect old files cleanly.
+
+---
+
 ## How to add an entry
 
 Append a section using the template:
