@@ -26,6 +26,7 @@ care about output navigation.
 from __future__ import annotations
 
 import difflib
+import functools
 import os
 import re
 from typing import Callable, Optional
@@ -44,6 +45,26 @@ from asat.settings_editor import ResetScope, SettingsEditorError
 
 BindingMap = dict[FocusMode, dict[Key, str]]
 ActionHandler = Callable[[], Optional[dict[str, object]]]
+
+
+def _requires_settings_controller(method: Callable[..., object]) -> Callable[..., object]:
+    """Skip the wrapped method when no SettingsController is configured.
+
+    The router is constructed without a controller when a session has
+    no settings UI wired up. Most `_settings_*` helpers exist only to
+    delegate one or two calls to that controller, so each one used to
+    repeat `if self._settings_controller is None: return`. This
+    decorator removes the noise: it short-circuits to None when the
+    controller is missing, otherwise calls through.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if self._settings_controller is None:
+            return None
+        return method(self, *args, **kwargs)
+
+    return wrapper
 
 
 def _void(fn: Callable[..., object]) -> ActionHandler:
@@ -717,112 +738,106 @@ class InputRouter:
             source=self.SOURCE,
         )
 
+    @_requires_settings_controller
     def _open_settings(self) -> None:
         """Enter SETTINGS mode and open a controller session if available."""
-        if self._settings_controller is None:
-            return
         self._settings_controller.open()
         self._cursor.enter_settings_mode()
 
+    @_requires_settings_controller
     def _close_settings(self) -> None:
         """Close the controller and return to NOTEBOOK mode."""
-        if self._settings_controller is None:
-            return
         self._settings_controller.close()
         self._cursor.exit_settings_mode()
 
+    @_requires_settings_controller
     def _save_settings(self) -> None:
         """Persist the in-progress bank; no-op without a save path."""
-        if self._settings_controller is None:
-            return
         if self._settings_controller.save_path is None:
             return
         self._settings_controller.save()
 
+    @_requires_settings_controller
     def _settings_prev(self) -> None:
         """Move the settings cursor one step backward."""
-        if self._settings_controller is not None:
-            self._settings_controller.prev()
+        self._settings_controller.prev()
 
+    @_requires_settings_controller
     def _settings_next(self) -> None:
         """Move the settings cursor one step forward."""
-        if self._settings_controller is not None:
-            self._settings_controller.next()
+        self._settings_controller.next()
 
+    @_requires_settings_controller
     def _settings_descend(self) -> None:
         """Drop one level deeper into the settings hierarchy."""
-        if self._settings_controller is not None:
-            self._settings_controller.descend()
+        self._settings_controller.descend()
 
+    @_requires_settings_controller
     def _settings_ascend(self) -> None:
         """Rise one level; at the top, close the editor."""
-        if self._settings_controller is None:
-            return
         if not self._settings_controller.ascend():
             self._close_settings()
 
+    @_requires_settings_controller
     def _settings_begin_edit(self) -> None:
         """Start composing a replacement value for the focused field."""
-        if self._settings_controller is not None:
-            self._settings_controller.begin_edit()
+        self._settings_controller.begin_edit()
 
+    @_requires_settings_controller
     def _settings_edit_commit(self) -> Optional[dict[str, object]]:
         """Apply the in-progress edit buffer; surface errors in the payload."""
-        if self._settings_controller is None:
-            return None
         try:
             self._settings_controller.commit_edit()
             return {"ok": True}
         except SettingsEditorError as exc:
             return {"ok": False, "error": str(exc)}
 
+    @_requires_settings_controller
     def _settings_edit_cancel(self) -> None:
         """Discard the in-progress edit buffer."""
-        if self._settings_controller is not None:
-            self._settings_controller.cancel_edit()
+        self._settings_controller.cancel_edit()
 
+    @_requires_settings_controller
     def _settings_edit_backspace(self) -> None:
         """Remove the last character from the edit buffer."""
-        if self._settings_controller is not None:
-            self._settings_controller.backspace_edit()
+        self._settings_controller.backspace_edit()
 
+    @_requires_settings_controller
     def _settings_undo(self) -> None:
         """Revert the most recent edit via the settings controller."""
-        if self._settings_controller is not None:
-            self._settings_controller.undo()
+        self._settings_controller.undo()
 
+    @_requires_settings_controller
     def _settings_redo(self) -> None:
         """Re-apply the most recently undone edit via the settings controller."""
-        if self._settings_controller is not None:
-            self._settings_controller.redo()
+        self._settings_controller.redo()
 
+    @_requires_settings_controller
     def _settings_search_begin(self) -> Optional[dict[str, object]]:
         """Open the `/` search overlay; report whether it started."""
-        if self._settings_controller is None:
-            return None
         started = self._settings_controller.begin_search()
         return {"opened": started}
 
+    @_requires_settings_controller
     def _settings_search_commit(self) -> Optional[dict[str, object]]:
         """Apply the in-progress search; surface the query + match count."""
-        if self._settings_controller is None:
-            return None
         editor = self._settings_controller.editor
         query = editor.search_buffer
         match_count = editor.search_match_count
         self._settings_controller.commit_search()
         return {"query": query, "match_count": match_count}
 
+    @_requires_settings_controller
     def _settings_search_cancel(self) -> None:
         """Discard the in-progress search and restore the cursor."""
-        if self._settings_controller is not None:
-            self._settings_controller.cancel_search()
+        self._settings_controller.cancel_search()
 
+    @_requires_settings_controller
     def _settings_search_backspace(self) -> None:
         """Trim the last character from the search buffer."""
-        if self._settings_controller is not None:
-            self._settings_controller.backspace_search()
+        self._settings_controller.backspace_search()
 
+    @_requires_settings_controller
     def _settings_reset_begin(
         self, scope: Optional[ResetScope] = None
     ) -> Optional[dict[str, object]]:
@@ -834,8 +849,6 @@ class InputRouter:
         explicit scope arguments (`:reset record`, `:reset bank`, …)
         the caller passes the parsed enum value through.
         """
-        if self._settings_controller is None:
-            return None
         started = self._settings_controller.begin_reset(scope)
         payload: dict[str, object] = {"opened": started}
         active_scope = self._settings_controller.reset_scope
@@ -845,10 +858,9 @@ class InputRouter:
             payload["scope"] = scope.value
         return payload
 
+    @_requires_settings_controller
     def _settings_reset_confirm(self) -> Optional[dict[str, object]]:
         """Confirm the pending reset; report whether the bank changed."""
-        if self._settings_controller is None:
-            return None
         scope = self._settings_controller.reset_scope
         applied = self._settings_controller.confirm_reset()
         payload: dict[str, object] = {"applied": applied}
@@ -856,23 +868,21 @@ class InputRouter:
             payload["scope"] = scope.value
         return payload
 
+    @_requires_settings_controller
     def _settings_reset_cancel(self) -> None:
         """Cancel the pending reset; leave the bank untouched."""
-        if self._settings_controller is not None:
-            self._settings_controller.cancel_reset()
+        self._settings_controller.cancel_reset()
 
+    @_requires_settings_controller
     def _settings_search_next(self) -> Optional[dict[str, object]]:
         """Cycle to the next match; no-op without prior results."""
-        if self._settings_controller is None:
-            return None
         editor = self._settings_controller.editor
         matched = editor.next_search_match()
         return {"matched": matched}
 
+    @_requires_settings_controller
     def _settings_search_prev(self) -> Optional[dict[str, object]]:
         """Cycle to the previous match; no-op without prior results."""
-        if self._settings_controller is None:
-            return None
         editor = self._settings_controller.editor
         matched = editor.prev_search_match()
         return {"matched": matched}
