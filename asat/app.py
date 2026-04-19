@@ -22,7 +22,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, TextIO
+from typing import Callable, Optional, TextIO
 
 from asat.actions import (
     ActionCatalog,
@@ -90,6 +90,9 @@ class Application:
         session: Optional[Session] = None,
         session_path: Optional[Path | str] = None,
         text_trace: Optional[TextIO] = None,
+        clipboard_factory: Optional[
+            "Callable[[EventBus], Clipboard]"
+        ] = None,
     ) -> "Application":
         """Wire every collaborator with sensible defaults.
 
@@ -108,6 +111,12 @@ class Application:
         publishes fire, so the `[asat] session … ready.` banner and
         the initial `[input #…]` line are captured. Pass `None`
         (default) to suppress the text trace.
+
+        `clipboard_factory` is the hook the CLI uses to install a
+        `SystemClipboard` (so "copy output line" lands on the real OS
+        clipboard) without forcing the in-process `MemoryClipboard`
+        default on every test. The factory receives the freshly built
+        `EventBus` so adapters can publish warnings.
         """
         bus = EventBus()
         seeded = session is None
@@ -122,7 +131,10 @@ class Application:
             resolved_bank,
             save_path=bank_path,
         )
-        clipboard: Clipboard = MemoryClipboard()
+        if clipboard_factory is None:
+            clipboard: Clipboard = MemoryClipboard()
+        else:
+            clipboard = clipboard_factory(bus)
         action_catalog = default_actions(
             cursor=cursor,
             recorder=recorder,

@@ -33,6 +33,7 @@ from asat.actions import (
     Clipboard,
     MemoryClipboard,
     MenuItem,
+    SystemClipboard,
     default_actions,
 )
 from asat.app import Application
@@ -156,6 +157,7 @@ __all__ = [
     "SoundRecipe",
     "SpatialPosition",
     "Spatializer",
+    "SystemClipboard",
     "TTSEngine",
     "TerminalRenderer",
     "TextToken",

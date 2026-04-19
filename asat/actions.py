@@ -34,6 +34,8 @@ build their own catalog from the same primitives.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from dataclasses import dataclass
 from typing import Callable, Optional, Protocol
 
@@ -92,6 +94,153 @@ class MemoryClipboard:
     def set_text(self, text: str) -> None:
         """Replace the stored text."""
         self._text = text
+
+
+# Priority-ordered command runs for each supported platform. `linux`
+# prefers Wayland (`wl-copy`) and falls through to the two classic X11
+# tools (`xclip`, `xsel`); macOS uses the built-in `pbcopy`; Windows
+# uses `clip` which ships with the OS. Match by prefix (sys.platform is
+# `linux`, `linux2`, `darwin`, `win32`, `cygwin`, …).
+_SYSTEM_CLIPBOARD_CANDIDATES: tuple[tuple[str, tuple[tuple[str, ...], ...]], ...] = (
+    ("linux", (
+        ("wl-copy",),
+        ("xclip", "-selection", "clipboard"),
+        ("xsel", "--clipboard", "--input"),
+    )),
+    ("darwin", (("pbcopy",),)),
+    ("win", (("clip",),)),
+    ("cygwin", (("clip",),)),
+)
+
+
+class _ClipboardCommandError(Exception):
+    """Raised by a clipboard runner when a candidate command fails."""
+
+
+ClipboardRunner = Callable[[tuple[str, ...], str], None]
+
+
+def _subprocess_runner(cmd: tuple[str, ...], text: str) -> None:
+    """Default runner: spawn `cmd` and feed `text` to stdin.
+
+    Raises `_ClipboardCommandError` when the binary is missing, the
+    call times out, or the exit status is non-zero. Those failures are
+    how `SystemClipboard` walks the candidate list, so they must not
+    leak out to the caller as ambient subprocess exceptions.
+    """
+    try:
+        result = subprocess.run(
+            cmd,
+            input=text.encode("utf-8"),
+            check=False,
+            capture_output=True,
+            timeout=3.0,
+        )
+    except (FileNotFoundError, OSError) as exc:
+        raise _ClipboardCommandError(f"{cmd[0]}: {exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise _ClipboardCommandError(f"{cmd[0]} timed out") from exc
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise _ClipboardCommandError(
+            f"{cmd[0]} exit {result.returncode}: {stderr}"
+        )
+
+
+class SystemClipboard:
+    """Clipboard adapter backed by an OS-native tool when available.
+
+    On each `set_text` call, tries a platform-specific list of
+    command-line tools in priority order (Wayland's `wl-copy`, then
+    X11's `xclip` / `xsel` on Linux; `pbcopy` on macOS; `clip` on
+    Windows). The first tool that succeeds wins. When every candidate
+    fails — or the current platform has no candidates — the text is
+    retained in-process so callers can still read it back via `.text`,
+    and a one-shot `HELP_REQUESTED` event explains the situation.
+
+    Testable: pass `runner` to stub subprocess calls and
+    `platform_name` to exercise a platform other than the host's.
+    """
+
+    SOURCE = "system_clipboard"
+
+    def __init__(
+        self,
+        bus: Optional[EventBus] = None,
+        *,
+        runner: Optional[ClipboardRunner] = None,
+        platform_name: Optional[str] = None,
+    ) -> None:
+        """Wire the adapter to an optional bus and override points."""
+        self._bus = bus
+        self._runner = runner if runner is not None else _subprocess_runner
+        self._platform = (
+            platform_name if platform_name is not None else sys.platform
+        )
+        self._text = ""
+        self._warned = False
+        self._last_backend: Optional[str] = None
+
+    @property
+    def text(self) -> str:
+        """Return the most recently stored text (also what would be pasted)."""
+        return self._text
+
+    @property
+    def last_backend(self) -> Optional[str]:
+        """Return the backend binary that handled the last set_text, or None.
+
+        None means the last call either had no candidates on this
+        platform or every candidate failed and the text only landed
+        in the in-process fallback.
+        """
+        return self._last_backend
+
+    def set_text(self, text: str) -> None:
+        """Publish `text` to the system clipboard, falling back to memory."""
+        self._text = text
+        for cmd in self._candidates():
+            try:
+                self._runner(cmd, text)
+            except _ClipboardCommandError:
+                continue
+            self._last_backend = cmd[0]
+            return
+        self._last_backend = None
+        if not self._warned:
+            self._warn()
+            self._warned = True
+
+    def _candidates(self) -> tuple[tuple[str, ...], ...]:
+        """Return the ordered command list for the current platform."""
+        for prefix, entries in _SYSTEM_CLIPBOARD_CANDIDATES:
+            if self._platform.startswith(prefix):
+                return entries
+        return ()
+
+    def _warn(self) -> None:
+        """Emit a one-shot HELP_REQUESTED event when no backend works.
+
+        Skipped silently when no bus was supplied (typical in tests),
+        so the adapter stays usable as a plain memory fallback.
+        """
+        if self._bus is None:
+            return
+        names = [c[0] for c in self._candidates()]
+        tried = ", ".join(names) if names else "(none for this platform)"
+        publish_event(
+            self._bus,
+            EventType.HELP_REQUESTED,
+            {
+                "lines": [
+                    "Clipboard: no OS clipboard tool found.",
+                    f"Tried: {tried}.",
+                    "Text was copied in-process only. Install one of "
+                    "these tools to enable system-wide paste.",
+                ]
+            },
+            source=self.SOURCE,
+        )
 
 
 class ActionCatalog:
