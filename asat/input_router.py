@@ -25,6 +25,9 @@ care about output navigation.
 
 from __future__ import annotations
 
+import difflib
+import os
+import re
 from typing import Callable, Optional
 
 from asat import keys as kc
@@ -180,15 +183,24 @@ META_COMMANDS: tuple[str, ...] = (
     "help",
     "delete",
     "duplicate",
+    "pwd",
+    "commands",
 )
 
 # "Ambient" meta-commands do their job without taking focus away from
 # INPUT mode. `:help` prints a cheat sheet; `:save` persists the
-# session. In both cases the natural next action is to keep typing, so
+# session; `:pwd` and `:commands` emit an informational HELP_REQUESTED
+# event. In each case the natural next action is to keep typing, so
 # the router clears the in-progress buffer but leaves the user in INPUT
 # mode. Commands NOT in this set (today: `:settings`, `:quit`)
 # inherently require a mode change and go through `abandon_input_mode`.
-AMBIENT_META_COMMANDS: frozenset[str] = frozenset({"help", "save"})
+AMBIENT_META_COMMANDS: frozenset[str] = frozenset(
+    {"help", "save", "pwd", "commands"}
+)
+
+# `:name optional-argument` — case-insensitive in the name, everything
+# after the first whitespace run is the trailing arg (already stripped).
+_META_NAME_RE = re.compile(r"^:([A-Za-z][A-Za-z0-9_-]*)\s*(.*)$")
 
 
 # The cheat-sheet lines a `:help` meta-command should surface. Kept in
@@ -205,7 +217,8 @@ HELP_LINES: tuple[str, ...] = (
     "           / search (type query, Enter commits), n / N next / prev hit, g jump-to-line.",
     "SETTINGS:  Up/Down walk, Right/Enter descend, Left/Escape ascend, e edit, Ctrl+S save, Ctrl+Q close.",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
-    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate (INPUT then Enter).",
+    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :commands.",
+    "           Meta-commands are case-insensitive and accept a trailing argument.",
     "Exit:      :quit, or EOF (Ctrl+D on POSIX, Ctrl+Z Enter on Windows).",
     "Docs:      docs/USER_MANUAL.md for the full keystroke reference.",
 )
@@ -388,31 +401,50 @@ class InputRouter:
         """Commit the current input buffer and return submission extras.
 
         If the buffer begins with `:`, the router treats it as a meta-
-        command (`:settings`, `:save`, `:quit`), consumes it without
-        writing it back into the cell, and reports the command name via
-        the ACTION_INVOKED payload so observers can trace what
-        happened.
+        command, consumes it without writing it back into the cell,
+        and reports the command name via the ACTION_INVOKED payload so
+        observers can trace what happened. Unknown `:xxx` lines are
+        also intercepted: the router emits a HELP_REQUESTED hint (with
+        a difflib-powered typo suggestion when one is plausible) and
+        leaves the user in INPUT mode so they can correct and retry.
         """
         buffer = self._cursor.focus.input_buffer
-        meta = _parse_meta_command(buffer)
-        if meta is not None:
-            if meta in AMBIENT_META_COMMANDS:
+        parsed = _parse_meta_command(buffer)
+        if parsed is not None:
+            command, arg, raw_name = parsed
+            if command is None:
+                self._cursor.reset_input_buffer()
+                self._publish_unknown_meta(raw_name)
+                extras: dict[str, object] = {
+                    "meta_command": None,
+                    "meta_unknown": raw_name,
+                }
+                suggestion = _suggest_meta_command(raw_name)
+                if suggestion is not None:
+                    extras["meta_suggestion"] = suggestion
+                return extras
+            if command in AMBIENT_META_COMMANDS:
                 self._cursor.reset_input_buffer()
             else:
                 self._cursor.abandon_input_mode()
-            self._handle_meta_command(meta)
-            return {"meta_command": meta}
+            self._handle_meta_command(command, arg)
+            extras = {"meta_command": command}
+            if arg:
+                extras["meta_argument"] = arg
+            return extras
         cell = self._cursor.submit()
         if cell is None:
             return None
         return {"cell_id": cell.cell_id, "command": cell.command}
 
-    def _handle_meta_command(self, command: str) -> None:
+    def _handle_meta_command(self, command: str, argument: str) -> None:
         """Dispatch a parsed meta-command (without its leading `:`).
 
         `save` and `quit` are handled by the Application via the
         ACTION_INVOKED payload's `meta_command` key, so the router
-        itself intentionally does nothing for them here.
+        itself intentionally does nothing for them here. The trailing
+        `argument` is forwarded only where it has a defined meaning;
+        commands that do not read it simply ignore it.
         """
         if command == "settings":
             self._open_settings()
@@ -422,6 +454,51 @@ class InputRouter:
             self._cursor.delete_focused_cell()
         elif command == "duplicate":
             self._cursor.duplicate_focused_cell()
+        elif command == "pwd":
+            self._publish_pwd()
+        elif command == "commands":
+            self._publish_commands()
+
+    def _publish_pwd(self) -> None:
+        """Announce the current working directory via HELP_REQUESTED."""
+        publish_event(
+            self._bus,
+            EventType.HELP_REQUESTED,
+            {"lines": [f"Working directory: {os.getcwd()}"]},
+            source=self.SOURCE,
+        )
+
+    def _publish_commands(self) -> None:
+        """List every recognised meta-command via HELP_REQUESTED."""
+        lines = ["Meta-commands (type `:name` in INPUT mode, then Enter):"]
+        lines.extend(f"  :{name}" for name in META_COMMANDS)
+        publish_event(
+            self._bus,
+            EventType.HELP_REQUESTED,
+            {"lines": lines},
+            source=self.SOURCE,
+        )
+
+    def _publish_unknown_meta(self, raw_name: str) -> None:
+        """Surface a typo-suggest hint for an unrecognised `:xxx` line."""
+        suggestion = _suggest_meta_command(raw_name)
+        if suggestion is not None:
+            lines = [
+                f"Unknown meta-command `:{raw_name}` — "
+                f"did you mean `:{suggestion}`?",
+                "Line ignored. Type `:commands` to list every meta-command.",
+            ]
+        else:
+            lines = [
+                f"Unknown meta-command `:{raw_name}`. Line ignored.",
+                "Type `:commands` to list every meta-command.",
+            ]
+        publish_event(
+            self._bus,
+            EventType.HELP_REQUESTED,
+            {"lines": lines},
+            source=self.SOURCE,
+        )
 
     def _publish_help(self) -> None:
         """Emit HELP_REQUESTED so the renderer and audio bank can react."""
@@ -738,12 +815,37 @@ class InputRouter:
         )
 
 
-def _parse_meta_command(buffer: str) -> Optional[str]:
-    """Return a meta-command name when buffer is `:<name>` (trimmed), else None."""
+def _parse_meta_command(
+    buffer: str,
+) -> Optional[tuple[Optional[str], str, str]]:
+    """Parse `:<name> [argument]` into `(canonical, argument, raw_name)`.
+
+    Returns `None` when the buffer is not a meta-command line at all
+    (empty, not starting with `:`, or syntactically unparseable). When
+    a `:` prefix is present but the name is not in `META_COMMANDS`,
+    returns `(None, argument, raw_name)` so the caller can emit a
+    typo-suggest hint instead of falling through to the kernel.
+
+    Matching is case-insensitive; `:Help`, `:HELP`, and `:help` all
+    resolve to the canonical `"help"`.
+    """
     stripped = buffer.strip()
     if not stripped.startswith(":"):
         return None
-    name = stripped[1:].strip()
-    if name in META_COMMANDS:
-        return name
-    return None
+    match = _META_NAME_RE.match(stripped)
+    if match is None:
+        return None
+    raw_name = match.group(1)
+    argument = match.group(2).strip()
+    canonical = raw_name.lower()
+    if canonical in META_COMMANDS:
+        return canonical, argument, raw_name
+    return None, argument, raw_name
+
+
+def _suggest_meta_command(name: str) -> Optional[str]:
+    """Return the closest known meta-command to `name`, or None."""
+    matches = difflib.get_close_matches(
+        name.lower(), META_COMMANDS, n=1, cutoff=0.6
+    )
+    return matches[0] if matches else None

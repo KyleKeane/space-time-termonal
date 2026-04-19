@@ -505,8 +505,10 @@ class MetaCommandTests(unittest.TestCase):
         self.assertEqual(submits[0].payload["meta_command"], "settings")
         self.assertNotIn("command", submits[0].payload)
 
-    def test_non_meta_colon_command_falls_through_as_regular_submit(self) -> None:
-        bus, _, router, _controller = _build_with_settings([""])
+    def test_unknown_meta_command_is_intercepted_with_help_hint(self) -> None:
+        """F17: `:unknown` no longer falls through to the shell; the
+        router consumes the line and emits a HELP_REQUESTED hint."""
+        bus, cursor, router, _controller = _build_with_settings([""])
         recorder = _Recorder(bus)
         router.handle_key(ENTER)
         for ch in ":unknown":
@@ -516,7 +518,97 @@ class MetaCommandTests(unittest.TestCase):
             e for e in recorder.types_of(EventType.ACTION_INVOKED)
             if e.payload.get("action") == "submit"
         ]
-        self.assertEqual(submits[0].payload.get("command"), ":unknown")
+        self.assertIsNone(submits[0].payload.get("command"))
+        self.assertIsNone(submits[0].payload.get("meta_command"))
+        self.assertEqual(submits[0].payload.get("meta_unknown"), "unknown")
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertEqual(len(helps), 1)
+        text = "\n".join(helps[0].payload["lines"])
+        self.assertIn("unknown", text)
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(cursor.focus.input_buffer, "")
+
+    def test_unknown_meta_command_suggests_closest_known_name(self) -> None:
+        """F17: difflib suggests `:settings` when the user types
+        `:setings` (single-letter typo)."""
+        bus, _, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":setings":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        submits = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "submit"
+        ]
+        self.assertEqual(submits[0].payload.get("meta_suggestion"), "settings")
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        text = "\n".join(helps[0].payload["lines"])
+        self.assertIn(":settings", text)
+
+    def test_meta_command_matching_is_case_insensitive(self) -> None:
+        """F17: `:HELP`, `:Help`, and `:help` all run the same command."""
+        bus, _, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":HELP":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertEqual(len(helps), 1)
+        submits = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "submit"
+        ]
+        self.assertEqual(submits[-1].payload["meta_command"], "help")
+
+    def test_meta_command_trailing_argument_reported_in_payload(self) -> None:
+        """F17: `:help settings` exposes `settings` as meta_argument."""
+        bus, _, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":help settings":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        submits = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "submit"
+        ]
+        self.assertEqual(submits[-1].payload["meta_command"], "help")
+        self.assertEqual(submits[-1].payload["meta_argument"], "settings")
+
+    def test_colon_pwd_reports_working_directory(self) -> None:
+        """F17: `:pwd` emits HELP_REQUESTED with the current CWD."""
+        import os
+
+        bus, cursor, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":pwd":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertEqual(len(helps), 1)
+        text = "\n".join(helps[0].payload["lines"])
+        self.assertIn(os.getcwd(), text)
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(cursor.focus.input_buffer, "")
+
+    def test_colon_commands_lists_every_meta_command(self) -> None:
+        """F17: `:commands` enumerates the full meta-command set."""
+        from asat.input_router import META_COMMANDS
+
+        bus, _, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":commands":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertEqual(len(helps), 1)
+        text = "\n".join(helps[0].payload["lines"])
+        for name in META_COMMANDS:
+            self.assertIn(f":{name}", text)
 
     def test_colon_help_publishes_help_requested_with_cheat_sheet_lines(self) -> None:
         from asat.input_router import HELP_LINES
