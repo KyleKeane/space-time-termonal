@@ -13,6 +13,7 @@ from asat.sound_engine import (
     DefaultPredicateEvaluator,
     SoundEngine,
     SoundEngineError,
+    _apply_gain,
 )
 from asat.tts import ToneTTSEngine
 
@@ -662,6 +663,161 @@ class NarrationHistoryTests(unittest.TestCase):
         self.assertIsNone(engine.replay_last_narration())
         # No new buffer, no NARRATION_REPLAYED.
         self.assertEqual(len(sink.buffers), 1)
+
+
+class _SilentTTS:
+    """TTS shim that always returns mono silence of a fixed length.
+
+    Used by the ducking tests so the speech contribution is zero and
+    every sample the sink sees is sourced from the cue alone — that
+    lets us assert duck_level was applied by comparing the cue's peak
+    amplitude against the same engine run with ducking disabled.
+    """
+
+    def __init__(self, sample_rate: int = 8000, frames: int = 64) -> None:
+        self.sample_rate = sample_rate
+        self._frames = frames
+
+    def synthesize(self, text: str, voice: VoiceProfile) -> AudioBuffer:
+        return AudioBuffer.mono([0.0] * self._frames, self.sample_rate)
+
+
+class _ApplyGainTests(unittest.TestCase):
+    """F32 — _apply_gain scales every sample, keeps metadata intact."""
+
+    def test_scales_every_sample(self) -> None:
+        buffer = AudioBuffer.mono([0.5, -0.5, 1.0, -1.0], sample_rate=8000)
+        scaled = _apply_gain(buffer, 0.5)
+        self.assertEqual(scaled.samples, (0.25, -0.25, 0.5, -0.5))
+        self.assertEqual(scaled.sample_rate, 8000)
+        self.assertEqual(scaled.layout, ChannelLayout.MONO)
+
+    def test_unity_gain_returns_input_buffer(self) -> None:
+        # Hot-path optimisation: identical instance, no tuple churn.
+        buffer = AudioBuffer.mono([0.1, 0.2, 0.3], sample_rate=8000)
+        self.assertIs(_apply_gain(buffer, 1.0), buffer)
+
+    def test_zero_gain_silences_buffer(self) -> None:
+        buffer = AudioBuffer.mono([0.5, -0.5, 1.0], sample_rate=8000)
+        silenced = _apply_gain(buffer, 0.0)
+        self.assertEqual(silenced.samples, (0.0, 0.0, 0.0))
+
+
+class SoundEngineDuckingTests(unittest.TestCase):
+    """F32 — concurrent cues are attenuated while speech is mixing."""
+
+    def _bank(self, *, ducking_enabled: bool, duck_level: float) -> SoundBank:
+        return SoundBank(
+            voices=(_voice(),),
+            sounds=(_tone(),),
+            bindings=(
+                EventBinding(
+                    id="b1",
+                    event_type=EventType.CELL_CREATED.value,
+                    voice_id="narrator",
+                    sound_id="ding",
+                    say_template="hi",
+                ),
+            ),
+            ducking_enabled=ducking_enabled,
+            duck_level=duck_level,
+        )
+
+    def _peak(self, sink: MemorySink) -> float:
+        self.assertEqual(len(sink.buffers), 1)
+        return max(abs(sample) for sample in sink.buffers[0].samples)
+
+    def test_ducking_attenuates_concurrent_cue(self) -> None:
+        # Run the same dispatch twice, once with ducking off and once
+        # with duck_level 0.25; the attenuated peak must be smaller.
+        bus_off, sink_off = EventBus(), MemorySink()
+        engine_off = SoundEngine(
+            bus_off,
+            self._bank(ducking_enabled=False, duck_level=0.25),
+            sink_off,
+            tts=_SilentTTS(),
+            sample_rate=8000,
+        )
+        self.addCleanup(engine_off.close)
+        publish_event(bus_off, EventType.CELL_CREATED, {}, source="notebook")
+        peak_off = self._peak(sink_off)
+
+        bus_on, sink_on = EventBus(), MemorySink()
+        engine_on = SoundEngine(
+            bus_on,
+            self._bank(ducking_enabled=True, duck_level=0.25),
+            sink_on,
+            tts=_SilentTTS(),
+            sample_rate=8000,
+        )
+        self.addCleanup(engine_on.close)
+        publish_event(bus_on, EventType.CELL_CREATED, {}, source="notebook")
+        peak_on = self._peak(sink_on)
+
+        # Speech is silent in both runs, so the only contribution to
+        # the mix is the cue. With the silent-speech short-circuit at
+        # gain 1.0 disabled, the ducked peak should be ~25% of the
+        # full-level one — allow a small numerical fudge for the
+        # spatializer's HRTF convolution.
+        self.assertGreater(peak_off, 0.0)
+        self.assertLess(peak_on, peak_off * 0.5)
+
+    def test_disabled_ducking_leaves_cue_untouched(self) -> None:
+        bus = EventBus()
+        sink = MemorySink()
+        engine = SoundEngine(
+            bus,
+            self._bank(ducking_enabled=False, duck_level=0.0),
+            sink,
+            tts=_SilentTTS(),
+            sample_rate=8000,
+        )
+        self.addCleanup(engine.close)
+        publish_event(bus, EventType.CELL_CREATED, {}, source="notebook")
+        # duck_level is 0.0 but ducking is OFF, so the cue must still
+        # be audible — the disabled flag wins over the level value.
+        self.assertGreater(self._peak(sink), 0.0)
+
+    def test_ducking_skipped_when_no_speech_buffer(self) -> None:
+        # A sound-only binding has no speech to duck against, so the
+        # cue must come through at full level even with ducking on.
+        bank = SoundBank(
+            sounds=(_tone(),),
+            bindings=(
+                EventBinding(
+                    id="b1",
+                    event_type=EventType.CELL_CREATED.value,
+                    sound_id="ding",
+                ),
+            ),
+            ducking_enabled=True,
+            duck_level=0.1,
+        )
+        bus = EventBus()
+        sink = MemorySink()
+        engine = SoundEngine(bus, bank, sink, sample_rate=8000)
+        self.addCleanup(engine.close)
+        publish_event(bus, EventType.CELL_CREATED, {}, source="notebook")
+        peak_solo = self._peak(sink)
+
+        # Same cue without ducking should match — confirms the ducking
+        # branch was never entered.
+        bus2 = EventBus()
+        sink2 = MemorySink()
+        engine2 = SoundEngine(
+            bus2,
+            SoundBank(
+                sounds=(_tone(),),
+                bindings=bank.bindings,
+                ducking_enabled=False,
+                duck_level=0.1,
+            ),
+            sink2,
+            sample_rate=8000,
+        )
+        self.addCleanup(engine2.close)
+        publish_event(bus2, EventType.CELL_CREATED, {}, source="notebook")
+        self.assertEqual(peak_solo, self._peak(sink2))
 
 
 if __name__ == "__main__":

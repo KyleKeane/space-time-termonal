@@ -300,6 +300,52 @@ class JsonSchemaFileTests(unittest.TestCase):
         kinds = data["$defs"]["sound"]["properties"]["kind"]["enum"]
         self.assertEqual(tuple(kinds), SOUND_KINDS)
 
+    def test_schema_declares_ducking_fields(self) -> None:
+        """F32: schema must list ducking_enabled and duck_level so the
+        on-disk format documents them at the same level as the dataclass."""
+        schema_path = Path(__file__).resolve().parents[1] / "asat" / "sound_bank_schema.json"
+        data = json.loads(schema_path.read_text(encoding="utf-8"))
+        self.assertEqual(data["properties"]["ducking_enabled"]["type"], "boolean")
+        self.assertEqual(data["properties"]["ducking_enabled"]["default"], True)
+        duck_level = data["properties"]["duck_level"]
+        self.assertEqual(duck_level["type"], "number")
+        self.assertEqual(duck_level["minimum"], 0.0)
+        self.assertEqual(duck_level["maximum"], 1.0)
+        self.assertEqual(duck_level["default"], 0.4)
+
+
+class DuckingFieldTests(unittest.TestCase):
+    """F32 — ducking_enabled / duck_level live on the bank itself."""
+
+    def test_defaults_match_spec(self) -> None:
+        bank = SoundBank()
+        self.assertTrue(bank.ducking_enabled)
+        self.assertEqual(bank.duck_level, 0.4)
+
+    def test_round_trip_preserves_non_default_values(self) -> None:
+        bank = SoundBank(ducking_enabled=False, duck_level=0.2)
+        restored = SoundBank.from_dict(bank.to_dict())
+        self.assertFalse(restored.ducking_enabled)
+        self.assertEqual(restored.duck_level, 0.2)
+
+    def test_loader_supplies_defaults_when_fields_missing(self) -> None:
+        """Older bank files won't carry the F32 fields. Loader fills them
+        with the dataclass defaults so existing on-disk banks keep loading."""
+        legacy = {"version": SCHEMA_VERSION}
+        bank = SoundBank.from_dict(legacy)
+        self.assertTrue(bank.ducking_enabled)
+        self.assertEqual(bank.duck_level, 0.4)
+
+    def test_duck_level_out_of_range_raises(self) -> None:
+        with self.assertRaises(SoundBankError):
+            SoundBank.from_dict({"version": SCHEMA_VERSION, "duck_level": 1.5})
+        with self.assertRaises(SoundBankError):
+            SoundBank.from_dict({"version": SCHEMA_VERSION, "duck_level": -0.1})
+
+    def test_duck_level_non_numeric_raises(self) -> None:
+        with self.assertRaises(SoundBankError):
+            SoundBank.from_dict({"version": SCHEMA_VERSION, "duck_level": "loud"})
+
 
 if __name__ == "__main__":
     unittest.main()

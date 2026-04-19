@@ -280,6 +280,17 @@ class SoundEngine:
             effective_sound = _apply_sound_overrides(sound, binding.sound_overrides)
             sound_buffer = self._synthesise_sound(effective_sound)
 
+        # F32: duck the cue under concurrent narration so the voice
+        # stays intelligible. The attenuation is per mix cycle: each
+        # _render call is its own cycle, so the next event with no
+        # speech automatically plays at full level.
+        if (
+            speech_buffer is not None
+            and sound_buffer is not None
+            and self._bank.ducking_enabled
+        ):
+            sound_buffer = _apply_gain(sound_buffer, self._bank.duck_level)
+
         mixed = _mix_buffers(speech_buffer, sound_buffer, self._sample_rate)
         if mixed is None:
             return
@@ -424,6 +435,20 @@ def _mix_buffers(
 def _sample_or_zero(samples: tuple[float, ...], index: int) -> float:
     """Return samples[index] or 0.0 if the index is out of range."""
     return samples[index] if index < len(samples) else 0.0
+
+
+def _apply_gain(buffer: AudioBuffer, gain: float) -> AudioBuffer:
+    """Return a copy of buffer with every sample scaled by `gain`.
+
+    Used by the F32 ducking path to attenuate a non-speech cue when
+    speech is mixing in the same cycle. `gain == 1.0` short-circuits
+    to the original buffer because the multiplication is a no-op and
+    we save tuple-construction churn on hot dispatches.
+    """
+    if gain == 1.0:
+        return buffer
+    scaled = tuple(sample * gain for sample in buffer.samples)
+    return AudioBuffer(scaled, buffer.sample_rate, buffer.layout)
 
 
 def _clamp(value: float) -> float:
