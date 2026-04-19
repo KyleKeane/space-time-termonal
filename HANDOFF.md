@@ -75,3 +75,6 @@ InputRouter `/` binding + tests + docs, then PR.
 
 Paste this entire file as the first message of the new session and it
 will pick up without further priming.
+
+<!-- MCP PR-creation smoke test: trivial edit to verify Claude Code can open PRs via the GitHub MCP server. -->
+
