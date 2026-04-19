@@ -921,24 +921,40 @@ narration. Tab-completes cleanly once F23 lands.
 
 ## F36 — Auto-read stderr tail on command failure
 
+**Status.** Shipped.
+
 **Gap.** When a command fails, the user hears the failure chord and
 the exit code, but has to manually enter OUTPUT mode and scroll to
 find the error text. The single most useful piece of information
-(what went wrong) is an extra navigation step away.
+(what went wrong) was an extra navigation step away.
 
 **Where it surfaces.** Every failed build, failed test run, failed
-`cd`, failed `git pull`. The narrator says "command failed exit 1"
-— not "command failed: fatal: not a git repository".
+`cd`, failed `git pull`. Before F36 the narrator said "command
+failed exit 1" — not "command failed: fatal: not a git repository".
 
-**Sketch.** On `COMMAND_FAILED` (or `COMMAND_COMPLETED` with
-`exit_code != 0`), the sound engine inspects the cell's captured
-output buffer, takes the last N stderr lines (default 3, configurable
-via `stderr_tail_lines` on the bank), and speaks them through the
-`alert` voice after the failure chord. The binding's predicate
-already supports `exit_code != 0`, so this is one new default
-binding plus a small helper to fetch the tail from the buffer.
-Explicitly opt-outable via a settings toggle — some users will
-prefer the minimal cue and navigate manually.
+**Sketch (shipped).** A new `StderrTailAnnouncer` subscriber
+(`asat/error_tail.py`) listens for `COMMAND_FAILED`, fetches the
+failed cell's stderr tail from the existing `OutputRecorder`, and
+republishes a richer `COMMAND_FAILED_STDERR_TAIL` event carrying
+`tail_lines` (list), `tail_text` (newline-joined for templates),
+`line_count`, and the propagated `cell_id` / `exit_code` /
+`timed_out`. The default bank binds that event to the `alert` voice
+with `say_template="{tail_text}"`, so the failure chord + exit-code
+narration plays first and the stderr tail follows a beat later.
+`Application.build` wires the announcer after `SoundEngine` so the
+audio sequence stays in that order.
+
+Tunable: `StderrTailAnnouncer(bus, recorder, tail_lines=N)` at
+construction; default is 3. Silent when a failed cell produced no
+stderr (the regular failure cue is sufficient). Opt-outable via the
+settings editor — flip `command_failed_stderr_tail.enabled = false`
+on the default binding to keep only the minimal failure cue.
+
+Ancillary change: the kernel's `_fail_before_launch` now also emits
+an `ERROR_CHUNK` for the launch-error message before publishing
+`COMMAND_FAILED`, so launch failures (missing executable,
+unparseable command string) populate `OutputBuffer` like any normal
+stderr and feed both OUTPUT-mode review and the F36 announcer.
 
 ---
 

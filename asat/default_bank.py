@@ -59,6 +59,7 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.COMMAND_STARTED,
     EventType.COMMAND_COMPLETED,
     EventType.COMMAND_FAILED,
+    EventType.COMMAND_FAILED_STDERR_TAIL,
     EventType.COMMAND_CANCELLED,
     EventType.OUTPUT_CHUNK,
     EventType.ERROR_CHUNK,
@@ -341,6 +342,16 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             say_template="failed with exit code {exit_code}",
             predicate="timed_out != True",
             priority=200,
+        ),
+        # F36: auto-read the last stderr lines after the failure chord.
+        # Disable this binding (enabled=false) to silence the tail and
+        # keep only the minimal failure cue.
+        EventBinding(
+            id="command_failed_stderr_tail",
+            event_type=EventType.COMMAND_FAILED_STDERR_TAIL.value,
+            voice_id="alert",
+            say_template="{tail_text}",
+            priority=180,
         ),
         EventBinding(
             id="command_cancelled",

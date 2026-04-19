@@ -132,10 +132,15 @@ class ExecutionKernel:
 
         Used when the kernel could not even start the subprocess, for
         example because the executable does not exist or the command
-        string could not be parsed.
+        string could not be parsed. The error message is also emitted
+        as an ERROR_CHUNK so it flows through the normal stderr path
+        (populating OutputBuffer for OUTPUT-mode review and feeding
+        the F36 stderr-tail announcer).
         """
         message = str(exc)
         cell.mark_completed(stdout="", stderr=message, exit_code=exit_code)
+        if message:
+            self._publish(EventType.ERROR_CHUNK, cell_id=cell.cell_id, line=message)
         self._publish(
             EventType.COMMAND_FAILED,
             cell_id=cell.cell_id,

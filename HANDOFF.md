@@ -31,7 +31,8 @@ F9 README · F11 auto-advance after submit · F13 in-line buffer editing
 · F14 action-menu keystroke · F15 cell delete/move/duplicate · F16
 output search + jump-to-line · F17 richer meta-commands · F18 OS
 clipboard · F19 prompt context on re-entry · F20 first-run onboarding
-· F21a settings undo/redo · F21b settings `/` search overlay.
+· F21a settings undo/redo · F21b settings `/` search overlay · F36
+auto-read stderr tail on failure.
 
 ## Partially shipped
 · **F6** Windows live audio shipped; POSIX still open.
@@ -49,9 +50,9 @@ navigation + heading-scope selection · **F28** speech output console
 tabs with per-tab kernel (and child tabs sharing one kernel) ·
 **F30** audio history / repeat last narration · **F31** verbosity
 presets · **F32** audio ducking under narration · **F34** completion
-alert when focus has moved · **F35** cell bookmarks · **F36** auto-
-read stderr tail on failure · **F37** long-output pacing (silence +
-progress beats) · **F38** self-voicing help topics.
+alert when focus has moved · **F35** cell bookmarks · **F37**
+long-output pacing (silence + progress beats) · **F38** self-voicing
+help topics.
 
 ## Non-negotiables
 - Pure stdlib. Optional numpy only; no other third-party deps.
@@ -62,7 +63,7 @@ progress beats) · **F38** self-voicing help topics.
   clocks, no real audio.
 - One feature per PR on branch `claude/accessible-audio-terminal-cOh64`.
 - Test command: `python -m unittest discover -s tests -t .` —
-  currently **682 passing**.
+  currently **696 passing**.
 
 ## Entry points for the next session
 - **Roadmap (authoritative):** `docs/FEATURE_REQUESTS.md`
@@ -83,9 +84,9 @@ API + InputRouter key (Ctrl+R?) + tests + docs, then PR.
 Alternative one-shot PRs if F21c feels heavy: **F22** `--log
 path.jsonl` diagnostic file (a single `JsonlEventLogger` subscriber,
 CLI flag, tests); **F4** command history (ring buffer + Up/Down in
-INPUT mode); **F23** Tab completion of executables + paths; **F36**
-auto-read stderr tail on failure (one default binding + a buffer-tail
-helper — highest UX payoff for the effort).
+INPUT mode); **F23** Tab completion of executables + paths; **F34**
+completion alert when focus has moved (quiet sentinel cue so the user
+learns a run finished while they were elsewhere in the notebook).
 
 ## Maintenance backlog (non-feature cleanups)
 Each of these is a small standalone PR. Pick one off the top of the

@@ -155,6 +155,30 @@ class KernelFailureTests(unittest.TestCase):
         self.assertEqual(len(failed), 1)
         self.assertEqual(failed[0].payload["error_type"], "FileNotFoundError")
 
+    def test_launch_failure_emits_error_chunk_before_failed(self) -> None:
+        # F36 relies on launch-failure stderr flowing through ERROR_CHUNK so
+        # OutputRecorder can capture it like any other stderr stream.
+        bus = EventBus()
+        recorder = _Recorder(bus)
+        runner = StubRunner(raises=FileNotFoundError("missing-binary: not found"))
+        kernel = ExecutionKernel(bus, runner=runner)
+        kernel.execute(Cell.new("missing-binary"))
+        types = recorder.types()
+        error_index = types.index(EventType.ERROR_CHUNK)
+        failed_index = types.index(EventType.COMMAND_FAILED)
+        self.assertLess(error_index, failed_index)
+        error_event = recorder.events[error_index]
+        self.assertEqual(error_event.payload["line"], "missing-binary: not found")
+
+    def test_launch_failure_with_empty_message_skips_error_chunk(self) -> None:
+        # Defensive: no payload key when there's nothing to say.
+        bus = EventBus()
+        recorder = _Recorder(bus)
+        runner = StubRunner(raises=FileNotFoundError(""))
+        kernel = ExecutionKernel(bus, runner=runner)
+        kernel.execute(Cell.new("nope"))
+        self.assertNotIn(EventType.ERROR_CHUNK, recorder.types())
+
     def test_parse_error_fails_gracefully(self) -> None:
         bus = EventBus()
         runner = StubRunner(raises=ValueError("unbalanced quote"))

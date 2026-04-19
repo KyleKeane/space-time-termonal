@@ -154,6 +154,37 @@ class ApplicationSubmissionTests(unittest.TestCase):
         app.handle_key(kc.ENTER)
         self.assertEqual(app.drain_pending(), [])
 
+    def test_failing_cell_fires_stderr_tail_after_failure(self) -> None:
+        # F36: a non-zero exit causes COMMAND_FAILED, which the
+        # StderrTailAnnouncer converts into COMMAND_FAILED_STDERR_TAIL
+        # with the tail of the cell's captured stderr.
+        tail_payloads: list[dict] = []
+        app = Application.build()
+        app.kernel._runner = StubRunner(
+            stdout="",
+            stderr="trace line 1\ntrace line 2\nNameError: x\n",
+            exit_code=1,
+        )
+
+        def capture(event):
+            if event.event_type == EventType.COMMAND_FAILED_STDERR_TAIL:
+                tail_payloads.append(event.payload)
+
+        app.bus.subscribe(EventType.COMMAND_FAILED_STDERR_TAIL, capture)
+
+        _type(app, "boom")
+        app.handle_key(kc.ENTER)
+        pending = app.drain_pending()
+        app.execute(pending[0])
+
+        self.assertEqual(len(tail_payloads), 1)
+        self.assertEqual(
+            tail_payloads[0]["tail_lines"],
+            ["trace line 1", "trace line 2", "NameError: x"],
+        )
+        self.assertEqual(tail_payloads[0]["exit_code"], 1)
+        self.assertFalse(tail_payloads[0]["timed_out"])
+
 
 class ApplicationMetaCommandTests(unittest.TestCase):
     def test_quit_meta_command_clears_running(self) -> None:
