@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import unittest
 
-from asat.cell import Cell, CellStatus
+from asat.cell import Cell, CellKind, CellStatus
 from asat.event_bus import EventBus
 from asat.events import Event, EventType
 from asat.notebook import FocusMode, NotebookCursor
@@ -583,6 +583,133 @@ class CellLifecycleOperationsTests(unittest.TestCase):
         self.created.clear()
         self.cursor.submit()
         self.assertEqual(len(self.created), 1)
+
+
+class HeadingNavigationTests(unittest.TestCase):
+    """F61: headings act as NVDA-style jump targets."""
+
+    def setUp(self) -> None:
+        self.bus = EventBus()
+        self.session = Session.new()
+        # Interleave headings and commands to exercise level filtering
+        # and any-level cycling.
+        #   [0] h1 "Intro"
+        #   [1] cmd "ls"
+        #   [2] h2 "Setup"
+        #   [3] cmd "install"
+        #   [4] h1 "Runs"
+        #   [5] cmd "run"
+        self.session.add_cell(Cell.new_heading(1, "Intro"))
+        self.session.add_cell(Cell.new("ls"))
+        self.session.add_cell(Cell.new_heading(2, "Setup"))
+        self.session.add_cell(Cell.new("install"))
+        self.session.add_cell(Cell.new_heading(1, "Runs"))
+        self.session.add_cell(Cell.new("run"))
+        self.cursor = NotebookCursor(self.session, self.bus)
+        # Start at the first cell; explicit for clarity.
+        self.cursor.focus_cell(self.session.cells[0].cell_id)
+
+    def test_next_any_level_skips_current_and_walks_order(self) -> None:
+        # From index 0 (h1 Intro) -> index 2 (h2 Setup)
+        landed = self.cursor.move_to_next_heading()
+        assert landed is not None
+        self.assertEqual(landed.heading_title, "Setup")
+        # Next -> index 4 (h1 Runs)
+        landed = self.cursor.move_to_next_heading()
+        assert landed is not None
+        self.assertEqual(landed.heading_title, "Runs")
+        # Next -> None (no more headings); cursor does not move
+        before = self.cursor.focus.cell_id
+        self.assertIsNone(self.cursor.move_to_next_heading())
+        self.assertEqual(self.cursor.focus.cell_id, before)
+
+    def test_prev_any_level_walks_back(self) -> None:
+        self.cursor.focus_cell(self.session.cells[-1].cell_id)
+        landed = self.cursor.move_to_previous_heading()
+        assert landed is not None
+        self.assertEqual(landed.heading_title, "Runs")
+        landed = self.cursor.move_to_previous_heading()
+        assert landed is not None
+        self.assertEqual(landed.heading_title, "Setup")
+        landed = self.cursor.move_to_previous_heading()
+        assert landed is not None
+        self.assertEqual(landed.heading_title, "Intro")
+        self.assertIsNone(self.cursor.move_to_previous_heading())
+
+    def test_level_filter_finds_matching_level_only(self) -> None:
+        # Level 1 from index 0: skip current, next match is index 4
+        landed = self.cursor.move_to_next_heading(level=1)
+        assert landed is not None
+        self.assertEqual(landed.heading_title, "Runs")
+        # No more h1 after that.
+        self.assertIsNone(self.cursor.move_to_next_heading(level=1))
+
+    def test_level_filter_no_match_leaves_cursor_alone(self) -> None:
+        # There are no h6 cells; cursor should not move.
+        before = self.cursor.focus.cell_id
+        self.assertIsNone(self.cursor.move_to_next_heading(level=6))
+        self.assertEqual(self.cursor.focus.cell_id, before)
+
+    def test_heading_nav_noop_outside_notebook_mode(self) -> None:
+        self.cursor.focus_cell(self.session.cells[1].cell_id)
+        self.cursor.enter_input_mode()
+        self.assertIsNone(self.cursor.move_to_next_heading())
+        self.assertIsNone(self.cursor.move_to_previous_heading())
+
+    def test_empty_session_heading_nav_is_safe(self) -> None:
+        bus = EventBus()
+        empty = Session.new()
+        cursor = NotebookCursor(empty, bus)
+        self.assertIsNone(cursor.move_to_next_heading())
+        self.assertIsNone(cursor.move_to_previous_heading())
+
+    def test_list_headings_returns_outline(self) -> None:
+        toc = self.cursor.list_headings()
+        self.assertEqual(
+            [(i, level, title) for i, level, title, _ in toc],
+            [(0, 1, "Intro"), (2, 2, "Setup"), (4, 1, "Runs")],
+        )
+        # cell_ids line up with the session's actual cells.
+        for i, _, _, cell_id in toc:
+            self.assertEqual(cell_id, self.session.cells[i].cell_id)
+
+
+class HeadingCreationTests(unittest.TestCase):
+    """new_heading_cell adds a landmark without entering INPUT mode."""
+
+    def setUp(self) -> None:
+        self.bus = EventBus()
+        self.session = Session.new()
+        self.cursor = NotebookCursor(self.session, self.bus)
+
+    def test_new_heading_cell_appends_and_stays_in_notebook(self) -> None:
+        cell = self.cursor.new_heading_cell(2, "Setup")
+        self.assertEqual(cell.kind, CellKind.HEADING)
+        self.assertEqual(self.cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertEqual(self.cursor.focus.cell_id, cell.cell_id)
+        self.assertEqual(self.session.cells[-1].cell_id, cell.cell_id)
+
+    def test_new_heading_cell_publishes_cell_created(self) -> None:
+        created: list[Event] = []
+        self.bus.subscribe(EventType.CELL_CREATED, created.append)
+        cell = self.cursor.new_heading_cell(1, "Intro")
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0].payload["cell_id"], cell.cell_id)
+
+    def test_enter_input_mode_on_heading_is_noop(self) -> None:
+        heading = self.cursor.new_heading_cell(1, "Intro")
+        result = self.cursor.enter_input_mode()
+        self.assertIsNone(result)
+        self.assertEqual(self.cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertEqual(self.cursor.focus.cell_id, heading.cell_id)
+
+    def test_duplicate_of_heading_cell_is_also_a_heading(self) -> None:
+        self.cursor.new_heading_cell(2, "Setup")
+        dup = self.cursor.duplicate_focused_cell()
+        assert dup is not None
+        self.assertEqual(dup.kind, CellKind.HEADING)
+        self.assertEqual(dup.heading_level, 2)
+        self.assertEqual(dup.heading_title, "Setup")
 
 
 if __name__ == "__main__":

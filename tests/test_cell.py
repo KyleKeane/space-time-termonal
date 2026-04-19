@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 import unittest
 
-from asat.cell import Cell, CellStatus
+from asat.cell import Cell, CellKind, CellStatus
 
 
 class CellFactoryTests(unittest.TestCase):
@@ -132,6 +132,109 @@ class CellSnapshotTests(unittest.TestCase):
         snap = cell.snapshot()
         cell.metadata["k"] = "mutated"
         self.assertEqual(snap.metadata, {"k": "v"})
+
+
+class CellKindDefaultsTests(unittest.TestCase):
+    """A Cell.new() result is a plain COMMAND cell."""
+
+    def test_default_kind_is_command(self) -> None:
+        cell = Cell.new("echo hi")
+        self.assertEqual(cell.kind, CellKind.COMMAND)
+        self.assertTrue(cell.is_executable)
+        self.assertFalse(cell.is_heading)
+        self.assertIsNone(cell.heading_level)
+        self.assertIsNone(cell.heading_title)
+
+
+class CellHeadingFactoryTests(unittest.TestCase):
+    """Cell.new_heading produces structurally valid landmarks."""
+
+    def test_new_heading_sets_kind_and_fields(self) -> None:
+        cell = Cell.new_heading(2, "Setup")
+        self.assertEqual(cell.kind, CellKind.HEADING)
+        self.assertTrue(cell.is_heading)
+        self.assertFalse(cell.is_executable)
+        self.assertEqual(cell.heading_level, 2)
+        self.assertEqual(cell.heading_title, "Setup")
+        self.assertEqual(cell.command, "")
+        # Headings are "always complete"; they carry no pending work.
+        self.assertEqual(cell.status, CellStatus.COMPLETED)
+
+    def test_new_heading_rejects_out_of_range_level(self) -> None:
+        with self.assertRaises(ValueError):
+            Cell.new_heading(0, "x")
+        with self.assertRaises(ValueError):
+            Cell.new_heading(7, "x")
+
+    def test_new_heading_rejects_blank_title(self) -> None:
+        with self.assertRaises(ValueError):
+            Cell.new_heading(1, "")
+        with self.assertRaises(ValueError):
+            Cell.new_heading(1, "   ")
+
+    def test_heading_cells_are_not_executable_and_refuse_exec_mutations(self) -> None:
+        cell = Cell.new_heading(1, "Intro")
+        with self.assertRaises(ValueError):
+            cell.mark_running()
+        with self.assertRaises(ValueError):
+            cell.mark_completed("", "", 0)
+        with self.assertRaises(ValueError):
+            cell.mark_cancelled()
+        with self.assertRaises(ValueError):
+            cell.update_command("echo")
+
+    def test_update_heading_edits_level_and_title(self) -> None:
+        cell = Cell.new_heading(1, "Old")
+        cell.update_heading(3, "New Title")
+        self.assertEqual(cell.heading_level, 3)
+        self.assertEqual(cell.heading_title, "New Title")
+
+    def test_update_heading_refuses_on_command_cell(self) -> None:
+        cell = Cell.new("echo")
+        with self.assertRaises(ValueError):
+            cell.update_heading(1, "nope")
+
+
+class CellKindSerializationTests(unittest.TestCase):
+    """Heading cells round-trip through to_dict/from_dict."""
+
+    def test_heading_round_trip(self) -> None:
+        cell = Cell.new_heading(4, "Runs")
+        restored = Cell.from_dict(cell.to_dict())
+        self.assertEqual(restored.kind, CellKind.HEADING)
+        self.assertEqual(restored.heading_level, 4)
+        self.assertEqual(restored.heading_title, "Runs")
+        self.assertEqual(restored.cell_id, cell.cell_id)
+
+    def test_command_cell_round_trip_preserves_kind(self) -> None:
+        cell = Cell.new("ls")
+        data = cell.to_dict()
+        self.assertEqual(data["kind"], "command")
+        restored = Cell.from_dict(data)
+        self.assertEqual(restored.kind, CellKind.COMMAND)
+
+    def test_legacy_dict_without_kind_defaults_to_command(self) -> None:
+        # Older session JSON (pre-F61) has no `kind` field. It must
+        # still load cleanly as a COMMAND cell.
+        cell = Cell.new("ls")
+        data = cell.to_dict()
+        data.pop("kind", None)
+        data.pop("heading_level", None)
+        data.pop("heading_title", None)
+        restored = Cell.from_dict(data)
+        self.assertEqual(restored.kind, CellKind.COMMAND)
+        self.assertIsNone(restored.heading_level)
+        self.assertIsNone(restored.heading_title)
+
+
+class CellSnapshotKindTests(unittest.TestCase):
+
+    def test_heading_snapshot_preserves_kind(self) -> None:
+        cell = Cell.new_heading(2, "Setup")
+        snap = cell.snapshot()
+        self.assertEqual(snap.kind, CellKind.HEADING)
+        self.assertEqual(snap.heading_level, 2)
+        self.assertEqual(snap.heading_title, "Setup")
 
 
 if __name__ == "__main__":
