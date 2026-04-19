@@ -2593,6 +2593,205 @@ pipeline. `say_template` values follow the conventions in
 
 ---
 
+## F57 — Scenario assertion DSL (replay as regression test)
+
+**Depends on F56.**
+
+**Gap.** F56 lets a user record a workflow and replay it
+verbatim, but the replay engine has no way to check that the
+*outcomes* are the same as they were at record time. Today,
+`tests/test_smoke_scenarios.py` is the only file that exercises
+end-to-end keystroke → event → assertion chains, and every
+assertion is hand-written Python. If the author of a future PR
+changes the order in which `COMMAND_STARTED` and `OUTPUT_CHUNK`
+fire, they either know to hand-write a new test or the smoke
+scenario goes stale silently. Worse, a real user who recorded
+"this session worked yesterday; it does not today" cannot
+replay the recording as a test — they can only replay it and
+see whether the audio sounds the same.
+
+**Where it surfaces.** Three concrete pain points:
+
+1. **SMOKE_TEST.md drift.** The doc describes 9 acts. The
+   Python test file mirrors them. Both drift independently —
+   the pre-test accuracy pass in PR #54 fixed six mismatches
+   that had accumulated over six PRs. An asserting macro
+   replaced by a single fixture file collapses the drift to
+   one source of truth.
+2. **Reproducing user bugs.** A blind SRE who notices "after
+   `:state` in OUTPUT mode, the narration now says `line 3`
+   when it used to say `line 4`" has no low-effort way to hand
+   that observation to a maintainer. With F57 they file
+   *"here is a 20-step macro; step 14's expected `focus.line`
+   payload is `4`; today I get `3`"*.
+3. **Maintainer confidence.** A contributor touching the
+   router can replay the shipped smoke macro locally and get
+   "pass / fail at step N" feedback, not a wall of pytest
+   tracebacks.
+
+**Sketch.** Extend the F56 file format with a single new step
+kind — `expect` — and a tiny scenario harness that wraps the
+F56 replayer so tests and `:play --assert` share one engine.
+
+### Step kind: `expect`
+
+```
+{"step": 14, "kind": "expect", "event_type": "output.line.focused", "where": "next", "match": {"line_number": 4}}
+```
+
+Fields:
+
+- `event_type` — one of `EventType.value`. Required.
+- `where` — `next` (the next event of this type after the prior
+  step fires), `any` (anywhere in the window between this
+  `expect` and the next), or `last` (the most recent instance).
+  Default `next`. Three values only; resist the urge to add
+  more until a real use case demands it.
+- `match` — an object whose keys are payload field paths
+  (dotted), whose values are either plain values (equality) or
+  the special strings `"<ANY>"` (field must exist, any value),
+  `"<ABSENT>"` (field must not exist), `"<NONEMPTY>"` (string
+  or list must be truthy). Equality matching is strict (`0` is
+  not `False`, `"1"` is not `1`).
+- `timeout_ms` — how long to wait for the event. Default
+  inherits the macro's `step_interval_ms`. Rare override for
+  genuinely slow steps.
+
+Failure mode: the replayer publishes
+`MACRO_STEP_ASSERTION_FAILED` with `{step_index, expected,
+observed}` and (by default) aborts the macro. A `continue_on_fail`
+flag in the envelope flips this to "log and keep going" —
+useful for the SRE use case where you want the full list of
+discrepancies, not just the first.
+
+### Scenario harness (`asat/macros/scenario.py`)
+
+Extract the fixture already in
+`tests/test_smoke_scenarios.py::_ScenarioFixture` into a
+shared helper so both unittest code and `:play --assert` share
+one implementation. Public API:
+
+```python
+class ScenarioHarness:
+    def __init__(self, app: Application) -> None: ...
+    def run(self, macro: Macro) -> ScenarioResult: ...
+
+@dataclass(frozen=True)
+class ScenarioResult:
+    passed: bool
+    step_count: int
+    failures: tuple[AssertionFailure, ...]
+    elapsed_ms: int
+```
+
+`ScenarioResult.failures` is a tuple of structured failures so
+a test can `self.assertEqual(result.failures, ())` for a clean
+pass-or-fail assertion. A CLI caller can pretty-print each
+failure with step index and the diff between expected and
+observed.
+
+### CLI: `:play --assert`
+
+Add an optional `--assert` argument to `:play <name>`. Without
+it, `:play` is the F56 verbatim replay. With it, the replayer
+enforces every `expect` step and narrates per-step pass/fail.
+The argument threads through the meta-command parser as a
+keyword (`{"assert": True}`) — resist introducing a general
+flag-parser until a second flag appears.
+
+### Smoke macro fixture
+
+Once F57 lands, replace `tests/test_smoke_scenarios.py` with:
+
+- `tests/fixtures/macros/smoke.asatmacro.jsonl` — the 9-act
+  walkthrough recorded once and checked in, with `expect`
+  steps between every keystroke pair.
+- `tests/test_smoke_scenarios.py` (rewritten, ~50 lines) —
+  loads the fixture, runs it through `ScenarioHarness`,
+  asserts `passed == True`.
+
+Keep the old class-per-act unittest hierarchy available behind
+`tests/legacy_test_smoke_scenarios.py` for one release so
+bisecting across the transition stays possible, then delete.
+
+### Drift guard
+
+`tests/test_macro_fixtures.py` enumerates every `.asatmacro.jsonl`
+under `tests/fixtures/macros/` and replays it. A new fixture
+dropped into the directory is automatically picked up — no
+Python test file needs editing to cover a new scenario. This
+is the payoff: bug reports that include a macro file become
+drop-in regression tests.
+
+### Stretch goal: generate SMOKE_TEST.md from the macro
+
+A small `scripts/regen_smoke_doc.py` walks the smoke macro and
+emits the Markdown walkthrough currently hand-maintained in
+`docs/SMOKE_TEST.md`. Step kinds map to sentence templates:
+`text` → "Type `<text>`"; `action` → "Press <keybinding for
+<action>>"; `submit` → "Press Enter"; `expect` → "Expected: …".
+Doc and fixture can no longer drift. Cross-reference in
+DEVELOPER_GUIDE.md: "to change the smoke walkthrough, edit the
+macro fixture, then regenerate the doc".
+
+### Events
+
+- `MACRO_STEP_ASSERTION_FAILED` — `{step_index, event_type,
+  expected, observed}`
+- `MACRO_ASSERTION_PASSED` — `{step_index}` (optional;
+  `announce_steps` gates audio narration)
+
+Both bind to default-bank narrations: failed → alert voice,
+overhead + right spatial hint; passed → soft tick, centre.
+
+### Tests (`tests/test_macros.py`, extending F56's file)
+
+- `test_expect_next_matches_strict_equality`
+- `test_expect_absent_field_match`
+- `test_expect_any_field_match`
+- `test_expect_fails_on_mismatch_and_aborts_by_default`
+- `test_expect_continue_on_fail_collects_all_failures`
+- `test_scenario_harness_returns_step_count_and_elapsed`
+- `test_play_assert_narrates_per_step_outcomes`
+- `test_smoke_macro_fixture_passes_end_to_end` (lives in
+  `tests/test_macro_fixtures.py`; becomes the primary smoke
+  test once F57 ships)
+
+### Docs touch points
+
+- `docs/DEVELOPER_GUIDE.md` — "Writing regression tests as
+  macros" section explaining the drop-a-macro-into-fixtures
+  workflow.
+- `docs/USER_MANUAL.md` — one paragraph under Macros on
+  `:play --assert` and why a user would use it.
+- `docs/CHEAT_SHEET.md` — `--assert` on the `:play` row.
+- `docs/EVENTS.md` — two new rows.
+- `docs/SMOKE_TEST.md` — header note pointing at the fixture
+  as the source of truth (even before auto-generation lands).
+
+### Determinism
+
+`expect` steps are evaluated against the in-process event bus,
+not against timing. A slow machine adds latency between steps
+but never changes the sequence of events observed, so the
+same fixture passes on a laptop and on CI.
+
+### Design tradeoffs deliberately rejected
+
+- **No regex in `match`.** Keeps the format
+  copy-paste-debuggable. If a user needs fuzzy matching, they
+  hand-edit a single `match` into a `"<ANY>"` marker.
+- **No negative assertions (`expect.not`).** The `continue_on_fail`
+  mode plus a post-replay check of the event log covers the
+  rare "this event must not fire" case without adding a step
+  kind.
+- **No cross-step variables yet.** F58 introduces `{{var}}`
+  templating, and only then do `expect` matches benefit from
+  variable substitution. F57 deliberately ships first with
+  literal-only `match` so the harness stays small.
+
+---
+
 ## How to add an entry
 
 Append a section using the template:
