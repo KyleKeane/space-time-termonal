@@ -1854,5 +1854,54 @@ class ParseHeadingArgumentTests(unittest.TestCase):
         self.assertEqual(_parse_heading_argument("H1 Intro"), (None, None))
 
 
+class BindingsMetaCommandTests(unittest.TestCase):
+    """`:bindings` (and its filters) publish HELP_REQUESTED rows."""
+
+    def _submit_meta(self, router: InputRouter, line: str) -> None:
+        router.handle_key(ENTER)  # NOTEBOOK -> INPUT
+        for character in line:
+            router.handle_key(Key.printable(character))
+        router.handle_key(ENTER)
+
+    def test_bindings_lists_every_mode(self) -> None:
+        bus, _, _, router, _ = _build([""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":bindings")
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertEqual(len(helps), 1)
+        text = "\n".join(helps[0].payload["lines"])
+        self.assertIn("NOTEBOOK", text)
+        self.assertIn("INPUT", text)
+        self.assertIn("OUTPUT", text)
+        self.assertIn("SETTINGS", text)
+        self.assertIn("Ctrl+N", text)
+        self.assertIn("new_cell", text)
+
+    def test_bindings_filters_by_mode(self) -> None:
+        bus, _, _, router, _ = _build([""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":bindings notebook")
+        text = "\n".join(recorder.types_of(EventType.HELP_REQUESTED)[0].payload["lines"])
+        self.assertIn("NOTEBOOK", text)
+        # INPUT-mode rows should NOT appear under a notebook-only filter.
+        self.assertNotIn("INPUT:", text)
+
+    def test_bindings_filters_by_key_name(self) -> None:
+        bus, _, _, router, _ = _build([""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":bindings up")
+        text = "\n".join(recorder.types_of(EventType.HELP_REQUESTED)[0].payload["lines"])
+        # Up appears in NOTEBOOK + INPUT + OUTPUT + SETTINGS.
+        self.assertIn("Up", text)
+        self.assertNotIn("Backspace", text)
+
+    def test_bindings_unknown_filter_reports_no_match(self) -> None:
+        bus, _, _, router, _ = _build([""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":bindings xyznope")
+        text = "\n".join(recorder.types_of(EventType.HELP_REQUESTED)[0].payload["lines"])
+        self.assertIn("No bindings match", text)
+
+
 if __name__ == "__main__":
     unittest.main()

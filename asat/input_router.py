@@ -29,6 +29,7 @@ import difflib
 import functools
 import os
 import re
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 from asat import keys as kc
@@ -243,6 +244,7 @@ META_COMMANDS: tuple[str, ...] = (
     "workspace",
     "list-notebooks",
     "new-notebook",
+    "bindings",
 )
 
 # "Ambient" meta-commands do their job without taking focus away from
@@ -265,6 +267,7 @@ AMBIENT_META_COMMANDS: frozenset[str] = frozenset(
         "workspace",
         "list-notebooks",
         "new-notebook",
+        "bindings",
     }
 )
 
@@ -291,7 +294,7 @@ HELP_LINES: tuple[str, ...] = (
     "           Ctrl+Z undo, Ctrl+Y redo edits in the order you made them.",
     "           Ctrl+R resets to defaults at cursor scope (Enter confirms, Escape cancels).",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
-    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :state, :commands, :reset, :welcome, :repeat, :heading, :toc, :workspace, :list-notebooks, :new-notebook.",
+    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :state, :commands, :reset, :welcome, :repeat, :heading, :toc, :workspace, :list-notebooks, :new-notebook, :bindings.",
     "           `:help topics` lists focused tours; `:help <topic>` narrates one (navigation, cells, settings, audio, search, meta).",
     "           `:welcome` replays the first-run tour; `:repeat` (or Ctrl+R in notebook/input) re-speaks the last narration.",
     "           Meta-commands are case-insensitive and accept a trailing argument.",
@@ -619,6 +622,8 @@ class InputRouter:
             self._handle_meta_heading(argument)
         elif command == "toc":
             self._publish_toc()
+        elif command == "bindings":
+            self._publish_bindings(argument)
         # `repeat`, `save`, `quit`, `welcome` are handled by the
         # Application via the ACTION_INVOKED payload's `meta_command`
         # key — no router-side dispatch needed here.
@@ -646,6 +651,61 @@ class InputRouter:
             )
             return
         self._cursor.new_heading_cell(level, title)
+
+    def _publish_bindings(self, argument: str) -> None:
+        """Surface the keybinding report via HELP_REQUESTED (F64).
+
+        `:bindings` lists every binding in the active map, grouped
+        by mode. `:bindings <mode>` filters to one mode (NOTEBOOK,
+        INPUT, OUTPUT, SETTINGS — case-insensitive).
+        `:bindings <key>` filters to bindings whose primary key
+        matches (case-insensitive `Key.name`, e.g. `up`, `enter`,
+        `]`). The two filters can combine: `:bindings notebook up`
+        narrates only the NOTEBOOK-mode `Up` row. An empty result
+        is reported explicitly so the user is not left in silence.
+        """
+        mode_filter, key_filter = _parse_bindings_filter(argument, self._bindings)
+        entries = binding_report(self._bindings)
+        if mode_filter is not None:
+            entries = tuple(e for e in entries if e.mode is mode_filter)
+        if key_filter is not None:
+            entries = tuple(e for e in entries if e.key_name == key_filter)
+        if not entries:
+            scope = []
+            if mode_filter is not None:
+                scope.append(mode_filter.value)
+            if key_filter is not None:
+                scope.append(repr(key_filter))
+            scope_label = " ".join(scope) if scope else ""
+            lines = [
+                f"No bindings match {scope_label}." if scope_label
+                else "No bindings configured.",
+                "Type `:bindings` (no argument) to list every binding.",
+            ]
+        else:
+            label_parts = []
+            if mode_filter is not None:
+                label_parts.append(mode_filter.value.upper())
+            if key_filter is not None:
+                label_parts.append(repr(key_filter))
+            heading = (
+                f"Bindings ({' '.join(label_parts)}):"
+                if label_parts
+                else "Bindings:"
+            )
+            lines = [heading]
+            current_mode: Optional[FocusMode] = None
+            for entry in entries:
+                if entry.mode is not current_mode:
+                    lines.append(f"  {entry.mode.value.upper()}:")
+                    current_mode = entry.mode
+                lines.append(f"    {entry.key_spec:<14} → {entry.action}")
+        publish_event(
+            self._bus,
+            EventType.HELP_REQUESTED,
+            {"lines": lines},
+            source=self.SOURCE,
+        )
 
     def _publish_toc(self) -> None:
         """Announce the notebook's heading outline via HELP_REQUESTED."""
@@ -1332,6 +1392,192 @@ def _parse_heading_argument(argument: str) -> tuple[Optional[int], Optional[str]
     if not title:
         return None, None
     return level, title
+
+
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class BindingEntry:
+    """One row of the keybinding introspection report (F64).
+
+    `mode` is the FocusMode the binding fires in. `key_spec` is the
+    human-readable key as the user would type it (`"Ctrl+N"`,
+    `"Up"`, `"]"`). `key_name` is the canonical lowercase primary
+    key name (`"n"`, `"up"`, `"]"`) so the `:bindings <key>` filter
+    can match without re-parsing `key_spec`. `modifiers` is the
+    immutable set of held modifiers; `action` is the handler name
+    `_action_handler` resolves.
+    """
+
+    mode: FocusMode
+    key_spec: str
+    key_name: str
+    modifiers: frozenset[Modifier]
+    action: str
+
+
+# Render order matches the user's mental model — Ctrl on the outside,
+# then Alt, then Shift, then Meta — and keeps the textual form stable
+# across hash randomisation of the underlying frozenset.
+_MODIFIER_RENDER_ORDER: tuple[Modifier, ...] = (
+    Modifier.CTRL,
+    Modifier.ALT,
+    Modifier.SHIFT,
+    Modifier.META,
+)
+
+# Canonical capitalised renderings for the special-key vocabulary in
+# `asat.keys`. Anything not listed falls back to title-cased
+# underscore-split (`"page_up"` → `"Page Up"`).
+_SPECIAL_KEY_LABELS: dict[str, str] = {
+    "up": "Up",
+    "down": "Down",
+    "left": "Left",
+    "right": "Right",
+    "home": "Home",
+    "end": "End",
+    "page_up": "Page Up",
+    "page_down": "Page Down",
+    "enter": "Enter",
+    "escape": "Escape",
+    "tab": "Tab",
+    "backspace": "Backspace",
+    "delete": "Delete",
+}
+
+
+def format_key(key: Key) -> str:
+    """Return the human-readable label for a Key (`"Ctrl+N"`, `"Up"`, `"]"`).
+
+    Single-character names render as the character itself so a binding
+    on `]` or `,` is reproducible by typing it. Special keys use a
+    fixed lookup table for the common arrow / motion keys, with a
+    title-cased fallback (`"f7"` → `"F7"`, `"page_up"` → `"Page Up"`).
+    Modifiers prepend in the canonical order regardless of the
+    underlying frozenset's iteration order, so the output is stable
+    for tests and for the generated `docs/BINDINGS.md`.
+    """
+    name = key.name
+    is_letter = len(name) == 1 and name.isalpha()
+    has_modifier_prefix = bool(key.modifiers)
+    if len(name) == 1 and name not in _SPECIAL_KEY_LABELS:
+        # Letters with a modifier render uppercase to match the
+        # `Ctrl+N` / `Ctrl+S` convention used in HELP_LINES; bare
+        # printables (`d`, `]`, `1`) keep the user's typed form.
+        primary = name.upper() if is_letter and has_modifier_prefix else name
+    elif name in _SPECIAL_KEY_LABELS:
+        primary = _SPECIAL_KEY_LABELS[name]
+    elif name.startswith("f") and name[1:].isdigit():
+        primary = name.upper()
+    else:
+        primary = " ".join(part.capitalize() for part in name.split("_"))
+    parts = [
+        modifier.value.capitalize()
+        for modifier in _MODIFIER_RENDER_ORDER
+        if modifier in key.modifiers
+    ]
+    parts.append(primary)
+    return "+".join(parts)
+
+
+def binding_report(bindings: BindingMap) -> tuple[BindingEntry, ...]:
+    """Flatten a BindingMap into a sorted list of BindingEntry rows.
+
+    Sort order: mode (NOTEBOOK → INPUT → OUTPUT → SETTINGS, matching
+    the FocusMode enum's declaration order), then by formatted
+    key_spec. Stable sorting means the generated `docs/BINDINGS.md`
+    diff stays minimal when a single binding is added or removed.
+    """
+    mode_order = {mode: index for index, mode in enumerate(FocusMode)}
+    entries: list[BindingEntry] = []
+    for mode, key_map in bindings.items():
+        for key, action in key_map.items():
+            entries.append(
+                BindingEntry(
+                    mode=mode,
+                    key_spec=format_key(key),
+                    key_name=key.name.lower(),
+                    modifiers=key.modifiers,
+                    action=action,
+                )
+            )
+    entries.sort(key=lambda entry: (mode_order.get(entry.mode, 99), entry.key_spec))
+    return tuple(entries)
+
+
+def format_bindings_markdown(bindings: BindingMap) -> str:
+    """Render a Markdown reference table for the supplied BindingMap.
+
+    Used by `asat/tools/dump_bindings.py` and by the
+    `test_bindings_doc_in_sync` gate test, so a binding added in
+    `default_bindings()` but not regenerated into `docs/BINDINGS.md`
+    fails CI the same way `test_every_meta_command_is_documented`
+    catches missing meta-command rows.
+    """
+    lines: list[str] = [
+        "# Keybindings reference",
+        "",
+        "Generated by `python -m asat.tools.dump_bindings`. Do NOT edit "
+        "by hand — regenerate after changing `default_bindings()` in "
+        "`asat/input_router.py`. The `test_bindings_doc_in_sync` gate "
+        "fails CI when this file drifts from the in-memory map.",
+        "",
+        "Each row is one binding. The `Action` column is the handler "
+        "name `InputRouter._action_handler` resolves; cross-reference "
+        "with `asat/input_router.py` for the underlying call chain.",
+        "",
+    ]
+    entries = binding_report(bindings)
+    by_mode: dict[FocusMode, list[BindingEntry]] = {}
+    for entry in entries:
+        by_mode.setdefault(entry.mode, []).append(entry)
+    for mode in FocusMode:
+        rows = by_mode.get(mode)
+        if not rows:
+            continue
+        lines.append(f"## {mode.value.upper()} mode")
+        lines.append("")
+        lines.append("| Keystroke | Action |")
+        lines.append("|-----------|--------|")
+        for entry in rows:
+            lines.append(f"| `{entry.key_spec}` | `{entry.action}` |")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _parse_bindings_filter(
+    argument: str, bindings: BindingMap
+) -> tuple[Optional[FocusMode], Optional[str]]:
+    """Parse `:bindings [mode] [key]` into a `(mode, key_name)` filter.
+
+    The argument is split on whitespace. Each token is matched first
+    against the FocusMode names, then against any binding's primary
+    key name (case-insensitive). Tokens that match neither are
+    silently passed through as a key-name filter so a typo just
+    yields no rows rather than a router-level error. Returns
+    `(None, None)` when ``argument`` is empty.
+    """
+    tokens = argument.strip().split()
+    if not tokens:
+        return None, None
+    mode: Optional[FocusMode] = None
+    key_name: Optional[str] = None
+    known_keys = {
+        key.name.lower()
+        for key_map in bindings.values()
+        for key in key_map.keys()
+    }
+    for token in tokens:
+        normalized = token.lower()
+        try:
+            mode = FocusMode(normalized)
+            continue
+        except ValueError:
+            pass
+        if normalized in known_keys or key_name is None:
+            key_name = normalized
+    return mode, key_name
 
 
 def _parse_reset_scope(argument: str) -> Optional[ResetScope]:
