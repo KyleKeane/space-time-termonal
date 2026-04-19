@@ -190,6 +190,59 @@ class EditSubModeTests(unittest.TestCase):
             controller.extend_edit("ab")
 
 
+class UndoRedoTests(unittest.TestCase):
+
+    def _parked_on_rate(self) -> SettingsController:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        controller.descend()
+        controller.descend()
+        # Move to "rate" (VOICE_FIELDS: id, engine, rate, ...)
+        controller.next()  # engine
+        controller.next()  # rate
+        controller.begin_edit()
+        for ch in "1.3":
+            controller.extend_edit(ch)
+        controller.commit_edit()
+        return controller
+
+    def test_undo_reverts_committed_edit(self) -> None:
+        controller = self._parked_on_rate()
+        self.assertAlmostEqual(controller.bank.voices[0].rate, 1.3)
+
+        ok = controller.undo()
+
+        self.assertTrue(ok)
+        self.assertAlmostEqual(controller.bank.voices[0].rate, 1.0)
+
+    def test_undo_is_noop_when_session_closed(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        self.assertFalse(controller.undo())
+
+    def test_undo_is_noop_while_composing_edit(self) -> None:
+        controller = self._parked_on_rate()
+        controller.begin_edit()
+        controller.extend_edit("2")
+
+        self.assertFalse(controller.undo())
+        # The buffer and edit sub-mode survive the ignored request.
+        self.assertTrue(controller.editing)
+        self.assertEqual(controller.edit_buffer, "2")
+
+    def test_redo_reapplies_undone_edit(self) -> None:
+        controller = self._parked_on_rate()
+        controller.undo()
+
+        ok = controller.redo()
+
+        self.assertTrue(ok)
+        self.assertAlmostEqual(controller.bank.voices[0].rate, 1.3)
+
+    def test_redo_is_noop_when_session_closed(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        self.assertFalse(controller.redo())
+
+
 class SaveTests(unittest.TestCase):
 
     def test_save_to_configured_path(self) -> None:

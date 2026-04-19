@@ -449,6 +449,60 @@ class SettingsModeDispatchTests(unittest.TestCase):
         router.handle_key(BACKSPACE)
         self.assertEqual(controller.edit_buffer, "sapi")
 
+    def test_ctrl_z_undoes_the_most_recent_settings_edit(self) -> None:
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(ENTER)
+        router.handle_key(ENTER)
+        router.handle_key(DOWN)  # engine
+        router.handle_key(Key.printable("e"))
+        for ch in "sapi":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)  # commit
+        self.assertEqual(controller.bank.voices[0].engine, "sapi")
+
+        router.handle_key(Key.combo("z", Modifier.CTRL))
+
+        self.assertEqual(controller.bank.voices[0].engine, "")
+
+    def test_ctrl_y_redoes_the_most_recently_undone_edit(self) -> None:
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(ENTER)
+        router.handle_key(ENTER)
+        router.handle_key(DOWN)
+        router.handle_key(Key.printable("e"))
+        for ch in "sapi":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        router.handle_key(Key.combo("z", Modifier.CTRL))
+        self.assertEqual(controller.bank.voices[0].engine, "")
+
+        router.handle_key(Key.combo("y", Modifier.CTRL))
+
+        self.assertEqual(controller.bank.voices[0].engine, "sapi")
+
+    def test_ctrl_z_while_editing_is_discarded(self) -> None:
+        """While composing a replacement, Ctrl+Z must not sneak in as an
+        undo; the edit buffer stays intact and nothing is reverted."""
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(ENTER)
+        router.handle_key(ENTER)
+        router.handle_key(DOWN)
+        router.handle_key(Key.printable("e"))
+        for ch in "sapi":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)  # commit first edit
+        router.handle_key(Key.printable("e"))
+        router.handle_key(Key.printable("x"))
+
+        router.handle_key(Key.combo("z", Modifier.CTRL))
+
+        self.assertTrue(controller.editing)
+        self.assertEqual(controller.edit_buffer, "x")
+        self.assertEqual(controller.bank.voices[0].engine, "sapi")
+
     def test_invalid_commit_surfaces_in_action_payload(self) -> None:
         bus, _, router, _ = _build_with_settings(["echo"])
         recorder = _Recorder(bus)

@@ -53,6 +53,22 @@ from asat.sound_bank import (
 SOURCE = "settings_editor"
 
 
+MAX_HISTORY = 64
+
+
+@dataclass(frozen=True)
+class _EditRecord:
+    """One undoable mutation, enough to both replay and reverse."""
+
+    section: "Section"
+    record_index: int
+    field: str
+    old_value: Any
+    new_value: Any
+    bank_before: "SoundBank"
+    bank_after: "SoundBank"
+
+
 class SettingsEditorError(ValueError):
     """Raised when a navigation or edit is not legal at the current state."""
 
@@ -119,7 +135,10 @@ class SettingsEditor:
         """Open an editor session over the given bank."""
         self._bus = bus
         self._bank = bank
+        self._saved_bank = bank
         self._state = EditorState()
+        self._undo_stack: list[_EditRecord] = []
+        self._redo_stack: list[_EditRecord] = []
         publish_event(
             bus,
             EventType.SETTINGS_OPENED,
@@ -217,8 +236,21 @@ class SettingsEditor:
         except SoundBankError as exc:
             raise SettingsEditorError(str(exc)) from exc
         old_value = getattr(old_record, field_name)
+        bank_before = self._bank
         self._bank = candidate
         self._state = replace(self._state, dirty=True)
+        self._push_undo(
+            _EditRecord(
+                section=self._state.section,
+                record_index=self._state.record_index,
+                field=field_name,
+                old_value=old_value,
+                new_value=parsed,
+                bank_before=bank_before,
+                bank_after=candidate,
+            )
+        )
+        self._redo_stack.clear()
         publish_event(
             self._bus,
             EventType.SETTINGS_VALUE_EDITED,
@@ -232,9 +264,122 @@ class SettingsEditor:
             source=SOURCE,
         )
 
+    @property
+    def can_undo(self) -> bool:
+        """True when there is at least one edit that could be reverted."""
+        return bool(self._undo_stack)
+
+    @property
+    def can_redo(self) -> bool:
+        """True when at least one undone edit could be re-applied."""
+        return bool(self._redo_stack)
+
+    def undo(self) -> bool:
+        """Revert the most recent edit and move it onto the redo stack.
+
+        Returns False when there is nothing to undo. Otherwise restores
+        the prior bank, refocuses the cursor on the edited field, and
+        re-publishes SETTINGS_VALUE_EDITED with old/new reversed so
+        subscribers (narration, logs) can react uniformly.
+        """
+        if not self._undo_stack:
+            return False
+        record = self._undo_stack.pop()
+        self._bank = record.bank_before
+        self._redo_stack.append(record)
+        self._apply_history_cursor(record)
+        self._state = replace(self._state, dirty=self._compute_dirty())
+        publish_event(
+            self._bus,
+            EventType.SETTINGS_VALUE_EDITED,
+            {
+                "section": record.section.value,
+                "record_index": record.record_index,
+                "field": record.field,
+                "old_value": _jsonable(record.new_value),
+                "new_value": _jsonable(record.old_value),
+            },
+            source=SOURCE,
+        )
+        self._publish_focus()
+        return True
+
+    def redo(self) -> bool:
+        """Re-apply the most recently undone edit.
+
+        Returns False when there is nothing to redo.
+        """
+        if not self._redo_stack:
+            return False
+        record = self._redo_stack.pop()
+        self._bank = record.bank_after
+        self._undo_stack.append(record)
+        self._apply_history_cursor(record)
+        self._state = replace(self._state, dirty=self._compute_dirty())
+        publish_event(
+            self._bus,
+            EventType.SETTINGS_VALUE_EDITED,
+            {
+                "section": record.section.value,
+                "record_index": record.record_index,
+                "field": record.field,
+                "old_value": _jsonable(record.old_value),
+                "new_value": _jsonable(record.new_value),
+            },
+            source=SOURCE,
+        )
+        self._publish_focus()
+        return True
+
+    def _push_undo(self, record: _EditRecord) -> None:
+        """Append record to the undo stack, dropping the oldest when bounded."""
+        self._undo_stack.append(record)
+        if len(self._undo_stack) > MAX_HISTORY:
+            # Drop from the oldest end; an older edit that rolls off
+            # simply can't be undone any more, but the rest of the
+            # stack still restores a coherent bank.
+            del self._undo_stack[0]
+
+    def _apply_history_cursor(self, record: _EditRecord) -> None:
+        """Park the cursor on the field the history step mutated.
+
+        Undo/redo implicitly "takes the user there" so the narration
+        and any visible focus cue reflect the change they just heard.
+        """
+        fields = self._fields_for(record.section)
+        try:
+            field_index = fields.index(record.field)
+        except ValueError:
+            field_index = 0
+        self._state = replace(
+            self._state,
+            level=Level.FIELD,
+            section=record.section,
+            record_index=record.record_index,
+            field_index=field_index,
+        )
+
+    def _compute_dirty(self) -> bool:
+        """True when the current bank differs from the last-saved baseline.
+
+        Undoing the only edit since the last save should clear dirty;
+        redoing past a saved point should reassert it. We compare by
+        identity because every mutation (edit, undo, redo) pins
+        `_bank` to one of the saved-baseline / undo-record references,
+        all of which are shared across the session.
+        """
+        return self._bank is not self._saved_bank
+
     def save(self, path: Path | str) -> None:
-        """Persist the current bank as JSON at path and clear the dirty flag."""
+        """Persist the current bank as JSON at path and clear the dirty flag.
+
+        The undo stack is preserved across saves so a user who realises
+        (post-save) they want to revert an earlier edit can still do
+        so. Subsequent `undo()` calls will re-mark the editor dirty
+        because the bank no longer matches the freshly-saved baseline.
+        """
         self._bank.save(path)
+        self._saved_bank = self._bank
         self._state = replace(self._state, dirty=False)
         publish_event(
             self._bus,

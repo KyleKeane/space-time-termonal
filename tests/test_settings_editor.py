@@ -259,6 +259,152 @@ class EditTests(unittest.TestCase):
         self.assertEqual(edited[0].payload["new_value"], "sapi")
 
 
+class UndoRedoTests(unittest.TestCase):
+
+    def _rate_editor(self) -> SettingsEditor:
+        editor = SettingsEditor(EventBus(), _bank())
+        editor.enter()
+        editor.enter()
+        # move to "rate" field
+        for _ in range(VOICE_FIELDS.index("rate")):
+            editor.next()
+        return editor
+
+    def test_fresh_editor_has_no_history(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank())
+        self.assertFalse(editor.can_undo)
+        self.assertFalse(editor.can_redo)
+
+    def test_undo_reverts_the_most_recent_edit(self) -> None:
+        editor = self._rate_editor()
+        editor.edit("1.3")
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.3)
+        self.assertTrue(editor.can_undo)
+        self.assertFalse(editor.can_redo)
+
+        self.assertTrue(editor.undo())
+
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.0)
+        self.assertFalse(editor.can_undo)
+        self.assertTrue(editor.can_redo)
+
+    def test_redo_reapplies_the_undone_edit(self) -> None:
+        editor = self._rate_editor()
+        editor.edit("1.3")
+        editor.undo()
+
+        self.assertTrue(editor.redo())
+
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.3)
+        self.assertTrue(editor.can_undo)
+        self.assertFalse(editor.can_redo)
+
+    def test_undo_empty_stack_returns_false(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank())
+        self.assertFalse(editor.undo())
+
+    def test_redo_empty_stack_returns_false(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank())
+        self.assertFalse(editor.redo())
+
+    def test_new_edit_clears_the_redo_stack(self) -> None:
+        editor = self._rate_editor()
+        editor.edit("1.3")
+        editor.undo()
+        self.assertTrue(editor.can_redo)
+
+        editor.edit("1.7")
+
+        self.assertFalse(editor.can_redo)
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.7)
+
+    def test_multiple_edits_unwind_in_reverse_order(self) -> None:
+        editor = self._rate_editor()
+        editor.edit("1.3")
+        editor.edit("1.5")
+        editor.edit("1.7")
+
+        editor.undo()
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.5)
+        editor.undo()
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.3)
+        editor.undo()
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.0)
+        self.assertFalse(editor.can_undo)
+
+    def test_undo_restores_bank_identity_so_dirty_flag_clears(self) -> None:
+        editor = self._rate_editor()
+        editor.edit("1.3")
+        self.assertTrue(editor.state.dirty)
+
+        editor.undo()
+
+        self.assertFalse(editor.state.dirty)
+
+    def test_undo_past_save_marks_editor_dirty_again(self) -> None:
+        editor = self._rate_editor()
+        editor.edit("1.3")
+        with tempfile.TemporaryDirectory() as tmp:
+            editor.save(Path(tmp) / "bank.json")
+            self.assertFalse(editor.state.dirty)
+
+            editor.undo()
+
+            self.assertTrue(editor.state.dirty)
+
+    def test_undo_publishes_value_edited_with_reversed_values(self) -> None:
+        bus = EventBus()
+        edited: list[Event] = []
+        bus.subscribe(EventType.SETTINGS_VALUE_EDITED, edited.append)
+        editor = SettingsEditor(bus, _bank())
+        editor.enter()
+        editor.enter()
+        for _ in range(VOICE_FIELDS.index("rate")):
+            editor.next()
+        editor.edit("1.3")
+        edited.clear()
+
+        editor.undo()
+
+        self.assertEqual(len(edited), 1)
+        self.assertAlmostEqual(edited[0].payload["old_value"], 1.3)
+        self.assertAlmostEqual(edited[0].payload["new_value"], 1.0)
+
+    def test_undo_parks_cursor_on_the_mutated_field(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank())
+        # Edit voices[0].rate via the helper, then navigate away entirely.
+        editor.enter()
+        editor.enter()
+        for _ in range(VOICE_FIELDS.index("rate")):
+            editor.next()
+        editor.edit("1.3")
+        editor.back()
+        editor.back()
+        editor.next()  # Section → sounds
+
+        editor.undo()
+
+        self.assertEqual(editor.state.level, Level.FIELD)
+        self.assertEqual(editor.state.section, Section.VOICES)
+        self.assertEqual(editor.state.record_index, 0)
+        self.assertEqual(editor.current_field_name(), "rate")
+
+    def test_history_is_bounded(self) -> None:
+        # The bounded stack drops the oldest record; editing more than
+        # MAX_HISTORY times should leave exactly MAX_HISTORY undos
+        # available rather than growing without limit.
+        from asat.settings_editor import MAX_HISTORY
+
+        editor = self._rate_editor()
+        for i in range(MAX_HISTORY + 5):
+            editor.edit(f"{1.0 + 0.01 * (i + 1):.3f}")
+
+        undone = 0
+        while editor.undo():
+            undone += 1
+        self.assertEqual(undone, MAX_HISTORY)
+
+
 class SaveTests(unittest.TestCase):
 
     def test_save_writes_file_and_clears_dirty(self) -> None:

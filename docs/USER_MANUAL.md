@@ -329,8 +329,18 @@ FIELD    the typed fields on that record
 | Right / Enter       | Descend (section → record → field).             |
 | Left / Escape       | Ascend (or close at top level).                 |
 | `e`                 | Begin editing the focused field.                |
+| Ctrl+Z              | Undo the most recent field edit.                |
+| Ctrl+Y              | Redo the most recently undone edit.             |
 | Ctrl+S              | Save the bank to disk.                          |
 | Ctrl+Q              | Close the editor.                               |
+
+Undo / redo stacks hold up to 64 edits and survive saves, so you
+can revert past a save if you realise the regression landed
+earlier. Pressing Ctrl+Z while composing a replacement (inside the
+edit sub-mode) is ignored so it can't silently discard your
+in-progress text. The cursor jumps to the field each history step
+mutated so the narrator re-reads the value — useful when you want
+to hear "what changed" in the moment.
 
 ### Editing a field
 
