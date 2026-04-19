@@ -105,6 +105,9 @@ def default_bindings() -> BindingMap:
         Right / Enter descend one level,
         Left ascends one level,
         `e` begins editing the focused field,
+        `/` opens the cross-section search composer (typed chars
+        narrow matches live, Enter commits, Escape restores the
+        pre-search cursor), `n` / `N` cycle through matches,
         Ctrl+S saves the bank, Ctrl+Q closes the editor,
         Escape ascends or (at the top level) closes.
     """
@@ -166,6 +169,9 @@ def default_bindings() -> BindingMap:
             kc.ENTER: "settings_descend",
             kc.ESCAPE: "settings_ascend",
             Key.printable("e"): "settings_begin_edit",
+            Key.printable("/"): "settings_search_begin",
+            Key.printable("n"): "settings_search_next",
+            Key.printable("N"): "settings_search_prev",
             Key.combo("s", Modifier.CTRL): "settings_save",
             Key.combo("q", Modifier.CTRL): "settings_close",
             Key.combo("z", Modifier.CTRL): "settings_undo",
@@ -218,6 +224,7 @@ HELP_LINES: tuple[str, ...] = (
     "OUTPUT:    Up/Down step lines, PageUp/PageDown page, Escape leaves.",
     "           / search (type query, Enter commits), n / N next / prev hit, g jump-to-line.",
     "SETTINGS:  Up/Down walk, Right/Enter descend, Left/Escape ascend, e edit, Ctrl+S save, Ctrl+Q close.",
+    "           / search (cross-section; Enter commits, Escape restores), n / N cycle matches.",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
     "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :commands.",
     "           Meta-commands are case-insensitive and accept a trailing argument.",
@@ -281,6 +288,8 @@ class InputRouter:
         mode = self._cursor.focus.mode
         if mode == FocusMode.SETTINGS and self._settings_active_editing():
             return self._dispatch_settings_edit_key(key)
+        if mode == FocusMode.SETTINGS and self._settings_active_searching():
+            return self._dispatch_settings_search_key(key)
         if mode == FocusMode.OUTPUT and self._output_composing():
             return self._dispatch_output_composer_key(key)
         mode_map = self._bindings.get(mode, {})
@@ -385,6 +394,44 @@ class InputRouter:
             self._settings_controller.extend_edit(key.char)
             self._publish_action("settings_edit_extend", key, {"char": key.char})
             return "settings_edit_extend"
+        return None
+
+    def _settings_active_searching(self) -> bool:
+        """Return True when the settings controller is composing a search."""
+        return (
+            self._settings_controller is not None
+            and self._settings_controller.is_open
+            and self._settings_controller.searching
+        )
+
+    def _dispatch_settings_search_key(self, key: Key) -> Optional[str]:
+        """Route keys while the user is typing a `/` search query.
+
+        Printable characters (including `/`) extend the query so a
+        user can search for a literal slash; Backspace trims; Enter
+        commits and leaves the cursor on the current match; Escape
+        cancels and restores the pre-search cursor. Every other key
+        is swallowed so arrow motions don't silently dismiss the
+        overlay.
+        """
+        assert self._settings_controller is not None
+        if key == kc.ENTER:
+            self._invoke("settings_search_commit", key)
+            return "settings_search_commit"
+        if key == kc.ESCAPE:
+            self._invoke("settings_search_cancel", key)
+            return "settings_search_cancel"
+        if key == kc.BACKSPACE:
+            self._invoke("settings_search_backspace", key)
+            return "settings_search_backspace"
+        if key.is_printable() and key.char is not None:
+            self._settings_controller.extend_search(key.char)
+            self._publish_action(
+                "settings_search_extend",
+                key,
+                {"char": key.char, "query": self._settings_controller.search_buffer},
+            )
+            return "settings_search_extend"
         return None
 
     def _invoke(self, action: str, key: Key) -> None:
@@ -590,6 +637,49 @@ class InputRouter:
         if self._settings_controller is not None:
             self._settings_controller.redo()
 
+    def _settings_search_begin(self) -> Optional[dict[str, object]]:
+        """Open the `/` search overlay; report whether it started."""
+        if self._settings_controller is None:
+            return None
+        started = self._settings_controller.begin_search()
+        return {"opened": started}
+
+    def _settings_search_commit(self) -> Optional[dict[str, object]]:
+        """Apply the in-progress search; surface the query + match count."""
+        if self._settings_controller is None:
+            return None
+        editor = self._settings_controller.editor
+        query = editor.search_buffer
+        match_count = editor.search_match_count
+        self._settings_controller.commit_search()
+        return {"query": query, "match_count": match_count}
+
+    def _settings_search_cancel(self) -> None:
+        """Discard the in-progress search and restore the cursor."""
+        if self._settings_controller is not None:
+            self._settings_controller.cancel_search()
+
+    def _settings_search_backspace(self) -> None:
+        """Trim the last character from the search buffer."""
+        if self._settings_controller is not None:
+            self._settings_controller.backspace_search()
+
+    def _settings_search_next(self) -> Optional[dict[str, object]]:
+        """Cycle to the next match; no-op without prior results."""
+        if self._settings_controller is None:
+            return None
+        editor = self._settings_controller.editor
+        matched = editor.next_search_match()
+        return {"matched": matched}
+
+    def _settings_search_prev(self) -> Optional[dict[str, object]]:
+        """Cycle to the previous match; no-op without prior results."""
+        if self._settings_controller is None:
+            return None
+        editor = self._settings_controller.editor
+        matched = editor.prev_search_match()
+        return {"matched": matched}
+
     def _open_action_menu(self) -> Optional[dict[str, object]]:
         """Open the contextual actions menu against the current focus.
 
@@ -707,6 +797,13 @@ class InputRouter:
             "settings_edit_backspace": _void(self._settings_edit_backspace),
             "settings_undo": _void(self._settings_undo),
             "settings_redo": _void(self._settings_redo),
+            "settings_search_begin": self._settings_search_begin,
+            "settings_search_commit": self._settings_search_commit,
+            "settings_search_cancel": _void(self._settings_search_cancel),
+            "settings_search_backspace": _void(self._settings_search_backspace),
+            "settings_search_extend": lambda: None,
+            "settings_search_next": self._settings_search_next,
+            "settings_search_prev": self._settings_search_prev,
             "open_action_menu": self._open_action_menu,
             "menu_prev": _void(self._menu_prev),
             "menu_next": _void(self._menu_next),

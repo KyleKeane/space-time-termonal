@@ -77,6 +77,9 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.SETTINGS_FOCUSED,
     EventType.SETTINGS_VALUE_EDITED,
     EventType.SETTINGS_SAVED,
+    EventType.SETTINGS_SEARCH_OPENED,
+    EventType.SETTINGS_SEARCH_UPDATED,
+    EventType.SETTINGS_SEARCH_CLOSED,
     EventType.HELP_REQUESTED,
     EventType.PROMPT_REFRESH,
     EventType.FIRST_RUN_DETECTED,
@@ -498,6 +501,34 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             sound_id="settings_save",
             say_template="settings saved",
             priority=220,
+        ),
+
+        # F21b search overlay — three short cues so a blind user hears
+        # the composer open, the match count change on each keystroke,
+        # and the composer close. The record-level jump that follows a
+        # match is narrated by the existing `settings_focused` binding.
+        EventBinding(
+            id="settings_search_opened",
+            event_type=EventType.SETTINGS_SEARCH_OPENED.value,
+            voice_id="system",
+            sound_id="nav_blip",
+            say_template="search",
+            priority=200,
+        ),
+        EventBinding(
+            id="settings_search_updated",
+            event_type=EventType.SETTINGS_SEARCH_UPDATED.value,
+            voice_id="system",
+            say_template="{match_count} matches",
+            priority=150,
+        ),
+        EventBinding(
+            id="settings_search_closed",
+            event_type=EventType.SETTINGS_SEARCH_CLOSED.value,
+            voice_id="system",
+            sound_id="soft_tick",
+            say_template="search closed",
+            priority=150,
         ),
 
         # Help: speak a short summary so :help is useful without a

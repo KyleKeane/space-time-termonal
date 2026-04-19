@@ -329,6 +329,8 @@ FIELD    the typed fields on that record
 | Right / Enter       | Descend (section → record → field).             |
 | Left / Escape       | Ascend (or close at top level).                 |
 | `e`                 | Begin editing the focused field.                |
+| `/`                 | Open the cross-section search overlay.          |
+| `n` / `N`           | Next / previous search match after commit.      |
 | Ctrl+Z              | Undo the most recent field edit.                |
 | Ctrl+Y              | Redo the most recently undone edit.             |
 | Ctrl+S              | Save the bank to disk.                          |
@@ -372,6 +374,28 @@ A rejected edit keeps your old value and the narrator reads the
 error. A successful edit plays the `settings_chime` and immediately
 takes effect — you don't need to restart. Ctrl+S writes the whole
 bank to disk so the change survives a restart.
+
+### Searching the bank
+
+Press `/` at any level to open a cross-section search overlay. The
+overlay is a sub-mode modelled on the output-cursor search (F16):
+while it is active, printable characters extend the query buffer,
+Backspace trims it, Enter commits, and Escape restores the cursor
+to exactly where you were before.
+
+The query runs a case-insensitive substring match across every
+section at once:
+
+* **Voices** and **Sounds** match on their `id`.
+* **Bindings** match on `id`, `event_type`, `voice_id`, or
+  `sound_id` — enough to find "every binding that uses the narrator
+  voice" or "every routing for `command.completed`".
+
+The first hit is announced and the cursor parks at **record** level
+so you can descend with Right/Enter to the fields if you want to
+edit. After committing, `n` and `N` cycle forward and backward
+through the remaining matches (wrapping at the ends). A zero-match
+query still narrates the count so you know the overlay heard you.
 
 ### What the fields mean
 
@@ -442,6 +466,9 @@ Every key you need, one table.
 | SETTINGS   | Right / Enter     | Descend                               |
 | SETTINGS   | Left / Escape     | Ascend / close                        |
 | SETTINGS   | `e`               | Begin edit (at field level)           |
+| SETTINGS   | `/`               | Search (live), Enter commits, Escape restores |
+| SETTINGS   | `n` / `N`         | Next / previous search match          |
+| SETTINGS   | Ctrl+Z / Ctrl+Y   | Undo / redo field edit                |
 | SETTINGS   | Ctrl+S            | Save bank                             |
 | SETTINGS   | Ctrl+Q            | Close editor                          |
 

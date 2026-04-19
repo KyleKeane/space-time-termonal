@@ -243,6 +243,132 @@ class UndoRedoTests(unittest.TestCase):
         self.assertFalse(controller.redo())
 
 
+class SearchSubModeTests(unittest.TestCase):
+    """F21b: the controller exposes begin/extend/backspace/commit/cancel
+    that mirror the existing edit sub-mode."""
+
+    def test_begin_search_returns_false_when_closed(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        self.assertFalse(controller.begin_search())
+
+    def test_begin_search_enters_sub_mode(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        self.assertTrue(controller.begin_search())
+        self.assertTrue(controller.searching)
+        self.assertEqual(controller.search_buffer, "")
+
+    def test_extend_search_appends_to_buffer(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        controller.begin_search()
+        for ch in "v1":
+            controller.extend_search(ch)
+        self.assertEqual(controller.search_buffer, "v1")
+
+    def test_backspace_trims_search_buffer(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        controller.begin_search()
+        for ch in "abc":
+            controller.extend_search(ch)
+        controller.backspace_search()
+        self.assertEqual(controller.search_buffer, "ab")
+
+    def test_commit_search_leaves_sub_mode(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        controller.begin_search()
+        for ch in "v1":
+            controller.extend_search(ch)
+        self.assertTrue(controller.commit_search())
+        self.assertFalse(controller.searching)
+
+    def test_cancel_search_restores_cursor(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        controller.descend()  # to RECORD in voices
+        controller.begin_search()
+        for ch in "s1":
+            controller.extend_search(ch)
+        # Should have jumped to sounds section.
+        self.assertEqual(controller.editor.state.section.value, "sounds")
+        self.assertTrue(controller.cancel_search())
+        self.assertFalse(controller.searching)
+        self.assertEqual(controller.editor.state.section.value, "voices")
+
+    def test_ascend_while_searching_cancels_search(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        controller.descend()
+        controller.begin_search()
+        for ch in "s1":
+            controller.extend_search(ch)
+        ok = controller.ascend()
+        self.assertTrue(ok)
+        self.assertFalse(controller.searching)
+        # Cursor restored to voices RECORD level, not ascended further.
+        self.assertEqual(controller.editor.state.section.value, "voices")
+
+    def test_extend_without_begin_raises(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        with self.assertRaises(SettingsControllerError):
+            controller.extend_search("a")
+
+    def test_backspace_without_begin_raises(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        with self.assertRaises(SettingsControllerError):
+            controller.backspace_search()
+
+    def test_extend_rejects_multi_character(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        controller.begin_search()
+        with self.assertRaises(ValueError):
+            controller.extend_search("ab")
+
+    def test_begin_search_while_editing_cancels_edit(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        controller.descend()
+        controller.descend()
+        controller.next()  # engine field
+        controller.begin_edit()
+        controller.extend_edit("s")
+        self.assertTrue(controller.editing)
+        self.assertTrue(controller.begin_search())
+        self.assertFalse(controller.editing)
+        self.assertTrue(controller.searching)
+
+    def test_undo_is_noop_while_searching(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        # Land a real edit so the undo stack has something to revert.
+        controller.descend()
+        controller.descend()
+        controller.next()  # engine
+        controller.begin_edit()
+        for ch in "sapi":
+            controller.extend_edit(ch)
+        controller.commit_edit()
+        # Now start a search and confirm undo is refused.
+        controller.begin_search()
+        self.assertFalse(controller.undo())
+        self.assertEqual(controller.bank.voices[0].engine, "sapi")
+
+    def test_commit_without_search_returns_false(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        self.assertFalse(controller.commit_search())
+
+    def test_cancel_without_search_returns_false(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        self.assertFalse(controller.cancel_search())
+
+
 class SaveTests(unittest.TestCase):
 
     def test_save_to_configured_path(self) -> None:

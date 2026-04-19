@@ -139,6 +139,18 @@ class SettingsEditor:
         self._state = EditorState()
         self._undo_stack: list[_EditRecord] = []
         self._redo_stack: list[_EditRecord] = []
+        # F21b search overlay. When `_search_mode` is True the editor
+        # is in the `/` composer sub-mode; keys flow into `extend_search`
+        # / `backspace_search` and every mutation recomputes matches.
+        # `_search_origin` remembers the cursor position the user opened
+        # the overlay from so `cancel_search` can restore it verbatim.
+        self._search_mode: bool = False
+        self._search_buffer: str = ""
+        self._search_matches: tuple[tuple[Section, int], ...] = ()
+        self._search_position: int = -1
+        self._search_origin: Optional[
+            tuple[Level, Section, int, int]
+        ] = None
         publish_event(
             bus,
             EventType.SETTINGS_OPENED,
@@ -370,6 +382,233 @@ class SettingsEditor:
         """
         return self._bank is not self._saved_bank
 
+    @property
+    def searching(self) -> bool:
+        """True while the `/` search composer is active."""
+        return self._search_mode
+
+    @property
+    def search_buffer(self) -> str:
+        """Return the query the user is currently composing."""
+        return self._search_buffer
+
+    @property
+    def search_matches(self) -> tuple[tuple["Section", int], ...]:
+        """Return the ordered `(section, record_index)` pairs that match."""
+        return self._search_matches
+
+    @property
+    def search_match_count(self) -> int:
+        """Return the number of matches for the current / last search."""
+        return len(self._search_matches)
+
+    def begin_search(self) -> bool:
+        """Enter SEARCH sub-mode. Returns False if the bank is empty.
+
+        The overlay is cross-section: keystrokes that follow compose a
+        substring query matched against record ids (every section) plus
+        `event_type` / `voice_id` / `sound_id` on bindings. On the first
+        matching character the cursor parks at RECORD level inside the
+        section that owns the match. `cancel_search` restores the
+        cursor to its pre-search location; `commit_search` leaves the
+        cursor wherever the query landed.
+        """
+        if self._is_bank_empty():
+            return False
+        if self._search_mode:
+            # Second `/` while already open is a no-op; the existing
+            # buffer is intentionally preserved so an accidental retap
+            # doesn't wipe the query.
+            return True
+        self._search_mode = True
+        self._search_buffer = ""
+        self._search_matches = ()
+        self._search_position = -1
+        self._search_origin = (
+            self._state.level,
+            self._state.section,
+            self._state.record_index,
+            self._state.field_index,
+        )
+        publish_event(
+            self._bus,
+            EventType.SETTINGS_SEARCH_OPENED,
+            {
+                "origin_level": self._state.level.value,
+                "origin_section": self._state.section.value,
+                "origin_record_index": self._state.record_index,
+                "origin_field_index": self._state.field_index,
+            },
+            source=SOURCE,
+        )
+        return True
+
+    def extend_search(self, character: str) -> None:
+        """Append a character to the search buffer and recompute matches."""
+        if not self._search_mode:
+            raise SettingsEditorError("not in search sub-mode")
+        if len(character) != 1:
+            raise ValueError("extend_search expects exactly one character")
+        self._search_buffer += character
+        self._recompute_matches(jump_to_first=True)
+
+    def backspace_search(self) -> None:
+        """Trim the last character from the search buffer.
+
+        A backspace on an empty buffer is a silent no-op so the user
+        can hammer the key without closing the overlay.
+        """
+        if not self._search_mode:
+            raise SettingsEditorError("not in search sub-mode")
+        if not self._search_buffer:
+            return
+        self._search_buffer = self._search_buffer[:-1]
+        self._recompute_matches(jump_to_first=True)
+
+    def commit_search(self) -> bool:
+        """Close the overlay and leave the cursor on the current match.
+
+        Preserves `_search_matches` so a later `next_search_match` /
+        `prev_search_match` can keep cycling without retyping. Returns
+        False when no search was active.
+        """
+        if not self._search_mode:
+            return False
+        query = self._search_buffer
+        match_count = len(self._search_matches)
+        self._search_mode = False
+        self._search_origin = None
+        publish_event(
+            self._bus,
+            EventType.SETTINGS_SEARCH_CLOSED,
+            {
+                "query": query,
+                "match_count": match_count,
+                "committed": True,
+            },
+            source=SOURCE,
+        )
+        return True
+
+    def cancel_search(self) -> bool:
+        """Close the overlay and restore the cursor to the pre-search spot."""
+        if not self._search_mode:
+            return False
+        query = self._search_buffer
+        origin = self._search_origin
+        self._search_mode = False
+        self._search_buffer = ""
+        self._search_matches = ()
+        self._search_position = -1
+        self._search_origin = None
+        if origin is not None:
+            level, section, record_index, field_index = origin
+            self._state = replace(
+                self._state,
+                level=level,
+                section=section,
+                record_index=record_index,
+                field_index=field_index,
+            )
+            self._publish_focus()
+        publish_event(
+            self._bus,
+            EventType.SETTINGS_SEARCH_CLOSED,
+            {
+                "query": query,
+                "match_count": 0,
+                "committed": False,
+            },
+            source=SOURCE,
+        )
+        return True
+
+    def next_search_match(self) -> bool:
+        """Advance the cursor to the next match; wraps at the end."""
+        if not self._search_matches:
+            return False
+        self._search_position = (self._search_position + 1) % len(self._search_matches)
+        section, record_index = self._search_matches[self._search_position]
+        self._goto_record_match(section, record_index)
+        return True
+
+    def prev_search_match(self) -> bool:
+        """Step the cursor to the previous match; wraps at the start."""
+        if not self._search_matches:
+            return False
+        self._search_position = (self._search_position - 1) % len(self._search_matches)
+        section, record_index = self._search_matches[self._search_position]
+        self._goto_record_match(section, record_index)
+        return True
+
+    def _is_bank_empty(self) -> bool:
+        """True when every section is empty — nothing to search across."""
+        return not any(
+            getattr(self._bank, section.value) for section in SECTION_ORDER
+        )
+
+    def _recompute_matches(self, jump_to_first: bool) -> None:
+        """Rebuild the match list from the current query and bank.
+
+        Publishes `SETTINGS_SEARCH_UPDATED` with the match count; on a
+        hit, also parks the cursor at RECORD level inside the matching
+        section so the existing `SETTINGS_FOCUSED` narration reads the
+        record the user just landed on.
+        """
+        if not self._search_buffer:
+            self._search_matches = ()
+            self._search_position = -1
+            self._publish_search_update(match=None)
+            return
+        query = self._search_buffer.lower()
+        matches: list[tuple[Section, int]] = []
+        for section in SECTION_ORDER:
+            for idx, record in enumerate(getattr(self._bank, section.value)):
+                if query in _search_haystack(section, record).lower():
+                    matches.append((section, idx))
+        self._search_matches = tuple(matches)
+        if not matches:
+            self._search_position = -1
+            self._publish_search_update(match=None)
+            return
+        if jump_to_first:
+            self._search_position = 0
+            section, record_index = matches[0]
+            self._goto_record_match(section, record_index)
+        self._publish_search_update(match=matches[self._search_position])
+
+    def _goto_record_match(self, section: Section, record_index: int) -> None:
+        """Park the cursor at RECORD level on the given match."""
+        self._state = replace(
+            self._state,
+            level=Level.RECORD,
+            section=section,
+            record_index=record_index,
+            field_index=0,
+        )
+        self._publish_focus()
+
+    def _publish_search_update(
+        self, match: Optional[tuple["Section", int]]
+    ) -> None:
+        """Emit SETTINGS_SEARCH_UPDATED with the latest query + match."""
+        payload: dict[str, Any] = {
+            "query": self._search_buffer,
+            "match_count": len(self._search_matches),
+        }
+        if match is not None:
+            section, record_index = match
+            payload["section"] = section.value
+            payload["record_index"] = record_index
+            records = getattr(self._bank, section.value)
+            payload["record_id"] = getattr(records[record_index], "id", "")
+        publish_event(
+            self._bus,
+            EventType.SETTINGS_SEARCH_UPDATED,
+            payload,
+            source=SOURCE,
+        )
+
     def save(self, path: Path | str) -> None:
         """Persist the current bank as JSON at path and clear the dirty flag.
 
@@ -564,6 +803,25 @@ def _parse_override_mapping(
             )
         result[key] = _parse_float(str(value), f"{field_name}.{key}")
     return result
+
+
+def _search_haystack(section: Section, record: Any) -> str:
+    """Return the concatenated searchable text for a record.
+
+    Voice and SoundRecipe contribute only their `id`; EventBinding
+    contributes `id`, `event_type`, and the two references
+    (`voice_id` / `sound_id`, each None-safe). Joined with spaces so a
+    query that accidentally spans two fields still matches.
+    """
+    if section == Section.BINDINGS:
+        parts = (
+            record.id,
+            record.event_type,
+            record.voice_id or "",
+            record.sound_id or "",
+        )
+        return " ".join(part for part in parts if part)
+    return record.id or ""
 
 
 def _jsonable(value: Any) -> Any:

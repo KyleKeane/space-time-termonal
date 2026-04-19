@@ -92,6 +92,24 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "new_value": 1.1,
     },
     EventType.SETTINGS_SAVED: {"path": "/tmp/bank.json"},
+    EventType.SETTINGS_SEARCH_OPENED: {
+        "origin_level": "section",
+        "origin_section": "voices",
+        "origin_record_index": 0,
+        "origin_field_index": 0,
+    },
+    EventType.SETTINGS_SEARCH_UPDATED: {
+        "query": "nar",
+        "match_count": 1,
+        "section": "voices",
+        "record_index": 0,
+        "record_id": "narrator",
+    },
+    EventType.SETTINGS_SEARCH_CLOSED: {
+        "query": "nar",
+        "match_count": 1,
+        "committed": True,
+    },
     EventType.HELP_REQUESTED: {"lines": ["help"]},
     EventType.PROMPT_REFRESH: {
         "last_exit_code": 1,

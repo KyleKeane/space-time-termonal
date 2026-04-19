@@ -503,6 +503,142 @@ class SettingsModeDispatchTests(unittest.TestCase):
         self.assertEqual(controller.edit_buffer, "x")
         self.assertEqual(controller.bank.voices[0].engine, "sapi")
 
+    def test_slash_opens_settings_search_composer(self) -> None:
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        result = router.handle_key(Key.printable("/"))
+        self.assertEqual(result, "settings_search_begin")
+        self.assertTrue(controller.searching)
+
+    def test_typed_chars_extend_search_and_jump_to_match(self) -> None:
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.printable("/"))
+        for ch in "s1":
+            router.handle_key(Key.printable(ch))
+        self.assertEqual(controller.search_buffer, "s1")
+        # "s1" matches sounds[0] (id="s1") — cursor parks there.
+        self.assertEqual(controller.editor.state.section.value, "sounds")
+        self.assertEqual(controller.editor.state.record_index, 0)
+
+    def test_enter_commits_settings_search(self) -> None:
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.printable("/"))
+        router.handle_key(Key.printable("s"))
+        result = router.handle_key(ENTER)
+        self.assertEqual(result, "settings_search_commit")
+        self.assertFalse(controller.searching)
+        self.assertEqual(controller.editor.state.section.value, "sounds")
+
+    def test_escape_cancels_settings_search_and_restores_cursor(self) -> None:
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        # Drop into voices RECORD so we have a pre-search origin worth
+        # restoring.
+        router.handle_key(ENTER)
+        router.handle_key(Key.printable("/"))
+        for ch in "s1":
+            router.handle_key(Key.printable(ch))
+        self.assertEqual(controller.editor.state.section.value, "sounds")
+        result = router.handle_key(ESCAPE)
+        self.assertEqual(result, "settings_search_cancel")
+        self.assertFalse(controller.searching)
+        self.assertEqual(controller.editor.state.section.value, "voices")
+
+    def test_backspace_trims_settings_search_buffer(self) -> None:
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.printable("/"))
+        for ch in "abc":
+            router.handle_key(Key.printable(ch))
+        result = router.handle_key(BACKSPACE)
+        self.assertEqual(result, "settings_search_backspace")
+        self.assertEqual(controller.search_buffer, "ab")
+
+    def test_motion_keys_swallowed_while_searching(self) -> None:
+        """Up / Down must not step records while a `/` composer is open —
+        that would silently dismiss the overlay and confuse narration."""
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.printable("/"))
+        router.handle_key(Key.printable("s"))
+        section_before = controller.editor.state.section
+        # Arrow keys should NOT change section while composer is active.
+        self.assertIsNone(router.handle_key(UP))
+        self.assertIsNone(router.handle_key(DOWN))
+        self.assertTrue(controller.searching)
+        self.assertEqual(controller.editor.state.section, section_before)
+
+    def test_commit_payload_reports_query_and_match_count(self) -> None:
+        bus, _, router, _ = _build_with_settings(["echo"])
+        recorder = _Recorder(bus)
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.printable("/"))
+        for ch in "v1":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        commit_events = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "settings_search_commit"
+        ]
+        self.assertEqual(len(commit_events), 1)
+        payload = commit_events[0].payload
+        self.assertEqual(payload["query"], "v1")
+        self.assertGreaterEqual(payload["match_count"], 1)
+
+    def test_n_and_N_cycle_matches_after_commit(self) -> None:
+        _, _, router, controller = _build_with_settings(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.printable("/"))
+        # "v1" matches voices[0] and bindings[0] (voice_id=v1) — 2 results.
+        for ch in "v1":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        first_location = (
+            controller.editor.state.section,
+            controller.editor.state.record_index,
+        )
+        result = router.handle_key(Key.printable("n"))
+        self.assertEqual(result, "settings_search_next")
+        second_location = (
+            controller.editor.state.section,
+            controller.editor.state.record_index,
+        )
+        self.assertNotEqual(first_location, second_location)
+        self.assertEqual(router.handle_key(Key.printable("N")), "settings_search_prev")
+        self.assertEqual(
+            (controller.editor.state.section, controller.editor.state.record_index),
+            first_location,
+        )
+
+    def test_search_without_controller_is_noop(self) -> None:
+        """Router with no settings_controller: the binding dispatches but
+        the handler silently no-ops."""
+        bus = EventBus()
+        session = Session.new()
+        session.add_cell(Cell.new("echo"))
+        cursor = NotebookCursor(session, bus)
+        cursor.enter_settings_mode()  # simulate being in SETTINGS focus
+        router = InputRouter(cursor, bus)
+        self.assertEqual(
+            router.handle_key(Key.printable("/")),
+            "settings_search_begin",
+        )
+
+    def test_slash_is_not_bound_outside_settings_mode(self) -> None:
+        """The `/` key in NOTEBOOK mode must not accidentally open the
+        settings search (settings may not even be open)."""
+        _, _, router, controller = _build_with_settings(["echo"])
+        # Start in NOTEBOOK; `/` should be unbound there.
+        self.assertIsNone(router.handle_key(Key.printable("/")))
+        self.assertFalse(controller.searching)
+
+    def test_help_mentions_settings_search(self) -> None:
+        from asat.input_router import HELP_LINES
+        joined = "\n".join(HELP_LINES)
+        self.assertIn("search", joined.lower())
+
     def test_invalid_commit_surfaces_in_action_payload(self) -> None:
         bus, _, router, _ = _build_with_settings(["echo"])
         recorder = _Recorder(bus)

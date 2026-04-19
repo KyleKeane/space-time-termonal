@@ -405,6 +405,304 @@ class UndoRedoTests(unittest.TestCase):
         self.assertEqual(undone, MAX_HISTORY)
 
 
+class SearchOverlayTests(unittest.TestCase):
+    """F21b: `/` search sub-mode over all three sections."""
+
+    def _search_bank(self) -> SoundBank:
+        """A multi-section bank with distinguishable ids for search asserts."""
+        return SoundBank(
+            voices=(
+                Voice(id="narrator", rate=1.0),
+                Voice(id="alert", rate=1.0),
+            ),
+            sounds=(
+                SoundRecipe(id="tick", kind="tone", params={"frequency": 880.0}),
+                SoundRecipe(id="chord", kind="chord", params={"frequencies": [440.0, 660.0]}),
+            ),
+            bindings=(
+                EventBinding(
+                    id="session_opened",
+                    event_type="session.created",
+                    voice_id="narrator",
+                    say_template="hi",
+                ),
+                EventBinding(
+                    id="submit_cue",
+                    event_type="command.submitted",
+                    voice_id="alert",
+                    sound_id="tick",
+                ),
+            ),
+        )
+
+    def test_begin_search_enters_sub_mode(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        self.assertFalse(editor.searching)
+        self.assertTrue(editor.begin_search())
+        self.assertTrue(editor.searching)
+        self.assertEqual(editor.search_buffer, "")
+
+    def test_begin_search_empty_bank_returns_false(self) -> None:
+        editor = SettingsEditor(EventBus(), SoundBank())
+        self.assertFalse(editor.begin_search())
+        self.assertFalse(editor.searching)
+
+    def test_begin_search_publishes_opened_event_with_origin(self) -> None:
+        bus = EventBus()
+        opened = _Recorder(bus, EventType.SETTINGS_SEARCH_OPENED)
+        editor = SettingsEditor(bus, self._search_bank())
+        editor.enter()  # descend to RECORD so origin is non-default
+        editor.begin_search()
+        self.assertEqual(len(opened.events), 1)
+        payload = opened.events[0].payload
+        self.assertEqual(payload["origin_level"], "record")
+        self.assertEqual(payload["origin_section"], "voices")
+
+    def test_second_begin_while_open_preserves_buffer(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        editor.extend_search("n")
+        editor.extend_search("a")
+        editor.begin_search()  # accidental retap
+        self.assertEqual(editor.search_buffer, "na")
+
+    def test_extend_jumps_to_first_matching_record(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        editor.extend_search("n")  # matches "narrator"
+        self.assertEqual(editor.state.level, Level.RECORD)
+        self.assertEqual(editor.state.section, Section.VOICES)
+        self.assertEqual(editor.state.record_index, 0)
+
+    def test_extend_crosses_section_boundaries(self) -> None:
+        """A query that only matches in SOUNDS or BINDINGS must jump there
+        regardless of the section the user was parked on."""
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        editor.extend_search("c")  # "chord" in sounds, plus "tick" / "session_opened" partial? No — just chord
+        editor.extend_search("h")  # narrows
+        editor.extend_search("o")
+        editor.extend_search("r")
+        editor.extend_search("d")
+        self.assertEqual(editor.state.section, Section.SOUNDS)
+        self.assertEqual(editor.state.record_index, 1)
+
+    def test_extend_matches_binding_event_type(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        for ch in "command.":
+            editor.extend_search(ch)
+        self.assertEqual(editor.state.section, Section.BINDINGS)
+        self.assertEqual(editor.state.record_index, 1)
+
+    def test_extend_matches_binding_voice_id(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        for ch in "alert":
+            editor.extend_search(ch)
+        # "alert" matches voices[1].id first in SECTION_ORDER, but that's
+        # expected: cross-section order is voices → sounds → bindings.
+        self.assertEqual(editor.state.section, Section.VOICES)
+        self.assertEqual(editor.state.record_index, 1)
+        # Every match is still tracked, including bindings[1] whose
+        # voice_id = "alert".
+        matches = editor.search_matches
+        self.assertIn((Section.VOICES, 1), matches)
+        self.assertIn((Section.BINDINGS, 1), matches)
+
+    def test_extend_matches_are_case_insensitive(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        for ch in "NAR":
+            editor.extend_search(ch)
+        self.assertEqual(editor.state.record_index, 0)
+
+    def test_extend_no_match_leaves_cursor_in_place(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.enter()
+        editor.next()  # voices[1] = alert
+        editor.begin_search()
+        editor.extend_search("z")  # no match anywhere
+        self.assertEqual(editor.search_match_count, 0)
+        # Cursor stays wherever it was — composer silently reports "no match".
+        self.assertEqual(editor.state.section, Section.VOICES)
+        self.assertEqual(editor.state.record_index, 1)
+
+    def test_backspace_recomputes_matches(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        for ch in "chord":
+            editor.extend_search(ch)
+        self.assertEqual(editor.search_match_count, 1)
+        editor.backspace_search()  # "chor"
+        editor.backspace_search()  # "cho"
+        editor.backspace_search()  # "ch" — still 1 match ("chord")
+        editor.backspace_search()  # "c" — now matches chord AND both bindings (command. / submit_cue)
+        self.assertEqual(editor.search_buffer, "c")
+        self.assertGreater(editor.search_match_count, 1)
+        editor.backspace_search()  # ""
+        # An empty buffer resets to zero matches (we don't advertise
+        # every record as a "match" of an empty query).
+        self.assertEqual(editor.search_buffer, "")
+        self.assertEqual(editor.search_match_count, 0)
+
+    def test_backspace_on_empty_buffer_is_noop(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        editor.backspace_search()  # must not raise
+        self.assertEqual(editor.search_buffer, "")
+        self.assertTrue(editor.searching)
+
+    def test_extend_without_begin_raises(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        with self.assertRaises(SettingsEditorError):
+            editor.extend_search("a")
+
+    def test_extend_rejects_multi_character(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        with self.assertRaises(ValueError):
+            editor.extend_search("abc")
+
+    def test_commit_search_leaves_cursor_on_match(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        for ch in "chord":
+            editor.extend_search(ch)
+        self.assertTrue(editor.commit_search())
+        self.assertFalse(editor.searching)
+        self.assertEqual(editor.state.section, Section.SOUNDS)
+        self.assertEqual(editor.state.record_index, 1)
+
+    def test_commit_search_preserves_matches_for_cycling(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        editor.extend_search("a")
+        editor.commit_search()
+        self.assertGreater(editor.search_match_count, 1)
+
+    def test_commit_without_search_returns_false(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        self.assertFalse(editor.commit_search())
+
+    def test_cancel_restores_pre_search_cursor(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.enter()  # RECORD on voices[0]
+        editor.enter()  # FIELD on voices[0].id
+        editor.next()   # voices[0].engine
+        origin_level = editor.state.level
+        origin_section = editor.state.section
+        origin_record = editor.state.record_index
+        origin_field = editor.state.field_index
+        editor.begin_search()
+        for ch in "chord":
+            editor.extend_search(ch)
+        self.assertEqual(editor.state.section, Section.SOUNDS)
+
+        self.assertTrue(editor.cancel_search())
+
+        self.assertFalse(editor.searching)
+        self.assertEqual(editor.state.level, origin_level)
+        self.assertEqual(editor.state.section, origin_section)
+        self.assertEqual(editor.state.record_index, origin_record)
+        self.assertEqual(editor.state.field_index, origin_field)
+
+    def test_cancel_without_search_returns_false(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        self.assertFalse(editor.cancel_search())
+
+    def test_next_and_prev_search_match_cycle_matches(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        editor.extend_search("a")  # matches narrator, alert, (chord?), bindings with voice_id=alert
+        editor.commit_search()
+        start = (editor.state.section, editor.state.record_index)
+        editor.next_search_match()
+        after_next = (editor.state.section, editor.state.record_index)
+        self.assertNotEqual(start, after_next)
+        editor.prev_search_match()
+        self.assertEqual((editor.state.section, editor.state.record_index), start)
+
+    def test_next_search_match_wraps_around(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        editor.begin_search()
+        editor.extend_search("a")
+        editor.commit_search()
+        first = (editor.state.section, editor.state.record_index)
+        count = editor.search_match_count
+        for _ in range(count):
+            editor.next_search_match()
+        self.assertEqual((editor.state.section, editor.state.record_index), first)
+
+    def test_next_match_without_any_matches_returns_false(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        self.assertFalse(editor.next_search_match())
+
+    def test_search_update_event_carries_query_and_count(self) -> None:
+        bus = EventBus()
+        updates = _Recorder(bus, EventType.SETTINGS_SEARCH_UPDATED)
+        editor = SettingsEditor(bus, self._search_bank())
+        editor.begin_search()
+        editor.extend_search("n")
+        self.assertGreater(len(updates.events), 0)
+        last = updates.events[-1].payload
+        self.assertEqual(last["query"], "n")
+        self.assertGreaterEqual(last["match_count"], 1)
+        self.assertEqual(last["section"], "voices")
+
+    def test_search_update_for_no_match_has_zero_count(self) -> None:
+        bus = EventBus()
+        updates = _Recorder(bus, EventType.SETTINGS_SEARCH_UPDATED)
+        editor = SettingsEditor(bus, self._search_bank())
+        editor.begin_search()
+        editor.extend_search("z")
+        last = updates.events[-1].payload
+        self.assertEqual(last["match_count"], 0)
+        self.assertNotIn("section", last)
+
+    def test_commit_publishes_closed_with_committed_true(self) -> None:
+        bus = EventBus()
+        closed = _Recorder(bus, EventType.SETTINGS_SEARCH_CLOSED)
+        editor = SettingsEditor(bus, self._search_bank())
+        editor.begin_search()
+        editor.extend_search("n")
+        editor.commit_search()
+        self.assertEqual(len(closed.events), 1)
+        self.assertTrue(closed.events[0].payload["committed"])
+        self.assertEqual(closed.events[0].payload["query"], "n")
+
+    def test_cancel_publishes_closed_with_committed_false(self) -> None:
+        bus = EventBus()
+        closed = _Recorder(bus, EventType.SETTINGS_SEARCH_CLOSED)
+        editor = SettingsEditor(bus, self._search_bank())
+        editor.begin_search()
+        editor.extend_search("n")
+        editor.cancel_search()
+        self.assertEqual(len(closed.events), 1)
+        self.assertFalse(closed.events[0].payload["committed"])
+
+    def test_focus_event_publishes_when_match_jumps_cursor(self) -> None:
+        bus = EventBus()
+        focused = _Recorder(bus, EventType.SETTINGS_FOCUSED)
+        editor = SettingsEditor(bus, self._search_bank())
+        before = len(focused.events)
+        editor.begin_search()
+        editor.extend_search("n")  # matches narrator
+        self.assertGreater(len(focused.events), before)
+        self.assertEqual(focused.events[-1].payload["level"], "record")
+        self.assertEqual(focused.events[-1].payload["section"], "voices")
+
+    def test_search_does_not_mutate_bank_or_dirty_flag(self) -> None:
+        editor = SettingsEditor(EventBus(), self._search_bank())
+        baseline = editor.bank
+        editor.begin_search()
+        for ch in "narrator":
+            editor.extend_search(ch)
+        editor.commit_search()
+        self.assertIs(editor.bank, baseline)
+        self.assertFalse(editor.state.dirty)
+
+
 class SaveTests(unittest.TestCase):
 
     def test_save_writes_file_and_clears_dirty(self) -> None:
