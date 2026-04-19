@@ -220,7 +220,7 @@ See [AUDIO.md](AUDIO.md) for the full reference.
 | EventType           | Payload keys                                                 |
 |---------------------|--------------------------------------------------------------|
 | `AUDIO_SPOKEN`      | `event_type`, `binding_id`, `text`, `voice_id`, `sound_id`   |
-| `AUDIO_INTERRUPTED` | `event_type`                                                 |
+| `AUDIO_INTERRUPTED` | `event_type` — **reserved; no producer ships today.** Future barge-in / cancellation work will publish it; until then no subscriber will ever hear it. The vocabulary entry is kept so external bindings can be authored ahead of the engine work. |
 | `NARRATION_REPLAYED`| `event_type`, `binding_id`, `text`, `voice_id`               |
 
 `NARRATION_REPLAYED` fires when the user presses `Ctrl+R` (or
