@@ -145,6 +145,42 @@ each step.
 
 ---
 
+## What a cell *is* (and is not) today
+
+ASAT is a notebook in the sense that you have an ordered list of
+cells per session, each cell is editable, each remembers its own
+captured stdout/stderr and exit code, and the whole list saves to
+JSON with `--session file.json`. You can navigate, reorder,
+duplicate, and delete cells without leaving the keyboard.
+
+It is **not** Jupyter. Two limits to be aware of from day one:
+
+1. **Each cell runs in a fresh subprocess.** `export FOO=bar` in
+   cell 1 is gone by cell 2. `cd /tmp` does not change the cwd of
+   any later cell. There is no persistent Python REPL or shared
+   shell sitting behind the cells — every command you submit
+   launches its own `subprocess.Popen`, inherits the ASAT process's
+   environment, and exits. If you need shared state today, fold it
+   into a single cell (e.g. `cd src && python script.py`). A
+   persistent computational backend is tracked as
+   [F60](FEATURE_REQUESTS.md#f60--persistent-computational-backend-shared-shell--repl).
+2. **Cells are not interactive terminals (no PTY).** A cell is a
+   command string plus its captured output and exit code. Programs
+   that take over the screen — `vim`, `less`, `top`, `python`
+   without `-c`, anything curses-based — will not work inside a
+   cell. Use a one-shot invocation (`python -c '...'`,
+   `git --no-pager log`) instead.
+3. **Cells are a flat ordered list.** No sections, no folding, no
+   parent/child grouping. Up / Down walks every cell linearly.
+   Sections and folds are tracked as
+   [F61](FEATURE_REQUESTS.md#f61--cell-hierarchy-sections-folds-and-grouping).
+
+Within those limits the notebook surface is real: edit a previous
+cell, re-run it, walk its captured output line by line in OUTPUT
+mode, save the session, resume it tomorrow with every cell intact.
+
+---
+
 ## Focus modes
 
 You are always in exactly one of four modes. The current mode

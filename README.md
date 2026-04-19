@@ -6,6 +6,19 @@ highlight, an ANSI event — flows through one synchronous event bus
 and can be bound to a spoken phrase or a spatialised tone. Keyboard
 only, standard-library only, no mouse, no screen coordinates.
 
+**What "notebook-style" means here.** An ordered list of editable
+cells per session, each with its own captured stdout/stderr and
+exit code, persisted to JSON. Navigate, reorder, duplicate, and
+re-run cells from the keyboard. Each cell runs as its own one-shot
+subprocess — there is no shared shell or persistent REPL across
+cells today, and cells do not host interactive (PTY) programs like
+`vim`. See [docs/USER_MANUAL.md](docs/USER_MANUAL.md#what-a-cell-is-and-is-not-today)
+for the precise contract; the persistent-backend and section /
+hierarchy gaps are tracked as
+[F60](docs/FEATURE_REQUESTS.md#f60--persistent-computational-backend-shared-shell--repl)
+and
+[F61](docs/FEATURE_REQUESTS.md#f61--cell-hierarchy-sections-folds-and-grouping).
+
 ## Install and run
 
 Requires Python 3.10 or newer. No runtime dependencies (`numpy` is an
