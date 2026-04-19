@@ -4,19 +4,52 @@ These tests exercise the small set of branches that only surface at
 the CLI layer: the signpost stderr hint, `--version`, `--check`, and
 the friendly non-TTY exit. The actual read-dispatch loop is covered
 through Application tests.
+
+Every CLI test inherits from `_AsatHomeIsolated` so a call to
+`cli.main([...])` never writes the first-run sentinel into the
+developer's real `~/.asat/` directory. See F46 in
+docs/FEATURE_REQUESTS.md for the bug this protects against.
 """
 
 from __future__ import annotations
 
 import io
+import os
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from asat import __main__ as cli
 from asat import __version__
 
 
-class VersionFlagTests(unittest.TestCase):
+class _AsatHomeIsolated(unittest.TestCase):
+    """Point ASAT_HOME at a disposable tempdir for the duration of a test.
+
+    Without this base class, any test that calls `cli.main([...])`
+    without suppressing onboarding writes `first-run-done` into the
+    developer's real home directory on the first run and shadows the
+    bug on every subsequent run. Setting ASAT_HOME to a tempdir is
+    sufficient because `_asat_home()` honours the env var.
+    """
+
+    def setUp(self) -> None:
+        self._tempdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tempdir.cleanup)
+        self.asat_home = Path(self._tempdir.name)
+        self._prior_asat_home = os.environ.get("ASAT_HOME")
+        os.environ["ASAT_HOME"] = str(self.asat_home)
+        self.addCleanup(self._restore_asat_home)
+
+    def _restore_asat_home(self) -> None:
+        if self._prior_asat_home is None:
+            os.environ.pop("ASAT_HOME", None)
+        else:
+            os.environ["ASAT_HOME"] = self._prior_asat_home
+
+
+class VersionFlagTests(_AsatHomeIsolated):
     def test_version_prints_package_version_and_exits_zero(self) -> None:
         out = io.StringIO()
         with mock.patch("sys.stdout", out):
@@ -25,7 +58,7 @@ class VersionFlagTests(unittest.TestCase):
         self.assertIn(__version__, out.getvalue())
 
 
-class SignpostHintTests(unittest.TestCase):
+class SignpostHintTests(_AsatHomeIsolated):
     """`python -m asat` with no audio flag must nudge the user once."""
 
     def test_no_flags_prints_sink_hint_to_stderr(self) -> None:
@@ -55,7 +88,7 @@ class SignpostHintTests(unittest.TestCase):
         self.assertNotIn("in-memory sink. Pass", err.getvalue())
 
 
-class CheckFlagTests(unittest.TestCase):
+class CheckFlagTests(_AsatHomeIsolated):
     def test_check_prints_summary_and_exits_without_reading_keys(self) -> None:
         out = io.StringIO()
         # pick_default must NOT be called; --check short-circuits.
@@ -70,7 +103,7 @@ class CheckFlagTests(unittest.TestCase):
         self.assertIn("bindings", report)
 
 
-class NonTTYTests(unittest.TestCase):
+class NonTTYTests(_AsatHomeIsolated):
     """A non-interactive stdin produces a clean exit, not a traceback."""
 
     def test_non_tty_exits_with_code_2_and_friendly_message(self) -> None:
@@ -90,13 +123,10 @@ class NonTTYTests(unittest.TestCase):
         self.assertIn("needs a TTY", err.getvalue())
 
 
-class MissingSessionPathTests(unittest.TestCase):
+class MissingSessionPathTests(_AsatHomeIsolated):
     """`--session /path/that/doesnt/exist.json` bootstraps a fresh session."""
 
     def test_missing_session_starts_fresh_and_saves_on_exit(self) -> None:
-        import tempfile
-        from pathlib import Path
-
         fake_keyboard = mock.MagicMock()
         fake_keyboard.read_key.return_value = None
         with tempfile.TemporaryDirectory() as tmp:
@@ -113,7 +143,7 @@ class MissingSessionPathTests(unittest.TestCase):
             self.assertTrue(path.exists())
 
 
-class MissingBankPathTests(unittest.TestCase):
+class MissingBankPathTests(_AsatHomeIsolated):
     """`--bank /path/that/doesnt/exist.json` exits with a friendly error."""
 
     def test_missing_bank_exits_with_code_2_and_hint(self) -> None:
@@ -125,6 +155,61 @@ class MissingBankPathTests(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertIn("--bank", err.getvalue())
         self.assertIn("file not found", err.getvalue())
+
+
+class AsatHomeHelperTests(unittest.TestCase):
+    """Direct unit tests for the `_asat_home()` override helper.
+
+    These do NOT inherit from `_AsatHomeIsolated` because they need to
+    exercise the unset-env-var branch themselves.
+    """
+
+    def setUp(self) -> None:
+        self._prior = os.environ.get("ASAT_HOME")
+        self.addCleanup(self._restore)
+
+    def _restore(self) -> None:
+        if self._prior is None:
+            os.environ.pop("ASAT_HOME", None)
+        else:
+            os.environ["ASAT_HOME"] = self._prior
+
+    def test_default_is_home_dot_asat_when_env_var_unset(self) -> None:
+        os.environ.pop("ASAT_HOME", None)
+        self.assertEqual(cli._asat_home(), Path.home() / ".asat")
+
+    def test_env_var_override_takes_precedence(self) -> None:
+        os.environ["ASAT_HOME"] = "/tmp/asat-custom-home"
+        self.assertEqual(cli._asat_home(), Path("/tmp/asat-custom-home"))
+
+    def test_empty_env_var_is_treated_as_unset(self) -> None:
+        # An empty string is the usual shell shorthand for "no value";
+        # honour Path.home() rather than the current directory.
+        os.environ["ASAT_HOME"] = ""
+        self.assertEqual(cli._asat_home(), Path.home() / ".asat")
+
+
+class SentinelLocationTests(_AsatHomeIsolated):
+    """End-to-end: `cli.main([])` writes the sentinel under ASAT_HOME."""
+
+    def test_first_run_sentinel_lands_in_asat_home_not_real_home(self) -> None:
+        err = io.StringIO()
+        out = io.StringIO()
+        fake_keyboard = mock.MagicMock()
+        fake_keyboard.read_key.return_value = None
+        sentinel = self.asat_home / "first-run-done"
+        self.assertFalse(sentinel.exists())
+        with mock.patch("asat.__main__.pick_default", return_value=fake_keyboard), \
+             mock.patch("sys.stderr", err), \
+             mock.patch("sys.stdout", out):
+            rc = cli.main([])
+        self.assertEqual(rc, 0)
+        self.assertTrue(
+            sentinel.exists(),
+            f"sentinel should be written under ASAT_HOME ({self.asat_home}); "
+            "if this test fails, the test suite may be polluting the real "
+            "user's home directory — see F46 in docs/FEATURE_REQUESTS.md.",
+        )
 
 
 if __name__ == "__main__":

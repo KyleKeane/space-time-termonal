@@ -22,6 +22,7 @@ docs/USER_MANUAL.md.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Optional, Sequence
@@ -217,6 +218,20 @@ def _load_bank(path: Optional[Path]) -> Optional[SoundBank]:
     return SoundBank.load(path)
 
 
+def _asat_home() -> Path:
+    """Return the per-user directory ASAT stores state in.
+
+    Defaults to `~/.asat`. The `ASAT_HOME` environment variable
+    overrides the default — useful for portable installs, for running
+    two ASAT copies side by side, and for keeping the test suite from
+    writing into a developer's real home directory.
+    """
+    override = os.environ.get("ASAT_HOME")
+    if override:
+        return Path(override)
+    return Path.home() / ".asat"
+
+
 def _onboarding_factory(
     *, quiet: bool, check: bool
 ):
@@ -225,11 +240,12 @@ def _onboarding_factory(
     `--quiet` opts out of the tour (the user has explicitly asked for
     a silent run). `--check` also skips it so the diagnostic report
     stays pure. Otherwise we hand `Application.build` a factory that
-    builds an `OnboardingCoordinator` pointing at `~/.asat/first-run-done`.
+    builds an `OnboardingCoordinator` pointing at
+    `<ASAT_HOME>/first-run-done` (default: `~/.asat/first-run-done`).
     """
     if quiet or check:
         return None
-    sentinel = Path.home() / ".asat" / "first-run-done"
+    sentinel = _asat_home() / "first-run-done"
 
     def _factory(bus) -> OnboardingCoordinator:
         return OnboardingCoordinator(bus, sentinel)

@@ -1351,81 +1351,92 @@ it; cross-reference from F38.
 
 ## F45 — `ASAT_HOME` environment variable for portable installs
 
-**Gap.** Every user-owned file path is hard-coded to
-`Path.home() / ".asat" / <filename>`. The onboarding sentinel at
-`asat/__main__.py:232`, the implicit future home for F4 (command
-history), F25 (`~/.asat/keybindings.json`), F35 (persistent
-bookmarks), and any other per-user state are all anchored to a
-single process-wide directory the user cannot redirect. A
-tester running multiple ASAT installs side-by-side, a CI job
-running the CLI, and a shared-workstation user all have no
-clean isolation.
+**Status.** Shipped (minimal form — the env var and the single
+sentinel call-site).
 
-**Where it surfaces.** Power-user isolation; CI environments;
-multi-install testing. Directly enables the clean fix for F46
-(the test-pollution bug) by giving the suite an override hook
-that is not per-module mock wiring.
+**Gap.** Every user-owned file path was hard-coded to
+`Path.home() / ".asat" / <filename>`. The onboarding sentinel
+at `asat/__main__.py:232`, the implicit future home for F4
+(command history), F25 (`~/.asat/keybindings.json`), F35
+(persistent bookmarks), and any other per-user state were all
+anchored to a single process-wide directory the user could not
+redirect. A tester running multiple ASAT installs side-by-side,
+a CI job running the CLI, and a shared-workstation user all had
+no clean isolation.
 
-**Sketch.** A tiny `asat/user_paths.py` module exposes
-`user_home() -> Path` that returns `Path(os.environ["ASAT_HOME"])`
-if set, else `Path.home() / ".asat"`. Every existing
-`Path.home() / ".asat"` site migrates to `user_home()`:
+**Where it surfaced.** Power-user isolation; CI environments;
+multi-install testing. Most acutely: F46 — the CLI test suite
+was writing the first-run sentinel into the developer's real
+home directory on every run.
 
-- `asat/__main__.py:232` (onboarding sentinel)
-- all future per-user paths (F4, F25, F35, etc.)
+**Sketch (shipped — minimal form).** A small private helper
+`_asat_home() -> Path` in `asat/__main__.py` returns
+`Path(os.environ["ASAT_HOME"])` when the env var is set (and
+non-empty), otherwise `Path.home() / ".asat"`. Exactly one
+call-site was migrated: the onboarding factory's sentinel path.
+That single change unlocks clean test isolation (F46) and lets
+portable-install users redirect onboarding state to any
+directory they own. Documented in
+`docs/USER_MANUAL.md` under "Environment variables".
 
-A startup message mentions the override the first time
-`ASAT_HOME` is in effect so users know it is honored. Document
-in `docs/USER_MANUAL.md` under a new "Environment variables"
-subsection near the CLI flags reference.
-
-**Documentation touch points.** New subsection in
-`docs/USER_MANUAL.md`; note in `README.md` troubleshooting;
-reference from F46's fix sketch (the test suite sets
-`ASAT_HOME=<tmpdir>` in a `setUp`).
+**Follow-up (not shipped).** Promoting the helper to a dedicated
+`asat/user_paths.py` module and migrating every future
+per-user path (F4 command history, F25 keymap file, F35
+bookmarks) through it is deferred until one of those features
+lands and needs the second call-site. Until then the one-file
+helper is simpler and honours the "flat when possible"
+principle.
 
 ---
 
 ## F46 — Onboarding sentinel test isolation (critical bug)
 
-**Gap.** `asat/__main__.py:232` hard-codes the first-run
-sentinel at `Path.home() / ".asat" / "first-run-done"`, and
-`tests/test_cli.py` (lines 39, 53, 64, 87, 110, 124) invokes
-`cli.main([...])` to exercise the CLI without patching
-`_onboarding_factory`. `test_cli.py` patches `pick_default`, but
-onboarding is invoked *before* pick_default returns for many
-launches, so a real sentinel lands on the developer's home
-directory every time the suite runs. Verified on this machine:
-`~/.asat/first-run-done` exists with an mtime matching the last
-test run.
+**Status.** Shipped.
 
-**Where it surfaces.** Any developer running
-`python -m unittest discover -s tests -t .` silently loses
-first-run onboarding on their own install. CI runs write the
-sentinel into `$HOME` of the runner. Shared-machine workflows
-are actively harmed.
+**Gap.** `asat/__main__.py` hard-coded the first-run sentinel at
+`Path.home() / ".asat" / "first-run-done"`, and
+`tests/test_cli.py` called `cli.main([...])` without patching
+`_onboarding_factory`. `test_cli.py` patched `pick_default` only,
+so a real sentinel landed in the developer's home directory on
+every fresh-suite run. Verified directly: `~/.asat/first-run-done`
+existed on this machine with an mtime matching the last test run.
 
-**Sketch.** Two fixes that stack cleanly with F45:
+**Where it surfaced.** Any developer running
+`python -m unittest discover -s tests -t .` silently lost first-run
+onboarding on their own install. CI runs wrote the sentinel into
+`$HOME` of the runner. Shared-machine workflows were actively
+harmed.
 
-1. **Accept an override.** `_onboarding_factory(*, quiet, check,
-   sentinel_path=None)` in `asat/__main__.py:220` grows an
-   optional `sentinel_path` kwarg. If unset, it consults
-   `user_home() / "first-run-done"` (see F45).
-2. **Patch the tests.** `tests/test_cli.py` either (a) sets
-   `ASAT_HOME=<tmpdir>` in `setUp` so onboarding writes
-   somewhere disposable (assumes F45), or (b) mocks
-   `asat.__main__._onboarding_factory` to return `None` for the
-   duration of each CLI test (works without F45).
+**Sketch (shipped).** Stacks on F45. Two changes:
 
-Also add a regression test that invokes `cli.main([])` with a
-controlled `ASAT_HOME` and asserts no file is written to the
-real user home.
+1. **`_onboarding_factory` consults `_asat_home()`** — F45's tiny
+   helper — for the sentinel directory. Production behaviour
+   is unchanged (default remains `~/.asat/first-run-done`);
+   the env var provides the override point.
+2. **`tests/test_cli.py` gains `_AsatHomeIsolated`** — a base
+   class whose `setUp` creates a tempdir, points `ASAT_HOME` at
+   it, and tears both down on exit. Every existing CLI test
+   class now inherits from it, so no test can accidentally
+   reintroduce the bug by calling `cli.main` without suppressing
+   onboarding.
 
-**Documentation touch points.** Note in
-`tests/README.md` (if it exists, else
-`docs/ARCHITECTURE.md` "Testing" section) that any new CLI test
-must isolate `ASAT_HOME`; add `tests/test_cli.py` comment at the
-top explaining the isolation contract.
+Two regression tests accompany the fix:
+
+- `AsatHomeHelperTests` covers the three branches of
+  `_asat_home()` (unset env var, explicit override, empty
+  string).
+- `SentinelLocationTests.test_first_run_sentinel_lands_in_asat_home_not_real_home`
+  runs `cli.main([])` end-to-end and asserts the sentinel lands
+  under the tempdir. Its failure message names F46 so a future
+  regression is self-describing.
+
+Full suite: 760 → 764 passing.
+
+**Documentation.** Header comment at the top of
+`tests/test_cli.py` spells the isolation contract out for future
+contributors: any new CLI test must inherit from
+`_AsatHomeIsolated`. `docs/USER_MANUAL.md` "Environment variables"
+subsection documents the user-visible half.
 
 ---
 
