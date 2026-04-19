@@ -59,6 +59,19 @@ inside a sandbox without a real console) the CLI exits cleanly with
 and returns exit code 2, rather than a raw `termios.error`
 traceback. Launch from a real terminal to fix it.
 
+### Environment variables
+
+| Variable   | Effect                                                         |
+|------------|----------------------------------------------------------------|
+| `ASAT_HOME`| Directory ASAT stores per-user state in. Defaults to `~/.asat`.|
+
+Setting `ASAT_HOME=/some/dir` redirects ASAT's per-user state —
+today just the first-run-onboarding sentinel — to that directory.
+Useful for portable installs, for running two ASAT copies side by
+side, and for CI jobs that should not write into the runner's home.
+The variable is read at launch time; unset it to return to the
+default.
+
 ### What you should hear and see on launch
 
 The moment the binary starts:

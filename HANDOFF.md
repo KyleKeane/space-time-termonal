@@ -26,17 +26,20 @@ answer is "nothing new" or "more visual clutter," it's wrong.
   cues; measured WAV profiles supported; sparse-impulse fast path for
   synthetic kernels.
 
-## Shipped (F1–F29)
+## Shipped (F1–F46)
 F9 README · F11 auto-advance after submit · F13 in-line buffer editing
 · F14 action-menu keystroke · F15 cell delete/move/duplicate · F16
 output search + jump-to-line · F17 richer meta-commands · F18 OS
 clipboard · F19 prompt context on re-entry · F20 first-run onboarding
 · F21a settings undo/redo · F21b settings `/` search overlay · F21c
 settings `:reset` / Ctrl+R reset-to-defaults · F36 auto-read stderr
-tail on failure.
+tail on failure · F46 onboarding sentinel test isolation.
 
 ## Partially shipped
 · **F6** Windows live audio shipped; POSIX still open.
+· **F45** `ASAT_HOME` env var shipped (single sentinel call-site);
+   promoting to a dedicated `asat/user_paths.py` module deferred
+   until a second per-user path needs it.
 
 ## Open (roadmap)
 F1/F10 cancel + non-blocking exec · F2 settings create/delete · F3
@@ -64,7 +67,7 @@ help topics.
   clocks, no real audio.
 - One feature per PR on branch `claude/accessible-audio-terminal-cOh64`.
 - Test command: `python -m unittest discover -s tests -t .` —
-  currently **760 passing**.
+  currently **764 passing**.
 
 ## Entry points for the next session
 - **Roadmap (authoritative):** `docs/FEATURE_REQUESTS.md`
