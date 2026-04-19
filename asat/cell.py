@@ -51,14 +51,33 @@ class CellStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class CellKind(str, Enum):
+    """What flavour of cell this is.
+
+    COMMAND cells are the executable input/output units the notebook
+    was originally built around. HEADING cells are structural
+    landmarks that anchor NVDA-style heading navigation (F61). Future
+    kinds (pure-input, pure-output, terminal) plug in here without
+    rewriting the session/cursor/render layers.
+    """
+
+    COMMAND = "command"
+    HEADING = "heading"
+
+
+MIN_HEADING_LEVEL = 1
+MAX_HEADING_LEVEL = 6
+
+
 @dataclass
 class Cell:
-    """A single input/output notebook cell.
+    """A single notebook cell.
 
-    Use Cell.new(command) to construct a fresh cell. Direct construction
-    is supported for deserialization but callers should prefer the
-    factory method so that identifiers and timestamps are generated
-    consistently.
+    Use Cell.new(command) for an executable command cell, or
+    Cell.new_heading(level, title) for a heading landmark. Direct
+    construction is supported for deserialization but callers should
+    prefer the factory methods so identifiers, timestamps, and kind
+    stay consistent.
     """
 
     cell_id: str
@@ -71,10 +90,30 @@ class Cell:
     status: CellStatus = CellStatus.PENDING
     parent_id: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    kind: CellKind = CellKind.COMMAND
+    heading_level: Optional[int] = None
+    heading_title: Optional[str] = None
+
+    def __post_init__(self) -> None:
+        if self.kind is CellKind.HEADING:
+            if self.heading_level is None or not (
+                MIN_HEADING_LEVEL <= self.heading_level <= MAX_HEADING_LEVEL
+            ):
+                raise ValueError(
+                    f"heading cell requires heading_level in "
+                    f"{MIN_HEADING_LEVEL}..{MAX_HEADING_LEVEL}"
+                )
+            if self.heading_title is None or not self.heading_title.strip():
+                raise ValueError("heading cell requires a non-empty heading_title")
+        else:
+            if self.heading_level is not None or self.heading_title is not None:
+                raise ValueError(
+                    "heading_level / heading_title only apply to HEADING cells"
+                )
 
     @classmethod
     def new(cls, command: str, parent_id: Optional[str] = None) -> "Cell":
-        """Create a fresh pending cell for the given command.
+        """Create a fresh pending command cell.
 
         The parent_id is used when the user edits and re-runs a previous
         cell. It lets the session preserve the original cell as history
@@ -89,13 +128,54 @@ class Cell:
             parent_id=parent_id,
         )
 
+    @classmethod
+    def new_heading(cls, level: int, title: str) -> "Cell":
+        """Create a fresh heading landmark cell at the given level (1..6)."""
+        if not (MIN_HEADING_LEVEL <= level <= MAX_HEADING_LEVEL):
+            raise ValueError(
+                f"heading level must be {MIN_HEADING_LEVEL}..{MAX_HEADING_LEVEL}"
+            )
+        if not title.strip():
+            raise ValueError("heading title must be non-empty")
+        now = utcnow()
+        return cls(
+            cell_id=new_id(),
+            command="",
+            created_at=now,
+            updated_at=now,
+            status=CellStatus.COMPLETED,
+            kind=CellKind.HEADING,
+            heading_level=level,
+            heading_title=title,
+        )
+
+    @property
+    def is_heading(self) -> bool:
+        return self.kind is CellKind.HEADING
+
+    @property
+    def is_executable(self) -> bool:
+        """True iff this cell represents runnable work.
+
+        Headings are landmarks, not commands; the kernel and worker
+        must skip them. Future read-only cell kinds fall through here
+        too.
+        """
+        return self.kind is CellKind.COMMAND
+
+    def _require_executable(self, op: str) -> None:
+        if not self.is_executable:
+            raise ValueError(f"cannot {op} on a non-executable cell (kind={self.kind.value})")
+
     def mark_running(self) -> None:
         """Transition this cell to the RUNNING state."""
+        self._require_executable("mark_running")
         self.status = CellStatus.RUNNING
         self.updated_at = utcnow()
 
     def mark_completed(self, stdout: str, stderr: str, exit_code: int) -> None:
         """Record a completed execution and set status from the exit code."""
+        self._require_executable("mark_completed")
         self.stdout = stdout
         self.stderr = stderr
         self.exit_code = exit_code
@@ -104,6 +184,7 @@ class Cell:
 
     def mark_cancelled(self) -> None:
         """Record that the user cancelled this cell before completion."""
+        self._require_executable("mark_cancelled")
         self.status = CellStatus.CANCELLED
         self.updated_at = utcnow()
 
@@ -114,11 +195,26 @@ class Cell:
         branching. Output fields are cleared so a stale result is never
         shown alongside an unexecuted command.
         """
+        self._require_executable("update_command")
         self.command = new_command
         self.stdout = ""
         self.stderr = ""
         self.exit_code = None
         self.status = CellStatus.PENDING
+        self.updated_at = utcnow()
+
+    def update_heading(self, level: int, title: str) -> None:
+        """Edit the level/title of a heading cell in place."""
+        if not self.is_heading:
+            raise ValueError("update_heading only applies to heading cells")
+        if not (MIN_HEADING_LEVEL <= level <= MAX_HEADING_LEVEL):
+            raise ValueError(
+                f"heading level must be {MIN_HEADING_LEVEL}..{MAX_HEADING_LEVEL}"
+            )
+        if not title.strip():
+            raise ValueError("heading title must be non-empty")
+        self.heading_level = level
+        self.heading_title = title
         self.updated_at = utcnow()
 
     def snapshot(self) -> "Cell":
@@ -140,6 +236,9 @@ class Cell:
             status=self.status,
             parent_id=self.parent_id,
             metadata=dict(self.metadata),
+            kind=self.kind,
+            heading_level=self.heading_level,
+            heading_title=self.heading_title,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -148,11 +247,16 @@ class Cell:
         data["created_at"] = self.created_at.isoformat()
         data["updated_at"] = self.updated_at.isoformat()
         data["status"] = self.status.value
+        data["kind"] = self.kind.value
         return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Cell":
-        """Rebuild a Cell from a dictionary previously produced by to_dict."""
+        """Rebuild a Cell from a dictionary previously produced by to_dict.
+
+        Missing `kind` / `heading_level` / `heading_title` default to a
+        COMMAND cell so sessions written before F61 load cleanly.
+        """
         return cls(
             cell_id=data["cell_id"],
             command=data["command"],
@@ -164,4 +268,7 @@ class Cell:
             status=CellStatus(data.get("status", CellStatus.PENDING.value)),
             parent_id=data.get("parent_id"),
             metadata=dict(data.get("metadata", {})),
+            kind=CellKind(data.get("kind", CellKind.COMMAND.value)),
+            heading_level=data.get("heading_level"),
+            heading_title=data.get("heading_title"),
         )

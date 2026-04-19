@@ -23,7 +23,7 @@ from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Optional
 
-from asat.cell import Cell
+from asat.cell import Cell, CellKind
 from asat.event_bus import EventBus, publish_event
 from asat.events import EventType
 from asat.session import Session, SessionError
@@ -153,6 +153,76 @@ class NotebookCursor:
         )
         return cell
 
+    def new_heading_cell(self, level: int, title: str) -> Cell:
+        """Append a heading landmark, focus it, and stay in NOTEBOOK mode.
+
+        Headings are not executable, so there's no input buffer and no
+        transition into INPUT — they live alongside command cells purely
+        as structural anchors for NVDA-style heading navigation.
+        """
+        cell = Cell.new_heading(level, title)
+        self._session.add_cell(cell)
+        self._session.set_active(cell.cell_id)
+        self._publish_cell_created(cell, len(self._session.cells) - 1)
+        self._transition(
+            FocusState(
+                mode=FocusMode.NOTEBOOK,
+                cell_id=cell.cell_id,
+                input_buffer="",
+                cursor_position=0,
+            )
+        )
+        return cell
+
+    def move_to_next_heading(self, level: Optional[int] = None) -> Optional[Cell]:
+        """Jump forward to the next heading. None level = any level.
+
+        NVDA convention: always step past the current cell, so
+        repeatedly pressing the shortcut cycles through headings one
+        at a time. Returns the landed cell, or None if there is no
+        next heading matching the filter (in which case the cursor
+        does not move).
+        """
+        return self._move_to_heading(direction=+1, level=level)
+
+    def move_to_previous_heading(self, level: Optional[int] = None) -> Optional[Cell]:
+        """Jump backward to the previous heading. None level = any level."""
+        return self._move_to_heading(direction=-1, level=level)
+
+    def _move_to_heading(self, direction: int, level: Optional[int]) -> Optional[Cell]:
+        if self._state.mode != FocusMode.NOTEBOOK:
+            return None
+        cells = self._session.cells
+        if not cells:
+            return None
+        if self._state.cell_id is None:
+            start_index = -1 if direction > 0 else len(cells)
+        else:
+            start_index = self._session.index_of(self._state.cell_id)
+        index = start_index + direction
+        while 0 <= index < len(cells):
+            candidate = cells[index]
+            if candidate.kind is CellKind.HEADING and (
+                level is None or candidate.heading_level == level
+            ):
+                return self.focus_cell(candidate.cell_id)
+            index += direction
+        return None
+
+    def list_headings(self) -> list[tuple[int, int, str, str]]:
+        """Return the notebook's TOC: list of (index, level, title, cell_id).
+
+        Used by the `:toc` meta-command and any future outline view.
+        Empty when the session has no heading cells.
+        """
+        out: list[tuple[int, int, str, str]] = []
+        for i, cell in enumerate(self._session.cells):
+            if cell.kind is CellKind.HEADING:
+                assert cell.heading_level is not None
+                assert cell.heading_title is not None
+                out.append((i, cell.heading_level, cell.heading_title, cell.cell_id))
+        return out
+
     def delete_focused_cell(self) -> Optional[Cell]:
         """Remove the focused cell and land on a sensible neighbor.
 
@@ -202,7 +272,12 @@ class NotebookCursor:
         if cell_id is None:
             return None
         source = self._session.get_cell(cell_id)
-        duplicate = Cell.new(source.command)
+        if source.is_heading:
+            assert source.heading_level is not None
+            assert source.heading_title is not None
+            duplicate = Cell.new_heading(source.heading_level, source.heading_title)
+        else:
+            duplicate = Cell.new(source.command)
         target_index = self._session.index_of(cell_id) + 1
         self._session.add_cell(duplicate, position=target_index)
         self._publish_cell_created(duplicate, target_index)
@@ -256,11 +331,14 @@ class NotebookCursor:
         """Switch from notebook to input mode on the focused cell.
 
         The caret lands at the end of the existing command so typing
-        continues to append the way the user expects.
+        continues to append the way the user expects. Heading cells
+        have no command buffer, so this is a no-op on them.
         """
         if self._state.cell_id is None:
             return None
         cell = self._session.get_cell(self._state.cell_id)
+        if not cell.is_executable:
+            return None
         self._transition(
             FocusState(
                 mode=FocusMode.INPUT,
