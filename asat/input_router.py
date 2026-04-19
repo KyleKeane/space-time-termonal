@@ -203,6 +203,7 @@ META_COMMANDS: tuple[str, ...] = (
     "reset",
     "welcome",
     "repeat",
+    "state",
 )
 
 # "Ambient" meta-commands do their job without taking focus away from
@@ -213,7 +214,7 @@ META_COMMANDS: tuple[str, ...] = (
 # mode. Commands NOT in this set (today: `:settings`, `:quit`)
 # inherently require a mode change and go through `abandon_input_mode`.
 AMBIENT_META_COMMANDS: frozenset[str] = frozenset(
-    {"help", "save", "pwd", "commands", "welcome", "repeat"}
+    {"help", "save", "pwd", "commands", "welcome", "repeat", "state"}
 )
 
 # `:name optional-argument` — case-insensitive in the name, everything
@@ -547,6 +548,8 @@ class InputRouter:
             self._cursor.duplicate_focused_cell()
         elif command == "pwd":
             self._publish_pwd()
+        elif command == "state":
+            self._publish_state()
         elif command == "commands":
             self._publish_commands()
         elif command == "reset":
@@ -594,6 +597,41 @@ class InputRouter:
             self._bus,
             EventType.HELP_REQUESTED,
             {"lines": [f"Working directory: {os.getcwd()}"]},
+            source=self.SOURCE,
+        )
+
+    def _publish_state(self) -> None:
+        """Narrate "where am I?" — focus mode, cell index, cwd, session id.
+
+        Designed for the hands-on test loop: when the user has lost
+        track of which cell or mode they're in, `:state` answers in
+        one HELP_REQUESTED block. Always reports from the cursor's
+        perspective so the answer matches what the next keystroke
+        will act on.
+        """
+        focus = self._cursor.focus
+        session = self._cursor.session
+        cells = session.cells
+        cell_count = len(cells)
+        cell_id = focus.cell_id
+        if cell_id is not None:
+            try:
+                index = session.index_of(cell_id)
+                position = f"cell {index + 1} of {cell_count}"
+            except ValueError:
+                position = f"cell {cell_id} (not in session)"
+        else:
+            position = "no cell focused"
+        lines = [
+            f"Focus mode: {focus.mode.value}",
+            f"Position: {position}",
+            f"Session id: {session.session_id}",
+            f"Working directory: {os.getcwd()}",
+        ]
+        publish_event(
+            self._bus,
+            EventType.HELP_REQUESTED,
+            {"lines": lines},
             source=self.SOURCE,
         )
 

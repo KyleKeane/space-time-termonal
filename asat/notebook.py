@@ -98,6 +98,11 @@ class NotebookCursor:
         """Return the current focus state."""
         return self._state
 
+    @property
+    def session(self) -> Session:
+        """Return the underlying Session (read-only handle)."""
+        return self._session
+
     def move_up(self) -> Optional[Cell]:
         """Move to the previous cell. Returns the new cell or None."""
         return self._move(delta=-1)

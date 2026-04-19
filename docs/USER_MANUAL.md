@@ -230,6 +230,7 @@ discarded and the cell is not modified.
 | `:delete`    | Delete the focused cell (same as `d` in NOTEBOOK).   |
 | `:duplicate` | Duplicate the focused cell (same as `y` in NOTEBOOK).|
 | `:pwd`       | Announce the current working directory.              |
+| `:state`     | Narrate focus mode, cell position, session id, and cwd. |
 | `:commands`  | List every available meta-command.                   |
 | `:reset bank` | Reset the whole sound bank to the built-in defaults (also `:reset all`). |
 
@@ -512,6 +513,7 @@ Every key you need, one table.
 | INPUT      | `:delete`⏎        | Delete focused cell                   |
 | INPUT      | `:duplicate`⏎     | Duplicate focused cell                |
 | INPUT      | `:pwd`⏎           | Announce working directory            |
+| INPUT      | `:state`⏎         | Announce focus, cell position, cwd    |
 | INPUT      | `:commands`⏎      | List every meta-command               |
 | INPUT      | `:reset bank`⏎    | Reset the whole bank to defaults      |
 | OUTPUT     | Up / Down         | Prev / next line                      |

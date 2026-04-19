@@ -784,6 +784,27 @@ class MetaCommandTests(unittest.TestCase):
         self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
         self.assertEqual(cursor.focus.input_buffer, "")
 
+    def test_colon_state_reports_focus_mode_cell_position_and_cwd(self) -> None:
+        """`:state` emits a HELP_REQUESTED snapshot of "where am I?"."""
+        import os
+
+        bus, cursor, router, _controller = _build_with_settings(["", ""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":state":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertEqual(len(helps), 1)
+        lines = helps[0].payload["lines"]
+        text = "\n".join(lines)
+        self.assertIn("Focus mode: input", text)
+        self.assertIn("cell 1 of 2", text)
+        self.assertIn(cursor.session.session_id, text)
+        self.assertIn(os.getcwd(), text)
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(cursor.focus.input_buffer, "")
+
     def test_colon_commands_lists_every_meta_command(self) -> None:
         """F17: `:commands` enumerates the full meta-command set."""
         from asat.input_router import META_COMMANDS
