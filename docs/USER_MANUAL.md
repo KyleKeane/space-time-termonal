@@ -253,6 +253,7 @@ or when you press Enter from NOTEBOOK mode.
 | Delete    | Deletes the character under the caret.            |
 | Left / Right | Move the caret one character.                  |
 | Home / End | Jump the caret to the start / end of the line.   |
+| Up / Down | Walk command history (F4): Up recalls the previous command, Down steps forward; Down past the most recent restores the in-progress draft. |
 | Ctrl+A / Ctrl+E | Alias for Home / End (readline-style).       |
 | Ctrl+W    | Delete the word immediately before the caret.     |
 | Ctrl+U    | Delete from the start of the line up to the caret. |
@@ -554,6 +555,7 @@ Every key you need, one table.
 | INPUT      | Delete            | Delete char under caret               |
 | INPUT      | Left / Right      | Move caret one character              |
 | INPUT      | Home / End        | Caret to start / end                  |
+| INPUT      | Up / Down         | Walk command history (F4)             |
 | INPUT      | Ctrl+A / Ctrl+E   | Caret to start / end (readline)       |
 | INPUT      | Ctrl+W            | Delete word before caret              |
 | INPUT      | Ctrl+U            | Delete from start of line to caret    |

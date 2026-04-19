@@ -263,6 +263,73 @@ class ActionEventPayloadTests(unittest.TestCase):
         self.assertEqual(actions[0].payload["focus_mode"], FocusMode.NOTEBOOK.value)
 
 
+class CommandHistoryBindingTests(unittest.TestCase):
+    """F4: Up/Down in INPUT mode walk session.command_history."""
+
+    def test_up_and_down_bound_in_input_mode(self) -> None:
+        bindings = default_bindings()
+        self.assertEqual(bindings[FocusMode.INPUT][UP], "history_previous")
+        self.assertEqual(bindings[FocusMode.INPUT][DOWN], "history_next")
+
+    def test_up_recalls_previous_command(self) -> None:
+        _, session, cursor, router, _ = _build(["target"])
+        session.command_history.extend(["older", "newer"])
+        router.handle_key(ENTER)
+        result = router.handle_key(UP)
+        self.assertEqual(result, "history_previous")
+        self.assertEqual(cursor.focus.input_buffer, "newer")
+
+    def test_down_after_up_walks_forward(self) -> None:
+        _, session, cursor, router, _ = _build(["target"])
+        session.command_history.extend(["a", "b", "c"])
+        router.handle_key(ENTER)
+        router.handle_key(UP)  # c
+        router.handle_key(UP)  # b
+        router.handle_key(DOWN)  # back to c
+        self.assertEqual(cursor.focus.input_buffer, "c")
+
+    def test_history_payload_reports_recall_outcome(self) -> None:
+        bus, session, _, router, _ = _build(["target"])
+        session.command_history.append("ls")
+        router.handle_key(ENTER)
+        recorder = _Recorder(bus)
+        router.handle_key(UP)
+        actions = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "history_previous"
+        ]
+        self.assertEqual(len(actions), 1)
+        self.assertTrue(actions[0].payload["recalled"])
+
+    def test_up_with_empty_history_is_safe(self) -> None:
+        bus, _, cursor, router, _ = _build(["target"])
+        router.handle_key(ENTER)
+        recorder = _Recorder(bus)
+        router.handle_key(UP)
+        actions = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "history_previous"
+        ]
+        self.assertEqual(len(actions), 1)
+        self.assertFalse(actions[0].payload["recalled"])
+        self.assertEqual(cursor.focus.input_buffer, "target")
+
+    def test_up_outside_input_mode_keeps_navigation_meaning(self) -> None:
+        _, _, cursor, router, cells = _build(["a", "b"])
+        cursor.move_to_bottom()
+        result = router.handle_key(UP)
+        self.assertEqual(result, "move_up")
+        self.assertEqual(cursor.focus.cell_id, cells[0].cell_id)
+
+    def test_submit_records_command_in_history(self) -> None:
+        _, session, _, router, _ = _build(["target"])
+        router.handle_key(ENTER)
+        for char in "echo hi":
+            router.handle_key(Key.printable(char))
+        router.handle_key(ENTER)
+        self.assertEqual(session.command_history, ["targetecho hi"])
+
+
 class OutputModeDispatchTests(unittest.TestCase):
 
     def _stack(

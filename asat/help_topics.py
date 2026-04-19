@@ -21,7 +21,7 @@ HELP_TOPICS: dict[str, tuple[str, ...]] = {
     "navigation": (
         "Navigation topic.",
         "NOTEBOOK mode is the home base. Up/Down walk between cells, Home/End jump to the ends of the session, Enter enters INPUT mode on the focused cell, Ctrl+N appends a fresh cell.",
-        "INPUT mode is where you type a command. Enter submits, Escape leaves without running. Left/Right walk the caret; Home/End jump to the line's start/end.",
+        "INPUT mode is where you type a command. Enter submits, Escape leaves without running. Left/Right walk the caret; Home/End jump to the line's start/end. Up/Down walk command history; Down past the most recent restores the in-progress draft.",
         "OUTPUT mode steps through a cell's captured output line-by-line. Ctrl+O enters it, Up/Down step, PageUp/PageDown page, Escape leaves.",
         "Escape is always safe — from any mode it returns you one level up toward NOTEBOOK.",
     ),

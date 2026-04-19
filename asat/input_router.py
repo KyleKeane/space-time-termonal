@@ -107,6 +107,8 @@ def default_bindings() -> BindingMap:
         Delete removes the character under the caret,
         Left / Right / Home / End move the caret within the buffer
         (Ctrl+A / Ctrl+E also jump to start / end),
+        Up / Down walk command history (most recent first; Down past
+        the most recent restores the in-progress draft),
         Ctrl+W kills the word before the caret,
         Ctrl+U kills from the start of the buffer to the caret,
         Ctrl+K kills from the caret to the end of the buffer,
@@ -175,6 +177,8 @@ def default_bindings() -> BindingMap:
             kc.RIGHT: "cursor_right",
             kc.HOME: "cursor_home",
             kc.END: "cursor_end",
+            kc.UP: "history_previous",
+            kc.DOWN: "history_next",
             Key.combo("a", Modifier.CTRL): "cursor_home",
             Key.combo("e", Modifier.CTRL): "cursor_end",
             Key.combo("w", Modifier.CTRL): "delete_word_left",
@@ -283,6 +287,7 @@ HELP_LINES: tuple[str, ...] = (
     "           ] / [ next / prev heading; 1..6 next heading of that level.",
     "INPUT:     Enter submits, Escape leaves without running.",
     "           Backspace/Delete cut, Left/Right walk, Home/End jump (or Ctrl+A/E).",
+    "           Up/Down walk command history (Down past newest restores your draft).",
     "           Ctrl+W kills word, Ctrl+U kills to start, Ctrl+K kills to end.",
     "OUTPUT:    Up/Down step lines, PageUp/PageDown page, Escape leaves.",
     "           / search (type query, Enter commits), n / N next / prev hit, g jump-to-line.",
@@ -1074,6 +1079,8 @@ class InputRouter:
             "delete_word_left": _void(self._cursor.delete_word_left),
             "delete_to_start": _void(self._cursor.delete_to_start),
             "delete_to_end": _void(self._cursor.delete_to_end),
+            "history_previous": self._history_previous,
+            "history_next": self._history_next,
             "view_output": _void(self._view_output),
             "exit_output": _void(self._cursor.exit_output_mode),
             "submit": self._submit,
@@ -1181,6 +1188,16 @@ class InputRouter:
                 payload["cell_id"] = cell.cell_id
             return payload
         return handler
+
+    def _history_previous(self) -> Optional[dict[str, object]]:
+        """Recall an older command from the session's history."""
+        recalled = self._cursor.history_previous()
+        return {"recalled": recalled}
+
+    def _history_next(self) -> Optional[dict[str, object]]:
+        """Step forward through history (or restore the in-progress draft)."""
+        recalled = self._cursor.history_next()
+        return {"recalled": recalled}
 
     def _output_search_begin(self) -> Optional[dict[str, object]]:
         """Open the `/` search composer on the attached output cursor."""
