@@ -1041,6 +1041,475 @@ behaviour for users who already know the layout.
 
 ---
 
+## F39 — Interactive event log viewer (trigger → jump → edit)
+
+**Gap.** ASAT publishes rich typed events on every state change
+(`asat/events.py`), but there is no user-facing surface that shows
+the recent event stream, and no path from "I just heard a cue I
+want to change" to "I am now editing the binding that produced it".
+Today the only way to retune a cue the user disliked is to open
+settings, remember the event type, search for the matching
+binding, and dive in — a round trip that costs focus every time.
+
+**Where it surfaces.** A blind user hears an unexpected or
+too-loud cue during normal work and has no narrated record of
+what event fired, which binding picked it, or how to reach that
+binding. The foundation — `AUDIO_SPOKEN` events
+(`asat/sound_engine.py:192`), wildcard subscribe
+(`asat/event_bus.py:24,70`), per-binding ids in the default bank
+(`asat/default_bank.py`) — is already in place; nothing composes
+it into a viewer.
+
+**Sketch.** New `FocusMode.EVENT_LOG` (`asat/input_router.py`
+`FocusMode` enum) backed by an `EventLogViewer` module
+(`asat/event_log.py`) that wildcard-subscribes on the bus and
+keeps a bounded ring buffer (default 200 entries,
+`SoundBank.event_log_capacity` override). Entry path:
+`Ctrl+E` from anywhere (ambient, like `Ctrl+,`) plus a `:log`
+meta-command (`asat/input_router.py` `_META_HANDLERS`). Focus
+lands on the newest entry automatically ("jump to latest"). Each
+entry narrates timestamp · event_type · short summary ·
+`binding_id` (if one fired).
+
+Four per-entry actions, in priority order:
+
+1. `Enter` — open `SettingsEditor` scoped to the binding that
+   fired for that event, cursor parked at field level on
+   `say_template` (the thing users most want to tweak). Reuses
+   every existing settings sub-mode (search `/`, undo, reset) for
+   free because it is a plain `begin_edit` with a pre-set cursor.
+2. `e` — inline quick-edit of one of four common fields
+   (`say_template` / `voice_id` / `enabled` / `volume`), cycled
+   with arrow keys, committed with Enter. Fires the same
+   `SETTINGS_VALUE_EDITED` as the full editor so Ctrl+Z still
+   walks the change back.
+3. `t` — re-trigger: publish a synthetic copy of the selected
+   event through the bus so the user hears the change without
+   reproducing the original condition.
+4. `Escape` — return to the prior focus mode (not SETTINGS — we
+   only land there on `Enter`).
+
+**State-machine composition.** `EVENT_LOG` is a peer of
+`SETTINGS`, not a child: you cannot be in reset / search / edit
+*and* the log viewer simultaneously. Same mutual-exclusion rule
+the existing sub-modes already follow. Opening a binding for
+edit transitions `EVENT_LOG → SETTINGS`; closing settings returns
+to wherever the user entered the log from.
+
+**New events.** `EVENT_LOG_OPENED`, `EVENT_LOG_CLOSED`,
+`EVENT_LOG_FOCUSED` (entry_index, event_type, binding_id),
+`EVENT_LOG_QUICK_EDIT_COMMITTED` (section, field, old_value,
+new_value), `EVENT_LOG_REPLAYED` (original_event_type). Wired
+into `asat/events.py::COVERED_EVENT_TYPES`,
+`asat/default_bank.py` bindings (system voice for
+open/close/focus, narrator voice for the edit-committed payload,
+a distinct `alert_replay` cue for re-trigger), and
+`tests/test_default_bank.py::SAMPLE_PAYLOADS` for each.
+
+**Suggested PR split.**
+
+- **F39a** — read-only `EventLogViewer` + `FocusMode.EVENT_LOG`
+  + `Ctrl+E` / `:log` binding + five new events + default-bank
+  bindings + docs. Users can already hear the stream and walk
+  it; no edit path yet.
+- **F39b** — `Enter` on entry → open `SettingsEditor` at the
+  matching binding (field-level cursor on `say_template`).
+  Needs a small `SettingsController.open_at_binding(binding_id,
+  field="say_template")` helper.
+- **F39c** — `e` inline quick-edit sub-mode (mirror the existing
+  edit composer in `asat/settings_editor.py`; four-field carousel).
+- **F39d** — `t` re-trigger (synthetic event replay).
+
+Documentation touch points: a new "Event log" section in
+`docs/USER_MANUAL.md` next to the settings section; a row in the
+mode-model table; an entry in the meta-command table for `:log`;
+new rows in `docs/EVENTS.md` for the five new event types; a
+short subsection in `docs/ARCHITECTURE.md` explaining the
+wildcard-subscriber pattern so future viewers (F40) reuse it.
+
+**Why this is a good fit for ASAT.** Narration-first: every
+entry is already a spoken line; the viewer just steps through
+them. Discoverable: `Ctrl+E` is learnable and `:log` is
+typable. And it closes a real loop a blind user can't close
+today: *"I heard a cue I didn't like — where do I change it?"*
+
+---
+
+## F40 — Speech viewer (programmatic + on-screen narration log)
+
+**Gap.** `SoundEngine` renders `say_template` phrases and hands
+the final text to TTS (`asat/sound_engine.py`), but nothing
+captures the resulting string in a user-visible or test-visible
+surface. Authoring a new bank is an iterate-listen-edit loop
+with no textual playback; tests assert on event payloads but
+can't easily answer "did the narration end up readable?".
+
+**Where it surfaces.** Bank authors have no way to proofread
+narration without hearing it. Blind users who want a scroll-back
+of what was just said (because they missed a word) have no
+surface. Distinct from F39 (event log): that one shows
+*every* event; this one shows only the *rendered speech stream*.
+Distinct from F28 (speech routing): that one is about *where*
+speech goes (braille, external screen reader); this is about
+*viewing* it.
+
+**Sketch.** A small `SpeechConsole` module
+(`asat/speech_console.py`) subscribes to `AUDIO_SPOKEN` (already
+published in `asat/sound_engine.py:192`) and keeps a bounded
+ring of `{timestamp, voice_id, binding_id, event_source, text}`
+entries (default 100). Two surfaces:
+
+1. **Programmatic** — `entries()`, `tail(n)`, `clear()`, plus a
+   `tee(callable)` hook for tests and the future F28 routers.
+2. **User-facing** — `Ctrl+Shift+E` (or `:speech`) opens a
+   read-only viewer very similar to F39's event log but limited
+   to spoken lines. Up/Down walks the ring; Enter on a line
+   re-reads it; Escape exits.
+
+Pairs with F30 (audio history / repeat last narration) — the
+console is the persistent textual form of the same ring. A
+single shared buffer inside `SoundEngine` would let both
+features share storage.
+
+**New events.** `SPEECH_RENDERED` (fired once the final phrase
+is resolved, before TTS synthesis) carrying `{text, voice_id,
+binding_id, source_event_type, timestamp}`; add to
+`docs/EVENTS.md`, `COVERED_EVENT_TYPES`, and `SAMPLE_PAYLOADS`.
+Separate from `AUDIO_SPOKEN` because `AUDIO_SPOKEN` is fired
+*after* synthesis; `SPEECH_RENDERED` is fired *before*, so a
+router can replace or suppress it.
+
+**Suggested PR split.**
+
+- **F40a** — `SPEECH_RENDERED` event + `SpeechConsole` ring +
+  programmatic API + tests.
+- **F40b** — `Ctrl+Shift+E` / `:speech` viewer sub-mode.
+- **F40c** — share the ring with F30's replay buffer once F30
+  lands.
+
+Documentation touch points: new section in
+`docs/USER_MANUAL.md` after the event log one; `:speech` row in
+the meta-command table; row in the mode-model table for the
+viewer sub-mode; new event row in `docs/EVENTS.md`; note in
+`docs/AUDIO.md` explaining the `SPEECH_RENDERED` vs
+`AUDIO_SPOKEN` timing distinction.
+
+---
+
+## F41 — First-run silent-sink guard
+
+**Gap.** On POSIX (Linux / macOS) the default CLI path without
+`--live` uses `MemorySink` (see `asat/__main__.py` sink
+selection), so first-run onboarding (F20 shipped) publishes
+`FIRST_RUN_DETECTED` and narrates the welcome into a buffer that
+is never played. A brand-new user hears silence and reasonably
+concludes ASAT is broken.
+
+**Where it surfaces.** The first user experience on any POSIX
+machine without `--live` or `--wav-dir`. Compounds with F6
+(POSIX live-audio still unshipped) — the *default* sink on the
+most common first-run platform is silent.
+
+**Sketch.** `OnboardingCoordinator.run()`
+(`asat/onboarding.py`) gains an optional `sink` parameter (or a
+`has_live_audio: bool`) and, when the sink is a `MemorySink`,
+writes a single-line hint to stderr **before** publishing
+`FIRST_RUN_DETECTED`:
+
+```
+[asat] No audio sink available. Pass --live for live playback,
+       --wav-dir DIR to write per-cue WAVs, or --check for a
+       diagnostic self-test.
+```
+
+The hint is plain text (no TTS) so it works even with zero
+audio. Gate the hint on first-run only — repeat launches with
+`MemorySink` are assumed intentional. Also surface the hint via
+`HELP_REQUESTED` so the in-process text trace picks it up.
+
+**Documentation touch points.** Short paragraph in
+`docs/USER_MANUAL.md` "Your first launch" subsection; mention
+in `README.md` troubleshooting; note in `docs/AUDIO.md`
+alongside the existing `MemorySink` description.
+
+---
+
+## F42 — Full `--check` diagnostic self-test
+
+**Gap.** `python -m asat --check` exists
+(`asat/__main__.py:79`) but is currently a short-circuit that
+prints a version line and exits. It is not a real self-test: it
+does not play a cue per voice, it does not verify the default
+bank validates, and it does not confirm live audio actually
+reaches the speaker. A blind user setting up ASAT on a new
+machine has no single command that answers "does this install
+work?".
+
+**Where it surfaces.** First-launch troubleshooting on any
+platform. Compounds with F6 (POSIX live audio) and F41 (silent
+sink) — today the user finds out "no audio" only by running a
+real command and hearing nothing.
+
+**Sketch.** Expand `--check` into a four-step self-test that
+prints a PASS/FAIL per step and narrates the same on the
+selected sink:
+
+1. **Bank validates.** `default_sound_bank().validate()` — fast,
+   no I/O.
+2. **Every voice speaks.** For each voice in the default bank,
+   render a short canned phrase ("voice foo check") through the
+   real TTS engine and route it to the active sink. Catches
+   SAPI / engine availability bugs.
+3. **One cue per covered event.** Publish one `SAMPLE_PAYLOADS`
+   event per `COVERED_EVENT_TYPES` member (same data
+   `tests/test_default_bank.py:17` uses), confirm at least one
+   buffer lands on the sink.
+4. **Live playback reachable.** If `--live` is set, confirm
+   `pick_live_sink()` returned a real backend; otherwise report
+   `MemorySink` explicitly so the user knows.
+
+Implementation lives in `asat/self_check.py` with an entry point
+`run_self_check(bank, sink, *, stdout=sys.stdout) -> int` that
+returns the exit code. `asat/__main__.py` wires it to the
+`--check` flag. Emit `SELF_CHECK_STEP` events so the test suite
+and future diagnostic log (F22) can record the run.
+
+**Documentation touch points.** New "Diagnosing audio issues"
+subsection in `docs/USER_MANUAL.md`; mention in `README.md`
+quick-start; cross-reference from F41's silent-sink hint.
+
+---
+
+## F43 — Guided first-command tour
+
+**Gap.** F20 (shipped) narrates a welcome and explains the key
+meta-commands, but stops there. The user is then dropped into an
+empty notebook with no prompt to actually run anything, so the
+first-run experience ends on a passive "press colon h e l p" —
+the user still has to invent their own first command to hear what
+`COMMAND_SUBMITTED` / `COMMAND_STARTED` / `COMMAND_COMPLETED` /
+exit-code narration sound like.
+
+**Where it surfaces.** A brand-new user who has just finished
+onboarding knows how to invoke `:help` but has not yet heard any
+of the execution cues that define ASAT's identity. They often
+spend their first minute guessing what to type.
+
+**Sketch.** After `OnboardingCoordinator.run()`
+(`asat/onboarding.py`) publishes `FIRST_RUN_DETECTED` and
+commits the sentinel, queue one follow-up step: pre-populate the
+first cell with `echo hello, ASAT` and narrate *"Press Enter to
+run your first command. Press Escape to clear the line and type
+your own."* Fire a new `FIRST_RUN_TOUR_STEP` event the default
+bank binds to the narrator. The user hears the full
+submit→start→complete arc on a known-good command, learns the
+cues by association, and can replace the placeholder at will.
+
+Cleanly opt-out-able by the same `--quiet` / `--check` /
+sentinel flags as F20. If the user overwrites or clears the
+pre-filled line before pressing Enter, the tour step is
+considered complete either way — we do not re-insert.
+
+**Documentation touch points.** Extend
+`docs/USER_MANUAL.md`'s "Five-minute tour" so the first
+paragraph matches what a fresh install actually does now;
+mention the tour in `README.md` quick-start.
+
+---
+
+## F44 — `:welcome` meta-command to replay onboarding
+
+**Gap.** Once the first-run sentinel at `~/.asat/first-run-done`
+(`asat/__main__.py:232`) is written, there is no supported path
+to re-hear the onboarding narration. A user who missed a word,
+wants to re-learn after a long hiatus, or wants to demo ASAT to
+someone else has to manually delete the sentinel and relaunch.
+
+**Where it surfaces.** Support and teaching — every time
+someone says "wait, what were those key bindings again?" the
+only answer today is `rm ~/.asat/first-run-done && python -m asat`.
+
+**Sketch.** Add a `:welcome` meta-command
+(`asat/input_router.py` `_META_HANDLERS`) that re-invokes
+`OnboardingCoordinator.run(force=True)` on the live bus. The
+coordinator grows a `force: bool = False` parameter that skips
+the sentinel check but does *not* rewrite the sentinel (the
+sentinel's meaning stays "the user has seen this once"). Accepts
+an optional argument: `:welcome tour` runs the F43 guided
+first-command tour as well; bare `:welcome` replays just the
+spoken welcome.
+
+Pairs with F38 (self-voicing help topics) — `:welcome` is the
+one fixed-script tour; `:help <topic>` covers everything else.
+
+**Documentation touch points.** New row in the meta-command
+table at `docs/USER_MANUAL.md:199-208`; mention in the
+"Your first launch" subsection so users know they can re-hear
+it; cross-reference from F38.
+
+---
+
+## F45 — `ASAT_HOME` environment variable for portable installs
+
+**Gap.** Every user-owned file path is hard-coded to
+`Path.home() / ".asat" / <filename>`. The onboarding sentinel at
+`asat/__main__.py:232`, the implicit future home for F4 (command
+history), F25 (`~/.asat/keybindings.json`), F35 (persistent
+bookmarks), and any other per-user state are all anchored to a
+single process-wide directory the user cannot redirect. A
+tester running multiple ASAT installs side-by-side, a CI job
+running the CLI, and a shared-workstation user all have no
+clean isolation.
+
+**Where it surfaces.** Power-user isolation; CI environments;
+multi-install testing. Directly enables the clean fix for F46
+(the test-pollution bug) by giving the suite an override hook
+that is not per-module mock wiring.
+
+**Sketch.** A tiny `asat/user_paths.py` module exposes
+`user_home() -> Path` that returns `Path(os.environ["ASAT_HOME"])`
+if set, else `Path.home() / ".asat"`. Every existing
+`Path.home() / ".asat"` site migrates to `user_home()`:
+
+- `asat/__main__.py:232` (onboarding sentinel)
+- all future per-user paths (F4, F25, F35, etc.)
+
+A startup message mentions the override the first time
+`ASAT_HOME` is in effect so users know it is honored. Document
+in `docs/USER_MANUAL.md` under a new "Environment variables"
+subsection near the CLI flags reference.
+
+**Documentation touch points.** New subsection in
+`docs/USER_MANUAL.md`; note in `README.md` troubleshooting;
+reference from F46's fix sketch (the test suite sets
+`ASAT_HOME=<tmpdir>` in a `setUp`).
+
+---
+
+## F46 — Onboarding sentinel test isolation (critical bug)
+
+**Gap.** `asat/__main__.py:232` hard-codes the first-run
+sentinel at `Path.home() / ".asat" / "first-run-done"`, and
+`tests/test_cli.py` (lines 39, 53, 64, 87, 110, 124) invokes
+`cli.main([...])` to exercise the CLI without patching
+`_onboarding_factory`. `test_cli.py` patches `pick_default`, but
+onboarding is invoked *before* pick_default returns for many
+launches, so a real sentinel lands on the developer's home
+directory every time the suite runs. Verified on this machine:
+`~/.asat/first-run-done` exists with an mtime matching the last
+test run.
+
+**Where it surfaces.** Any developer running
+`python -m unittest discover -s tests -t .` silently loses
+first-run onboarding on their own install. CI runs write the
+sentinel into `$HOME` of the runner. Shared-machine workflows
+are actively harmed.
+
+**Sketch.** Two fixes that stack cleanly with F45:
+
+1. **Accept an override.** `_onboarding_factory(*, quiet, check,
+   sentinel_path=None)` in `asat/__main__.py:220` grows an
+   optional `sentinel_path` kwarg. If unset, it consults
+   `user_home() / "first-run-done"` (see F45).
+2. **Patch the tests.** `tests/test_cli.py` either (a) sets
+   `ASAT_HOME=<tmpdir>` in `setUp` so onboarding writes
+   somewhere disposable (assumes F45), or (b) mocks
+   `asat.__main__._onboarding_factory` to return `None` for the
+   duration of each CLI test (works without F45).
+
+Also add a regression test that invokes `cli.main([])` with a
+controlled `ASAT_HOME` and asserts no file is written to the
+real user home.
+
+**Documentation touch points.** Note in
+`tests/README.md` (if it exists, else
+`docs/ARCHITECTURE.md` "Testing" section) that any new CLI test
+must isolate `ASAT_HOME`; add `tests/test_cli.py` comment at the
+top explaining the isolation contract.
+
+---
+
+## F47 — Package version + pyproject metadata hygiene
+
+**Gap.** Two package-metadata inconsistencies:
+
+1. **Version drift.** `pyproject.toml:7` declares
+   `version = "0.6.0"` while `asat/__init__.py:191` declares
+   `__version__ = "0.7.0"`. A user asking `python -c "import
+   asat; print(asat.__version__)"` sees a different number than
+   `pip show asat`. A release cut from either source of truth
+   will confuse downstream users.
+2. **Placeholder readme.** `pyproject.toml:10` still carries
+   the Phase-1-era inline string
+   `readme = { text = "Phase 1 foundation: data models and
+   event bus.", content-type = "text/plain" }` instead of
+   pointing at the repo-root `README.md` that F9 (shipped) now
+   provides. PyPI and every `pip show` summary show the stale
+   one-liner.
+
+**Where it surfaces.** Any user running `pip show asat` sees
+"Phase 1 foundation"; any user checking version by import vs CLI
+sees two different numbers; any future release tooling that
+reads either file disagrees with the other.
+
+**Sketch.** Three small changes in one PR:
+
+1. Update `pyproject.toml:7` to match the current
+   `asat/__init__.py:191` (or pick a single forward number, e.g.
+   `0.7.0`, and align both).
+2. Replace `pyproject.toml:10` with a file reference:
+   `readme = "README.md"` (plus matching `content-type =
+   "text/markdown"`).
+3. Add a tiny regression test (`tests/test_metadata.py`) that
+   reads `pyproject.toml` via `tomllib` and asserts
+   `asat.__version__ == pyproject_version`. Keeps them aligned
+   forever.
+
+**Documentation touch points.** No user-manual changes; this is
+pure packaging hygiene. Cross-reference from `HANDOFF.md`
+maintenance backlog — already flagged verbally in the audit.
+
+---
+
+## F48 — Discoverability: `:reset` docs row + SETTINGS HELP_LINES
+
+**Gap.** F21c shipped `:reset bank` / `:reset all` as INPUT-mode
+meta-commands and Ctrl+R / Ctrl+Z / Ctrl+Y inside SETTINGS, but
+two discoverability surfaces missed the update:
+
+1. The meta-command table at
+   `docs/USER_MANUAL.md:199-208` does not list `:reset bank` as
+   a row, even though it lives further down in the full cheat
+   sheet (around line 485). A user scanning the primary table
+   does not learn `:reset bank` exists.
+2. `HELP_LINES` in `asat/input_router.py:218-236` — the strings
+   that `:help` narrates — mention `:reset` in the meta list but
+   do not mention the SETTINGS-mode Ctrl+Z / Ctrl+Y / Ctrl+R
+   keystrokes at all. Blind users who cannot see a manual have
+   no audible path to learn those bindings.
+
+**Where it surfaces.** Every new user who learns ASAT from
+`:help` alone. Every existing user who forgets Ctrl+Z inside
+settings and tries to recover by scanning the meta-command
+table.
+
+**Sketch.** Two-line doc PR that touches only strings:
+
+1. Add a row to `docs/USER_MANUAL.md:199-208`:
+   `| :reset bank | Reset the whole sound bank to defaults (also :reset all). |`
+2. Extend `HELP_LINES` in `asat/input_router.py` with a
+   SETTINGS-specific line:
+   `"Settings:  Ctrl+Z undo, Ctrl+Y redo, Ctrl+R reset to defaults, / search."`
+3. Add a regression test in `tests/test_input_router.py` that
+   asserts `HELP_LINES` mentions each of `Ctrl+Z`, `Ctrl+Y`, and
+   `Ctrl+R` so future edits do not regress discoverability.
+
+**Documentation touch points.** `docs/USER_MANUAL.md:199-208`
+(meta-command table), `asat/input_router.py:218-236`
+(HELP_LINES), `tests/test_input_router.py` (regression guard).
+
+---
+
 ## How to add an entry
 
 Append a section using the template:
