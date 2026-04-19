@@ -1398,6 +1398,18 @@ class SettingsResetBindingTests(unittest.TestCase):
         joined = "\n".join(HELP_LINES)
         self.assertIn(":reset", joined)
 
+    def test_help_mentions_settings_undo_redo(self) -> None:
+        # F48: the SETTINGS-mode undo/redo keystrokes must stay
+        # audible to users who can only learn from `:help`. If a
+        # future edit drops them, this test names F48 in its
+        # failure so the cause is obvious.
+        from asat.input_router import HELP_LINES
+        joined = "\n".join(HELP_LINES).lower()
+        self.assertIn("ctrl+z", joined, "F48: Ctrl+Z undo missing from HELP_LINES")
+        self.assertIn("ctrl+y", joined, "F48: Ctrl+Y redo missing from HELP_LINES")
+        self.assertIn("undo", joined)
+        self.assertIn("redo", joined)
+
 
 class MetaResetCommandTests(unittest.TestCase):
     """F21c: `:reset` meta-command from INPUT mode."""

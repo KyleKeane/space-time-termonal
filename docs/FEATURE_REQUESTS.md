@@ -1198,39 +1198,30 @@ viewer sub-mode; new event row in `docs/EVENTS.md`; note in
 
 ## F41 — First-run silent-sink guard
 
-**Gap.** On POSIX (Linux / macOS) the default CLI path without
-`--live` uses `MemorySink` (see `asat/__main__.py` sink
-selection), so first-run onboarding (F20 shipped) publishes
-`FIRST_RUN_DETECTED` and narrates the welcome into a buffer that
-is never played. A brand-new user hears silence and reasonably
-concludes ASAT is broken.
+**Status: Shipped.**
 
-**Where it surfaces.** The first user experience on any POSIX
-machine without `--live` or `--wav-dir`. Compounds with F6
-(POSIX live-audio still unshipped) — the *default* sink on the
-most common first-run platform is silent.
+**Gap (at time of shipping).** On POSIX the default CLI path
+without `--live` used `MemorySink`, so first-run onboarding
+narrated the welcome into a buffer that was never played. A
+brand-new user heard silence and reasonably concluded ASAT was
+broken.
 
-**Sketch.** `OnboardingCoordinator.run()`
-(`asat/onboarding.py`) gains an optional `sink` parameter (or a
-`has_live_audio: bool`) and, when the sink is a `MemorySink`,
-writes a single-line hint to stderr **before** publishing
-`FIRST_RUN_DETECTED`:
-
-```
-[asat] No audio sink available. Pass --live for live playback,
-       --wav-dir DIR to write per-cue WAVs, or --check for a
-       diagnostic self-test.
-```
-
-The hint is plain text (no TTS) so it works even with zero
-audio. Gate the hint on first-run only — repeat launches with
-`MemorySink` are assumed intentional. Also surface the hint via
-`HELP_REQUESTED` so the in-process text trace picks it up.
-
-**Documentation touch points.** Short paragraph in
-`docs/USER_MANUAL.md` "Your first launch" subsection; mention
-in `README.md` troubleshooting; note in `docs/AUDIO.md`
-alongside the existing `MemorySink` description.
+**Sketch (shipped).** `OnboardingCoordinator.__init__`
+(`asat/onboarding.py:50`) gained `has_live_audio: bool = True`
+and `hint_stream: Optional[IO[str]] = None` kwargs. When both
+`is_first_run()` and `not has_live_audio` are true, `run()`
+prints `SILENT_SINK_HINT` (a plain-text line naming `--live`,
+`--wav-dir DIR`, and `--check`) to `hint_stream` (defaults to
+`sys.stderr`) **before** publishing `FIRST_RUN_DETECTED`. Gated
+on first-run only so the hint never repeats. `asat/__main__.py`
+computes `has_live_audio = bool(args.live) or args.wav_dir is
+not None` and plumbs it through `_onboarding_factory` so the
+existing CLI hint stays cooperative rather than duplicative.
+Tests: three new cases in `tests/test_onboarding.py`
+(`test_silent_sink_writes_hint_before_publishing`,
+`test_live_audio_suppresses_silent_sink_hint`,
+`test_silent_sink_hint_is_first_run_only`). Future callers
+(F44 `:welcome` replay) inherit the behaviour for free.
 
 ---
 
@@ -1442,82 +1433,45 @@ subsection documents the user-visible half.
 
 ## F47 — Package version + pyproject metadata hygiene
 
-**Gap.** Two package-metadata inconsistencies:
+**Status: Shipped.**
 
-1. **Version drift.** `pyproject.toml:7` declares
-   `version = "0.6.0"` while `asat/__init__.py:191` declares
-   `__version__ = "0.7.0"`. A user asking `python -c "import
-   asat; print(asat.__version__)"` sees a different number than
-   `pip show asat`. A release cut from either source of truth
-   will confuse downstream users.
-2. **Placeholder readme.** `pyproject.toml:10` still carries
-   the Phase-1-era inline string
-   `readme = { text = "Phase 1 foundation: data models and
-   event bus.", content-type = "text/plain" }` instead of
-   pointing at the repo-root `README.md` that F9 (shipped) now
-   provides. PyPI and every `pip show` summary show the stale
-   one-liner.
+**Gap (at time of shipping).** `pyproject.toml` declared
+`version = "0.6.0"` while `asat/__init__.py:191` declared
+`__version__ = "0.7.0"`, and the `readme` field still carried
+the Phase-1-era inline placeholder `{ text = "Phase 1
+foundation: data models and event bus." }` instead of pointing
+at the real `README.md`.
 
-**Where it surfaces.** Any user running `pip show asat` sees
-"Phase 1 foundation"; any user checking version by import vs CLI
-sees two different numbers; any future release tooling that
-reads either file disagrees with the other.
-
-**Sketch.** Three small changes in one PR:
-
-1. Update `pyproject.toml:7` to match the current
-   `asat/__init__.py:191` (or pick a single forward number, e.g.
-   `0.7.0`, and align both).
-2. Replace `pyproject.toml:10` with a file reference:
-   `readme = "README.md"` (plus matching `content-type =
-   "text/markdown"`).
-3. Add a tiny regression test (`tests/test_metadata.py`) that
-   reads `pyproject.toml` via `tomllib` and asserts
-   `asat.__version__ == pyproject_version`. Keeps them aligned
-   forever.
-
-**Documentation touch points.** No user-manual changes; this is
-pure packaging hygiene. Cross-reference from `HANDOFF.md`
-maintenance backlog — already flagged verbally in the audit.
+**Sketch (shipped).** `pyproject.toml` now declares
+`version = "0.7.0"` and `readme = "README.md"` (markdown content
+type is inferred from the `.md` extension). New
+`tests/test_metadata.py` reads `pyproject.toml` via `tomllib`
+and asserts three invariants so the pair cannot drift again:
+versions match, `readme` points at `README.md`, and the
+description is not the Phase-1 placeholder.
 
 ---
 
 ## F48 — Discoverability: `:reset` docs row + SETTINGS HELP_LINES
 
-**Gap.** F21c shipped `:reset bank` / `:reset all` as INPUT-mode
-meta-commands and Ctrl+R / Ctrl+Z / Ctrl+Y inside SETTINGS, but
-two discoverability surfaces missed the update:
+**Status: Shipped.**
 
-1. The meta-command table at
-   `docs/USER_MANUAL.md:199-208` does not list `:reset bank` as
-   a row, even though it lives further down in the full cheat
-   sheet (around line 485). A user scanning the primary table
-   does not learn `:reset bank` exists.
-2. `HELP_LINES` in `asat/input_router.py:218-236` — the strings
-   that `:help` narrates — mention `:reset` in the meta list but
-   do not mention the SETTINGS-mode Ctrl+Z / Ctrl+Y / Ctrl+R
-   keystrokes at all. Blind users who cannot see a manual have
-   no audible path to learn those bindings.
+**Gap (at time of shipping).** F21c shipped `:reset bank` /
+`:reset all` and SETTINGS Ctrl+R / Ctrl+Z / Ctrl+Y, but two
+discoverability surfaces missed the update: the primary
+meta-command table in `docs/USER_MANUAL.md` did not list
+`:reset bank`, and `HELP_LINES` in `asat/input_router.py` did
+not name the SETTINGS-mode undo/redo keystrokes at all. Users
+who learn ASAT only from `:help` had no audible path to them.
 
-**Where it surfaces.** Every new user who learns ASAT from
-`:help` alone. Every existing user who forgets Ctrl+Z inside
-settings and tries to recover by scanning the meta-command
-table.
-
-**Sketch.** Two-line doc PR that touches only strings:
-
-1. Add a row to `docs/USER_MANUAL.md:199-208`:
-   `| :reset bank | Reset the whole sound bank to defaults (also :reset all). |`
-2. Extend `HELP_LINES` in `asat/input_router.py` with a
-   SETTINGS-specific line:
-   `"Settings:  Ctrl+Z undo, Ctrl+Y redo, Ctrl+R reset to defaults, / search."`
-3. Add a regression test in `tests/test_input_router.py` that
-   asserts `HELP_LINES` mentions each of `Ctrl+Z`, `Ctrl+Y`, and
-   `Ctrl+R` so future edits do not regress discoverability.
-
-**Documentation touch points.** `docs/USER_MANUAL.md:199-208`
-(meta-command table), `asat/input_router.py:218-236`
-(HELP_LINES), `tests/test_input_router.py` (regression guard).
+**Sketch (shipped).** Added `:reset bank` row to the meta-command
+table at `docs/USER_MANUAL.md`. Extended `HELP_LINES` with a
+new SETTINGS line: `"Ctrl+Z undo, Ctrl+Y redo edits in the order
+you made them."` (slotted before the existing Ctrl+R reset
+line). New regression test
+`tests/test_input_router.py::SettingsResetBindingTests::test_help_mentions_settings_undo_redo`
+names F48 in its failure messages so a future edit cannot
+silently regress discoverability.
 
 ---
 

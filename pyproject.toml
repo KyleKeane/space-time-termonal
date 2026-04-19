@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "asat"
-version = "0.6.0"
+version = "0.7.0"
 description = "Accessible Spatial Audio Terminal"
 requires-python = ">=3.10"
-readme = { text = "Phase 1 foundation: data models and event bus.", content-type = "text/plain" }
+readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "ASAT contributors" }]
 dependencies = []

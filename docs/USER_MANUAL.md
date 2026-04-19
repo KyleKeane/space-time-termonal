@@ -219,6 +219,7 @@ discarded and the cell is not modified.
 | `:duplicate` | Duplicate the focused cell (same as `y` in NOTEBOOK).|
 | `:pwd`       | Announce the current working directory.              |
 | `:commands`  | List every available meta-command.                   |
+| `:reset bank` | Reset the whole sound bank to the built-in defaults (also `:reset all`). |
 
 Meta-command names are **case-insensitive** — `:HELP`, `:Help`, and
 `:help` all do the same thing. A single trailing argument is

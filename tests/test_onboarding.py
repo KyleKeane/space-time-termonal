@@ -1,14 +1,19 @@
-"""Unit tests for OnboardingCoordinator (F20)."""
+"""Unit tests for OnboardingCoordinator (F20, F41)."""
 
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
 from pathlib import Path
 
 from asat.event_bus import EventBus
 from asat.events import Event, EventType
-from asat.onboarding import DEFAULT_ONBOARDING_LINES, OnboardingCoordinator
+from asat.onboarding import (
+    DEFAULT_ONBOARDING_LINES,
+    SILENT_SINK_HINT,
+    OnboardingCoordinator,
+)
 
 
 class _Recorder:
@@ -101,6 +106,70 @@ class OnboardingCoordinatorTests(unittest.TestCase):
         bus = EventBus()
         coordinator = OnboardingCoordinator(bus, str(self.sentinel))
         self.assertEqual(coordinator.sentinel_path, self.sentinel)
+
+    def test_silent_sink_writes_hint_before_publishing(self) -> None:
+        # F41: a first-time user on a silent sink must be told in
+        # plain text that the welcome tour is about to disappear into
+        # a buffer they will never hear, so they do not conclude ASAT
+        # is broken. The hint lands on the supplied stream before the
+        # event fires so screen readers speaking stderr pick it up in
+        # the same moment as the audio would have played.
+        bus = EventBus()
+        recorder = _Recorder(bus)
+        stream = io.StringIO()
+        coordinator = OnboardingCoordinator(
+            bus,
+            self.sentinel,
+            has_live_audio=False,
+            hint_stream=stream,
+        )
+
+        fired = coordinator.run()
+
+        self.assertTrue(fired)
+        self.assertIn(SILENT_SINK_HINT, stream.getvalue())
+        # And the tour event still fires so the existing narration
+        # path is unchanged when a sink is later attached.
+        self.assertEqual(len(recorder.of(EventType.FIRST_RUN_DETECTED)), 1)
+
+    def test_live_audio_suppresses_silent_sink_hint(self) -> None:
+        # When the user has told us where audio goes (via --live or
+        # --wav-dir), the coordinator must stay silent on stderr or
+        # the launch banner will be cluttered with a warning that
+        # does not apply.
+        bus = EventBus()
+        stream = io.StringIO()
+        coordinator = OnboardingCoordinator(
+            bus,
+            self.sentinel,
+            has_live_audio=True,
+            hint_stream=stream,
+        )
+
+        coordinator.run()
+
+        self.assertEqual(stream.getvalue(), "")
+
+    def test_silent_sink_hint_is_first_run_only(self) -> None:
+        # Second launch on a silent sink must not repeat the hint.
+        # Regressing this would spam stderr every time ASAT starts
+        # without --live on POSIX, which is the daily path until F6.
+        bus = EventBus()
+        stream = io.StringIO()
+        coordinator = OnboardingCoordinator(
+            bus,
+            self.sentinel,
+            has_live_audio=False,
+            hint_stream=stream,
+        )
+        coordinator.run()
+        stream.truncate(0)
+        stream.seek(0)
+
+        fired_again = coordinator.run()
+
+        self.assertFalse(fired_again)
+        self.assertEqual(stream.getvalue(), "")
 
     def test_default_lines_mention_help_and_quit(self) -> None:
         # Sanity check the welcome text a newcomer will actually hear
