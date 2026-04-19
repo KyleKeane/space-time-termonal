@@ -70,6 +70,25 @@ def _requires_settings_controller(method: Callable[..., object]) -> Callable[...
     return wrapper
 
 
+def _requires_output_cursor(method: Callable[..., object]) -> Callable[..., object]:
+    """Skip the wrapped method when no OutputCursor is attached.
+
+    Same shape as ``_requires_settings_controller``: OUTPUT-mode
+    composer helpers (search, goto, commit, cancel) all began with the
+    same ``if self._output_cursor is None: return None`` early-return.
+    Decorating them collapses that boilerplate so every method body
+    starts with the actual work.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if self._output_cursor is None:
+            return None
+        return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 def _void(fn: Callable[..., object]) -> ActionHandler:
     """Wrap a side-effecting callable so it matches the ActionHandler shape.
 
@@ -1402,47 +1421,42 @@ class InputRouter:
         recalled = self._cursor.history_next()
         return {"recalled": recalled}
 
+    @_requires_output_cursor
     def _output_search_begin(self) -> Optional[dict[str, object]]:
         """Open the `/` search composer on the attached output cursor."""
-        if self._output_cursor is None:
-            return None
         started = self._output_cursor.begin_search()
         return {"opened": started}
 
+    @_requires_output_cursor
     def _output_goto_begin(self) -> Optional[dict[str, object]]:
         """Open the `g` line-jump composer on the attached output cursor."""
-        if self._output_cursor is None:
-            return None
         started = self._output_cursor.begin_goto()
         return {"opened": started}
 
+    @_requires_output_cursor
     def _output_search_next(self) -> Optional[dict[str, object]]:
         """Cycle to the next search hit (no-op without prior matches)."""
-        if self._output_cursor is None:
-            return None
         line = self._output_cursor.next_match()
         if line is None:
             return {"matched": False}
         return {"matched": True, "line_number": line.line_number}
 
+    @_requires_output_cursor
     def _output_search_prev(self) -> Optional[dict[str, object]]:
         """Cycle to the previous search hit (no-op without prior matches)."""
-        if self._output_cursor is None:
-            return None
         line = self._output_cursor.prev_match()
         if line is None:
             return {"matched": False}
         return {"matched": True, "line_number": line.line_number}
 
+    @_requires_output_cursor
     def _output_composer_backspace(self) -> None:
         """Trim the in-progress query or line-number buffer by one char."""
-        if self._output_cursor is not None:
-            self._output_cursor.backspace_composer()
+        self._output_cursor.backspace_composer()
 
+    @_requires_output_cursor
     def _output_composer_commit(self) -> Optional[dict[str, object]]:
         """Apply the in-progress composer; report where we landed."""
-        if self._output_cursor is None:
-            return None
         mode = self._output_cursor.composer_mode
         query = self._output_cursor.composer_buffer
         line = self._output_cursor.commit_composer()
@@ -1451,10 +1465,9 @@ class InputRouter:
             payload["line_number"] = line.line_number
         return payload
 
+    @_requires_output_cursor
     def _output_composer_cancel(self) -> Optional[dict[str, object]]:
         """Discard the composer and restore the line the user started on."""
-        if self._output_cursor is None:
-            return None
         self._output_cursor.cancel_composer()
         return None
 
