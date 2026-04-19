@@ -712,5 +712,86 @@ class HeadingCreationTests(unittest.TestCase):
         self.assertEqual(dup.heading_title, "Setup")
 
 
+class CursorCommandHistoryTests(unittest.TestCase):
+    """F4: Up/Down walk session.command_history while in INPUT mode."""
+
+    def setUp(self) -> None:
+        self.bus = EventBus()
+        self.session, self.cells = _session_with(["target"])
+        self.cursor = NotebookCursor(self.session, self.bus)
+        self.session.command_history.extend(["one", "two", "three"])
+        self.cursor.enter_input_mode()
+        self.cursor.set_input_buffer("")
+
+    def test_history_previous_walks_back_from_most_recent(self) -> None:
+        self.assertTrue(self.cursor.history_previous())
+        self.assertEqual(self.cursor.focus.input_buffer, "three")
+        self.assertEqual(self.cursor.focus.cursor_position, len("three"))
+        self.assertTrue(self.cursor.history_previous())
+        self.assertEqual(self.cursor.focus.input_buffer, "two")
+        self.assertTrue(self.cursor.history_previous())
+        self.assertEqual(self.cursor.focus.input_buffer, "one")
+
+    def test_history_previous_clamps_at_oldest(self) -> None:
+        for _ in range(3):
+            self.cursor.history_previous()
+        self.assertEqual(self.cursor.focus.input_buffer, "one")
+        self.assertFalse(self.cursor.history_previous())
+        self.assertEqual(self.cursor.focus.input_buffer, "one")
+
+    def test_history_next_without_browse_is_noop(self) -> None:
+        self.assertFalse(self.cursor.history_next())
+        self.assertEqual(self.cursor.focus.input_buffer, "")
+
+    def test_history_next_walks_forward_then_restores_draft(self) -> None:
+        self.cursor.set_input_buffer("draft-")
+        self.cursor.history_previous()  # now "three"
+        self.cursor.history_previous()  # now "two"
+        self.assertTrue(self.cursor.history_next())
+        self.assertEqual(self.cursor.focus.input_buffer, "three")
+        self.assertTrue(self.cursor.history_next())
+        # Past most recent: draft restored.
+        self.assertEqual(self.cursor.focus.input_buffer, "draft-")
+        self.assertEqual(self.cursor.focus.cursor_position, len("draft-"))
+        # Subsequent Down is a no-op (we're back to typing).
+        self.assertFalse(self.cursor.history_next())
+
+    def test_typing_clears_browse_state(self) -> None:
+        self.cursor.history_previous()
+        self.cursor.insert_character("x")
+        # After typing, the browse state is gone — Up should restart
+        # from the most recent entry, not continue from "two".
+        self.cursor.history_previous()
+        self.assertEqual(self.cursor.focus.input_buffer, "three")
+
+    def test_history_outside_input_mode_is_noop(self) -> None:
+        self.cursor.exit_input_mode()
+        self.assertFalse(self.cursor.history_previous())
+        self.assertFalse(self.cursor.history_next())
+
+    def test_empty_history_is_noop(self) -> None:
+        self.session.command_history.clear()
+        self.assertFalse(self.cursor.history_previous())
+
+    def test_submit_records_non_empty_command(self) -> None:
+        self.cursor.set_input_buffer("echo hi")
+        cell = self.cursor.submit()
+        assert cell is not None
+        # "three" was the prior most recent; "echo hi" appends now.
+        self.assertEqual(
+            self.session.command_history,
+            ["one", "two", "three", "echo hi"],
+        )
+
+    def test_submit_skips_empty_and_collapses_duplicates(self) -> None:
+        self.cursor.set_input_buffer("   ")
+        self.cursor.submit()
+        # Re-enter INPUT on the same cell so we can submit again.
+        self.cursor.enter_input_mode()
+        self.cursor.set_input_buffer("three")
+        self.cursor.submit()
+        self.assertEqual(self.session.command_history, ["one", "two", "three"])
+
+
 if __name__ == "__main__":
     unittest.main()

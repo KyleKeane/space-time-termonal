@@ -132,6 +132,36 @@ class SessionFocusAndNavigationTests(unittest.TestCase):
         self.assertIsNone(session.next_cell(c.cell_id))
 
 
+class SessionCommandHistoryTests(unittest.TestCase):
+    """F4: Session tracks the commands the user has submitted."""
+
+    def test_record_appends_non_empty(self) -> None:
+        session = Session.new()
+        appended = session.record_command("echo hi")
+        self.assertTrue(appended)
+        self.assertEqual(session.command_history, ["echo hi"])
+
+    def test_record_drops_whitespace_only(self) -> None:
+        session = Session.new()
+        self.assertFalse(session.record_command("   "))
+        self.assertFalse(session.record_command(""))
+        self.assertEqual(session.command_history, [])
+
+    def test_record_collapses_consecutive_duplicates(self) -> None:
+        session = Session.new()
+        session.record_command("pytest")
+        appended = session.record_command("pytest")
+        self.assertFalse(appended)
+        self.assertEqual(session.command_history, ["pytest"])
+
+    def test_record_keeps_non_consecutive_duplicates(self) -> None:
+        session = Session.new()
+        session.record_command("ls")
+        session.record_command("pwd")
+        session.record_command("ls")
+        self.assertEqual(session.command_history, ["ls", "pwd", "ls"])
+
+
 class SessionSerializationTests(unittest.TestCase):
 
     def test_round_trip_preserves_state(self) -> None:
@@ -141,11 +171,14 @@ class SessionSerializationTests(unittest.TestCase):
         session.add_cell(b)
         session.set_active(b.cell_id)
         session.metadata["project"] = "asat"
+        session.record_command("ls")
+        session.record_command("pwd")
         restored = Session.from_dict(session.to_dict())
         self.assertEqual(restored.session_id, session.session_id)
         self.assertEqual([c.command for c in restored], ["a", "b"])
         self.assertEqual(restored.active_cell_id, b.cell_id)
         self.assertEqual(restored.metadata, {"project": "asat"})
+        self.assertEqual(restored.command_history, ["ls", "pwd"])
 
     def test_save_and_load_roundtrip_on_disk(self) -> None:
         session = Session.new()

@@ -64,6 +64,28 @@ prompt. Bind to a keystroke (Ctrl+R) in SETTINGS mode.
 
 ## F4 — Command history
 
+**Status.** Shipped (Up / Down recall). `Session` now carries a
+`command_history: list[str]` populated at `record_command` time —
+empty / whitespace-only commands are dropped and consecutive
+duplicates collapse so the user doesn't have to walk past the same
+`pytest` invocation ten times. `NotebookCursor.history_previous` /
+`history_next` walk that list while in INPUT mode; Up replaces the
+buffer with the previous command (caret at end), Down steps forward,
+and Down past the most recent entry restores whatever the user had
+typed before they started browsing. Typing or any other buffer
+mutation clears the browse state so the next Up restarts from the
+most-recent entry. Bound to Up / Down in INPUT mode (the keys still
+mean "walk cells" in NOTEBOOK mode and "step lines" in OUTPUT mode
+because the binding map is per focus mode). The router's
+`history_previous` / `history_next` actions publish a
+`recalled: bool` payload so observers can voice an "empty history"
+hint. `command_history` round-trips through `Session.to_dict` /
+`from_dict` so resuming a saved session preserves the walk.
+
+**Deferred.** Ctrl+R reverse-incremental search is still open; it
+needs a composer overlay analogous to the SETTINGS `/` search and is
+worth its own follow-up PR.
+
 **Gap.** Up / Down in INPUT mode do nothing. There is no way to recall
 or search past commands.
 

@@ -45,6 +45,13 @@ class Session:
     # sub-directories. Stored as a string for portable JSON; resolved
     # by ``Workspace.resolve_cwd`` at open time.
     cwd: Optional[str] = None
+    # Ordered list of every non-empty command submitted in this
+    # session, oldest first. Powers F4 history recall (Up/Down in INPUT
+    # mode). Consecutive duplicates are collapsed at append time so a
+    # user re-running the same command doesn't have to walk past it
+    # repeatedly. Persisted with the session so resuming preserves the
+    # walk.
+    command_history: list[str] = field(default_factory=list)
 
     @classmethod
     def new(cls) -> "Session":
@@ -150,6 +157,7 @@ class Session:
             "active_cell_id": self.active_cell_id,
             "metadata": dict(self.metadata),
             "cwd": self.cwd,
+            "command_history": list(self.command_history),
             "cells": [cell.to_dict() for cell in self.cells],
         }
 
@@ -164,7 +172,25 @@ class Session:
             active_cell_id=data.get("active_cell_id"),
             metadata=dict(data.get("metadata", {})),
             cwd=data.get("cwd"),
+            command_history=list(data.get("command_history", [])),
         )
+
+    def record_command(self, command: str) -> bool:
+        """Append ``command`` to the history if it's worth recalling.
+
+        Returns True if the command was actually appended. Empty /
+        whitespace-only commands are dropped, and a command identical
+        to the most recent entry is collapsed (so the user doesn't
+        walk past `pytest` ten times to reach the previous edit).
+        """
+        stripped = command.strip()
+        if not stripped:
+            return False
+        if self.command_history and self.command_history[-1] == command:
+            return False
+        self.command_history.append(command)
+        self.updated_at = utcnow()
+        return True
 
     def save(self, path: Path | str) -> None:
         """Write the session as pretty-printed JSON to the given path."""

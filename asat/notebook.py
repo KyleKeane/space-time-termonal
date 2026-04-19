@@ -92,6 +92,14 @@ class NotebookCursor:
         self._state = FocusState(mode=FocusMode.NOTEBOOK, cell_id=initial_cell_id)
         if initial_cell_id is not None and session.active_cell_id is None:
             session.set_active(initial_cell_id)
+        # F4 history-recall browse state. ``_history_index`` is None
+        # whenever we're not actively walking history; an integer means
+        # the buffer currently shows ``session.command_history[idx]``.
+        # ``_history_pre_browse`` remembers what the user had typed
+        # before they reached for Up so Down past the most-recent entry
+        # can restore it.
+        self._history_index: Optional[int] = None
+        self._history_pre_browse: str = ""
 
     @property
     def focus(self) -> FocusState:
@@ -339,6 +347,7 @@ class NotebookCursor:
         cell = self._session.get_cell(self._state.cell_id)
         if not cell.is_executable:
             return None
+        self._clear_history_browse()
         self._transition(
             FocusState(
                 mode=FocusMode.INPUT,
@@ -354,6 +363,7 @@ class NotebookCursor:
         if self._state.mode != FocusMode.INPUT or self._state.cell_id is None:
             return None
         self._commit_buffer_to_cell()
+        self._clear_history_browse()
         self._transition(
             FocusState(
                 mode=FocusMode.NOTEBOOK,
@@ -434,6 +444,7 @@ class NotebookCursor:
         """
         if self._state.mode != FocusMode.INPUT or self._state.cell_id is None:
             return None
+        self._clear_history_browse()
         self._transition(
             FocusState(
                 mode=FocusMode.NOTEBOOK,
@@ -458,6 +469,7 @@ class NotebookCursor:
             return
         if not self._state.input_buffer:
             return
+        self._clear_history_browse()
         self._transition(replace(self._state, input_buffer="", cursor_position=0))
 
     def insert_character(self, character: str) -> None:
@@ -469,6 +481,7 @@ class NotebookCursor:
             return
         if len(character) != 1:
             raise ValueError("insert_character expects exactly one character")
+        self._clear_history_browse()
         position = self._state.cursor_position
         buffer = self._state.input_buffer
         new_buffer = buffer[:position] + character + buffer[position:]
@@ -483,6 +496,7 @@ class NotebookCursor:
         position = self._state.cursor_position
         if position == 0:
             return
+        self._clear_history_browse()
         buffer = self._state.input_buffer
         new_buffer = buffer[: position - 1] + buffer[position:]
         self._transition(
@@ -530,6 +544,7 @@ class NotebookCursor:
         buffer = self._state.input_buffer
         if position >= len(buffer):
             return
+        self._clear_history_browse()
         new_buffer = buffer[:position] + buffer[position + 1 :]
         self._transition(replace(self._state, input_buffer=new_buffer))
 
@@ -549,6 +564,7 @@ class NotebookCursor:
             i -= 1
         if i == position:
             return
+        self._clear_history_browse()
         new_buffer = buffer[:i] + buffer[position:]
         self._transition(replace(self._state, input_buffer=new_buffer, cursor_position=i))
 
@@ -559,6 +575,7 @@ class NotebookCursor:
         position = self._state.cursor_position
         if position == 0:
             return
+        self._clear_history_browse()
         new_buffer = self._state.input_buffer[position:]
         self._transition(replace(self._state, input_buffer=new_buffer, cursor_position=0))
 
@@ -570,6 +587,7 @@ class NotebookCursor:
         buffer = self._state.input_buffer
         if position >= len(buffer):
             return
+        self._clear_history_browse()
         new_buffer = buffer[:position]
         self._transition(replace(self._state, input_buffer=new_buffer))
 
@@ -592,6 +610,8 @@ class NotebookCursor:
         if self._state.mode != FocusMode.INPUT or self._state.cell_id is None:
             return None
         cell = self._commit_buffer_to_cell()
+        self._session.record_command(cell.command)
+        self._clear_history_browse()
         should_autoadvance = (
             bool(cell.command.strip())
             and self._session.cells
@@ -620,6 +640,76 @@ class NotebookCursor:
                 )
             )
         return cell
+
+    def set_input_buffer(self, text: str) -> None:
+        """Replace the input buffer with ``text`` and park the caret at its end.
+
+        Public primitive for code that wants to programmatically
+        overwrite what the user is typing — the F4 history-recall path
+        is the first caller. INPUT mode only; silent no-op elsewhere.
+        Always clears any in-progress history browse so subsequent
+        Up/Down restart from the most-recent entry.
+        """
+        if self._state.mode != FocusMode.INPUT:
+            return
+        self._clear_history_browse()
+        self._transition(replace(self._state, input_buffer=text, cursor_position=len(text)))
+
+    def history_previous(self) -> bool:
+        """Step backward through ``session.command_history``.
+
+        On the first Up the cursor remembers whatever the user had
+        already typed (the "draft") so a later Down past the most
+        recent entry can restore it. Returns True when the buffer
+        actually changed; False when there's nothing to recall (not in
+        INPUT mode, history is empty, or already at the oldest entry).
+        """
+        if self._state.mode != FocusMode.INPUT:
+            return False
+        history = self._session.command_history
+        if not history:
+            return False
+        if self._history_index is None:
+            self._history_pre_browse = self._state.input_buffer
+            self._history_index = len(history)
+        if self._history_index <= 0:
+            return False
+        self._history_index -= 1
+        text = history[self._history_index]
+        self._transition(replace(self._state, input_buffer=text, cursor_position=len(text)))
+        return True
+
+    def history_next(self) -> bool:
+        """Step forward through history; restore the draft past the most recent.
+
+        No-op (returns False) when the cursor isn't currently browsing
+        history — Down is meaningless until Up has put us somewhere to
+        come back from. Stepping forward from the most-recent entry
+        clears the browse state and restores whatever the user had
+        typed before they reached for Up.
+        """
+        if self._state.mode != FocusMode.INPUT:
+            return False
+        if self._history_index is None:
+            return False
+        history = self._session.command_history
+        next_index = self._history_index + 1
+        if next_index >= len(history):
+            text = self._history_pre_browse
+            self._clear_history_browse()
+            self._transition(
+                replace(self._state, input_buffer=text, cursor_position=len(text))
+            )
+            return True
+        self._history_index = next_index
+        text = history[next_index]
+        self._transition(replace(self._state, input_buffer=text, cursor_position=len(text)))
+        return True
+
+    def _clear_history_browse(self) -> None:
+        """Forget any in-progress history walk and the draft we'd restored."""
+        self._history_index = None
+        self._history_pre_browse = ""
 
     def _move(self, delta: int) -> Optional[Cell]:
         """Move the cursor by a signed offset within the cell list."""
