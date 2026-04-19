@@ -628,6 +628,8 @@ like `reason == "absolute"` to only react to full jumps.
 
 ## Where to go next
 
+* [CHEAT_SHEET.md](CHEAT_SHEET.md) — single-page reference: every
+  binding, meta-command, and audio cue that ships today.
 * [ARCHITECTURE.md](ARCHITECTURE.md) — what lives in which module.
 * [EVENTS.md](EVENTS.md) — every event on the bus and its payload.
 * [AUDIO.md](AUDIO.md) — full reference for voices, recipes,
