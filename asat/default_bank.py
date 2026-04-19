@@ -58,6 +58,7 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.COMMAND_SUBMITTED,
     EventType.COMMAND_STARTED,
     EventType.COMMAND_COMPLETED,
+    EventType.COMMAND_COMPLETED_AWAY,
     EventType.COMMAND_FAILED,
     EventType.COMMAND_FAILED_STDERR_TAIL,
     EventType.COMMAND_CANCELLED,
@@ -237,6 +238,17 @@ def _default_sounds() -> tuple[SoundRecipe, ...]:
             volume=0.7,
             elevation=20.0,
         ),
+        # F34: louder, wider chime for "your command finished while you
+        # were away". A hard right placement keeps it unmistakable
+        # against any narration the user happens to be listening to.
+        SoundRecipe(
+            id="alert_away",
+            kind="chord",
+            params={"frequencies": [440.0, 659.25, 880.0], "duration": 0.3},
+            volume=0.95,
+            azimuth=55.0,
+            elevation=10.0,
+        ),
     )
 
 
@@ -362,6 +374,18 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             sound_id="cancel",
             say_template="cancelled",
             priority=150,
+        ),
+        # F34: distinctive follow-up chime when focus moved away from
+        # the cell while it was running. The normal completion binding
+        # has already fired for correctness; this is the "come back"
+        # nudge. Silence it with enabled=false.
+        EventBinding(
+            id="command_completed_away",
+            event_type=EventType.COMMAND_COMPLETED_AWAY.value,
+            voice_id="alert",
+            sound_id="alert_away",
+            say_template="completed in background",
+            priority=225,
         ),
 
         # Streamed output. Speak the line so long sessions narrate progress.

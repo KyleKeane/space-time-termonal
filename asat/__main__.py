@@ -37,6 +37,7 @@ from asat.audio_sink import (
     WavFileSink,
     pick_live_sink,
 )
+from asat.jsonl_logger import JsonlEventLogger
 from asat.keyboard import KeyboardNotAvailable, KeyboardReader, pick_default
 from asat.onboarding import OnboardingCoordinator
 from asat.session import Session
@@ -84,6 +85,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     onboarding_factory = _onboarding_factory(
         quiet=args.quiet, check=args.check, has_live_audio=has_live_audio
     )
+    log_factory = _log_factory(args.log)
     app = Application.build(
         sink=sink,
         bank=bank,
@@ -93,6 +95,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         text_trace=trace_stream,
         clipboard_factory=SystemClipboard,
         onboarding_factory=onboarding_factory,
+        log_factory=log_factory,
     )
     if args.check:
         _print_check_report(app, args)
@@ -200,6 +203,18 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
             "a fresh install."
         ),
     )
+    parser.add_argument(
+        "--log",
+        type=Path,
+        default=None,
+        help=(
+            "Write every event on the bus to this JSON-lines file. "
+            "The file is truncated at session start so a long-running "
+            "install does not grow an unbounded log. Useful for "
+            "diagnosing an audio issue: attach the file to an issue "
+            "and a maintainer can replay it locally."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -261,6 +276,24 @@ def _onboarding_factory(
         return OnboardingCoordinator(
             bus, sentinel, has_live_audio=has_live_audio
         )
+
+    return _factory
+
+
+def _log_factory(path: Optional[Path]):
+    """Return a factory that attaches a `JsonlEventLogger`, or None.
+
+    `--log PATH` opens `PATH` for writing at session start; no flag
+    means no logger attaches. The factory shape matches
+    `clipboard_factory` and `onboarding_factory` — it receives the
+    freshly-built bus so the logger can subscribe before the first
+    startup event fires.
+    """
+    if path is None:
+        return None
+
+    def _factory(bus) -> JsonlEventLogger:
+        return JsonlEventLogger(bus, path)
 
     return _factory
 

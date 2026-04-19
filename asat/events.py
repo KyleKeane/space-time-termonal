@@ -58,7 +58,7 @@ class EventType(str, Enum):
         ANSI_LINE_ERASED, ANSI_OSC_RECEIVED, ANSI_BELL
 
     Audio engine:
-        AUDIO_SPOKEN, AUDIO_INTERRUPTED
+        AUDIO_SPOKEN, AUDIO_INTERRUPTED, NARRATION_REPLAYED
 
     Help surface:
         HELP_REQUESTED
@@ -68,6 +68,11 @@ class EventType(str, Enum):
 
     Onboarding:
         FIRST_RUN_DETECTED
+
+    Completion alerts:
+        COMMAND_COMPLETED_AWAY (fires alongside COMMAND_COMPLETED /
+        COMMAND_FAILED when the user's focus has moved to a different
+        cell between submission and completion; F34).
     """
 
     SESSION_CREATED = "session.created"
@@ -82,6 +87,7 @@ class EventType(str, Enum):
     COMMAND_SUBMITTED = "command.submitted"
     COMMAND_STARTED = "command.started"
     COMMAND_COMPLETED = "command.completed"
+    COMMAND_COMPLETED_AWAY = "command.completed.away"
     COMMAND_FAILED = "command.failed"
     COMMAND_FAILED_STDERR_TAIL = "command.failed.stderr_tail"
     COMMAND_CANCELLED = "command.cancelled"
@@ -110,6 +116,7 @@ class EventType(str, Enum):
 
     AUDIO_SPOKEN = "audio.spoken"
     AUDIO_INTERRUPTED = "audio.interrupted"
+    NARRATION_REPLAYED = "audio.narration.replayed"
 
     HELP_REQUESTED = "help.requested"
 

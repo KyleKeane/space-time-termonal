@@ -25,6 +25,13 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
     EventType.COMMAND_SUBMITTED: {"cell_id": "c1", "command": "ls"},
     EventType.COMMAND_STARTED: {"cell_id": "c1"},
     EventType.COMMAND_COMPLETED: {"cell_id": "c1", "exit_code": 0, "timed_out": False},
+    EventType.COMMAND_COMPLETED_AWAY: {
+        "cell_id": "c1",
+        "current_cell_id": "c2",
+        "original_event_type": "command.completed",
+        "exit_code": 0,
+        "timed_out": False,
+    },
     EventType.COMMAND_FAILED: {"cell_id": "c1", "exit_code": 2, "timed_out": False},
     EventType.COMMAND_FAILED_STDERR_TAIL: {
         "cell_id": "c1",
@@ -191,6 +198,7 @@ class CoverageTests(unittest.TestCase):
         unbound = set(EventType) - COVERED_EVENT_TYPES - {
             EventType.AUDIO_SPOKEN,
             EventType.AUDIO_INTERRUPTED,
+            EventType.NARRATION_REPLAYED,
         }
         # Explicit allow-list: anything else showing up here is a new
         # EventType the maintainer must decide about.

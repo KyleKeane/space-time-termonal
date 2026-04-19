@@ -928,6 +928,51 @@ class MetaCommandTests(unittest.TestCase):
         self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
         self.assertEqual(cursor.focus.input_buffer, "")
 
+    def test_colon_repeat_surfaces_meta_command_and_stays_in_input(self) -> None:
+        """F30: `:repeat` is an ambient meta-command — router hands
+        `meta_command: repeat` to the Application (which asks the
+        SoundEngine to re-speak) and keeps the user in INPUT mode."""
+        bus, cursor, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":repeat":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        submits = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "submit"
+        ]
+        self.assertEqual(submits[-1].payload["meta_command"], "repeat")
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(cursor.focus.input_buffer, "")
+
+    def test_ctrl_r_in_input_dispatches_repeat_last_narration(self) -> None:
+        """F30: Ctrl+R in INPUT mode fires `repeat_last_narration` so
+        the Application can ask the SoundEngine to re-speak the last
+        phrase — without dropping the user out of INPUT mode."""
+        bus, cursor, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in "echo":
+            router.handle_key(Key.printable(ch))
+        action = router.handle_key(Key.combo("r", Modifier.CTRL))
+        self.assertEqual(action, "repeat_last_narration")
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(cursor.focus.input_buffer, "echo")
+        actions = [
+            e.payload for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "repeat_last_narration"
+        ]
+        self.assertEqual(len(actions), 1)
+
+    def test_ctrl_r_in_notebook_dispatches_repeat_last_narration(self) -> None:
+        """Ctrl+R is also bound in NOTEBOOK mode so a user navigating
+        cells can re-hear the last narration without a mode switch."""
+        _, cursor, router, _controller = _build_with_settings([""])
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+        action = router.handle_key(Key.combo("r", Modifier.CTRL))
+        self.assertEqual(action, "repeat_last_narration")
+
     def test_colon_quit_still_ejects_to_notebook(self) -> None:
         """Non-ambient meta-commands (`:quit`, `:settings`) keep the
         existing behaviour: leave INPUT mode."""

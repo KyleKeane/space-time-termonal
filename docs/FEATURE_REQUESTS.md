@@ -600,20 +600,31 @@ cancelled`) so the user hears the right feedback every time.
 
 ## F22 — Diagnostic log file
 
-**Gap.** There is no way to record a session's events to disk for
-later review. A blind user who wants to post-mortem what happened
-during a long-running command has only what the audio engine and
-text trace produced in real time.
+**Status: Shipped.**
 
-**Where it surfaces.** Debugging an intermittent audio issue, or
-sharing a reproduction with a maintainer, requires the user to
-remember exactly what they heard.
+**Gap (at time of shipping).** There was no way to record a
+session's events to disk for later review. A blind user who
+wanted to post-mortem what happened during a long-running command
+had only what the audio engine and text trace produced in real
+time; sharing a reproduction with a maintainer required
+remembering exactly what they heard.
 
-**Sketch.** `--log path.jsonl` CLI flag attaches a bus subscriber
-that writes one JSON line per event. The events already carry
-everything needed (`event_type`, `payload`, `source`, `timestamp`).
-Post-run, a screen reader or a little pretty-printer can replay
-the session.
+**Sketch (shipped).** New `asat/jsonl_logger.py` defines
+`JsonlEventLogger`, a wildcard bus subscriber that writes one
+JSON line per event (`event_type`, `payload`, `source`,
+`timestamp`). The stream opens in `"w"` mode so each session
+starts from a clean file; parent directories are created on the
+fly; unserialisable payload values fall back to `repr`. A
+`--log PATH` CLI flag (`asat/__main__.py`) plumbs a `log_factory`
+through `Application.build`, which attaches the logger BEFORE
+any startup publish so `SESSION_CREATED` and the initial
+`FOCUS_CHANGED` land in the file. `Application.close()` flushes
+and unsubscribes the logger; further publishes are silently
+dropped (the logger is idempotent on close). Tests: seven cases
+in `tests/test_jsonl_logger.py` (write-per-event, wildcard
+capture, truncation, mkdir, unsubscribe-on-close, idempotent
+close, repr fallback) plus two Application-level integration
+tests.
 
 ---
 
@@ -843,24 +854,35 @@ purely in keystrokes, not in spoken chrome.
 
 ## F30 — Audio history / "repeat last narration"
 
-**Gap.** When a narration passes by faster than the user can absorb
-it — or a new event speaks over the one they wanted to catch — there
-is no way to re-hear the last phrase. Assistive tech on desktops
-universally provides a "say-it-again" key; ASAT does not.
+**Status: Shipped (minimal tier — F30a).**
 
-**Where it surfaces.** Output-line narration during a noisy `pytest`
-run, or quick focus transitions that chain several short cues, where
-the user realises "what did that last one say?" too late.
+**Gap (at time of shipping).** When a narration passed by faster
+than the user could absorb it — or a new event spoke over the
+one they wanted to catch — there was no way to re-hear the last
+phrase. Assistive tech on desktops universally provides a
+"say-it-again" key; ASAT did not.
 
-**Sketch.** Add a bounded ring buffer (default 20 entries) inside
-`SoundEngine` that records every rendered speech phrase with its
-`event_type`, `binding_id`, rendered `text`, and timestamp. Bind
-`Ctrl+R` (repeat) to replay the most recent entry via the same voice,
-and `Ctrl+Shift+R` to open an "audio history" overlay sub-mode where
-Up/Down walks back through the buffer and Enter replays the focused
-entry. Emit `NARRATION_REPLAYED` so tests can assert on the buffer
-depth and replay ordering. History is purely in-memory; it resets
-on process exit.
+**Sketch (shipped).** `SoundEngine` (`asat/sound_engine.py`)
+gained a bounded `collections.deque(maxlen=20)` of
+`NarrationHistoryEntry(event_type, binding_id, text, voice_id)`
+that records every rendered speech phrase. Sound-only bindings
+(no voice) are intentionally skipped so the replay only offers
+actual phrases. `replay_last_narration()` re-synthesises the
+last entry through the same voice, plays it via the sink, and
+publishes `NARRATION_REPLAYED`. The replay path bypasses
+bindings so it does not recurse back into the history. When the
+voice has been removed from the current bank the method returns
+`None` gracefully. `InputRouter` (`asat/input_router.py`) binds
+`Ctrl+R` to `repeat_last_narration` in NOTEBOOK and INPUT (the
+SETTINGS mode keeps its own `Ctrl+R` for `settings_reset_begin`)
+and surfaces `:repeat` as an ambient meta-command that keeps
+INPUT focus. `Application._on_action_invoked`
+(`asat/app.py`) catches either form and drives
+`sound_engine.replay_last_narration()`. Tests: seven new cases
+in `NarrationHistoryTests` (`tests/test_sound_engine.py`), three
+router cases (`tests/test_input_router.py`), three Application
+cases (`tests/test_app.py`). The Ctrl+Shift+R history overlay
+is left as F30b for a future sweep.
 
 ---
 
@@ -910,26 +932,34 @@ the engine's mixing loop — no events or new subsystems.
 
 ## F34 — Completion alert when focus has moved
 
-**Gap.** A long-running command that completes in the background
-fires the normal completion cue, but if the user has tabbed to a
-different window or moved to OUTPUT mode on a different cell, the
-cue is easy to miss. Shells historically rang the terminal bell; we
-have no equivalent "I'm done, come back" signal.
+**Status: Shipped.**
 
-**Where it surfaces.** `make test` starts on cell 3, user moves to
-cell 5 to keep working, `make test` finishes and says "command
-completed exit 0" — but only once, at conversational volume, and
-the user is already typing into cell 5.
+**Gap (at time of shipping).** A long-running command that
+completed in the background fired the normal completion cue, but
+if the user had moved to OUTPUT mode on a different cell, the cue
+was easy to miss. Shells historically rang the terminal bell; ASAT
+had no equivalent "I'm done, come back" signal.
 
-**Sketch.** `ExecutionRunner` already knows the originating
-`cell_id` and start time. If `COMMAND_COMPLETED` fires and the
-current focus (notebook cursor + mode) has moved away from the
-originating cell since `COMMAND_STARTED`, publish an additional
-`COMMAND_COMPLETED_AWAY` event. Bind that to a distinctive chime
-(louder, wider spatial placement) in the default bank. Two-tier
-semantics: the normal completion cue still fires for correctness;
-the away-cue is a bonus nudge. Silence it with a binding-level
-toggle.
+**Sketch (shipped).** New `asat/completion_alert.py` defines
+`CompletionFocusWatcher`, which shadows `FOCUS_CHANGED` (reading
+`new_cell_id`) and listens for `COMMAND_COMPLETED` /
+`COMMAND_FAILED`. When a completion's originating `cell_id`
+differs from the user's current focus, the watcher publishes an
+additional `COMMAND_COMPLETED_AWAY` event carrying both cell ids,
+the `original_event_type` (`command.completed` or
+`command.failed`), `exit_code`, and `timed_out`. Two-tier
+semantics: the normal completion cue still fires; the away-cue is
+a bonus nudge. The watcher explicitly does NOT fire when the
+shadow focus is still `None` (no `FOCUS_CHANGED` yet), so the very
+first command never produces a spurious away nudge. The default
+bank (`asat/default_bank.py`) adds the `alert_away` recipe
+(chord 440/659.25/880, azimuth 55°, elevation 10°) and a
+`command_completed_away` binding on the `alert` voice with
+template `"completed in background"` and priority 225. Silenceable
+via the same per-binding toggle every cue has. Tests: seven cases
+in `tests/test_completion_alert.py` plus one Application-level
+integration test that drives a real cell through the kernel and
+asserts the away event fires when focus has moved.
 
 ---
 

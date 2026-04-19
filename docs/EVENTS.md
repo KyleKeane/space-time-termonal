@@ -60,6 +60,7 @@ Producer: `asat.kernel.ExecutionKernel` (`source="kernel"`).
 | `COMMAND_COMPLETED`           | `cell_id`, `exit_code`, `timed_out`                  |
 | `COMMAND_FAILED`              | `cell_id`, `exit_code`, `timed_out` or `error`/`error_type` when launch itself failed |
 | `COMMAND_FAILED_STDERR_TAIL`  | `cell_id`, `exit_code`, `timed_out`, `tail_lines`, `tail_text`, `line_count` |
+| `COMMAND_COMPLETED_AWAY`      | `cell_id`, `current_cell_id`, `original_event_type`, `exit_code`, `timed_out` |
 | `COMMAND_CANCELLED`           | `cell_id`                                            |
 
 `COMMAND_FAILED_STDERR_TAIL` is a secondary event produced by
@@ -68,6 +69,15 @@ after `COMMAND_FAILED`. It carries the last N stderr lines captured
 by the `OutputRecorder` so a binding can narrate the actual error
 text. Only fires when the failed cell produced at least one stderr
 line; see [FEATURE_REQUESTS.md#f36](FEATURE_REQUESTS.md#f36).
+
+`COMMAND_COMPLETED_AWAY` is a secondary event produced by
+`asat.completion_alert.CompletionFocusWatcher`
+(`source="completion_alert"`) whenever `COMMAND_COMPLETED` or
+`COMMAND_FAILED` fires with a `cell_id` that differs from the
+user's current focus. It carries the `original_event_type` string
+(`"command.completed"` or `"command.failed"`) so one binding can
+cover both paths. See
+[FEATURE_REQUESTS.md#f34](FEATURE_REQUESTS.md#f34).
 
 ## Output streaming
 
@@ -199,6 +209,13 @@ See [AUDIO.md](AUDIO.md) for the full reference.
 |---------------------|--------------------------------------------------------------|
 | `AUDIO_SPOKEN`      | `event_type`, `binding_id`, `text`, `voice_id`, `sound_id`   |
 | `AUDIO_INTERRUPTED` | `event_type`                                                 |
+| `NARRATION_REPLAYED`| `event_type`, `binding_id`, `text`, `voice_id`               |
+
+`NARRATION_REPLAYED` fires when the user presses `Ctrl+R` (or
+types `:repeat`) to re-hear the most recent narration. The engine
+bypasses bindings on replay so this event does not itself add a
+new entry to the history buffer; see
+[FEATURE_REQUESTS.md#f30](FEATURE_REQUESTS.md#f30).
 
 ## Settings editor
 

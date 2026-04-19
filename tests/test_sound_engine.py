@@ -530,5 +530,120 @@ class SourceFilteringTests(unittest.TestCase):
         self.assertEqual(len(sink.buffers), 0)
 
 
+class NarrationHistoryTests(unittest.TestCase):
+    """F30: ring buffer + `replay_last_narration` on SoundEngine."""
+
+    def _engine(self, *, history_capacity: int = 20) -> tuple[SoundEngine, MemorySink, EventBus]:
+        bus = EventBus()
+        sink = MemorySink()
+        bank = SoundBank(
+            voices=(_voice(),),
+            bindings=(
+                EventBinding(
+                    id="b_cell",
+                    event_type=EventType.CELL_CREATED.value,
+                    voice_id="narrator",
+                    say_template="new cell {cell_id}",
+                ),
+                EventBinding(
+                    id="b_focus",
+                    event_type=EventType.FOCUS_CHANGED.value,
+                    voice_id="narrator",
+                    say_template="now in {new_mode}",
+                ),
+            ),
+        )
+        engine = SoundEngine(
+            bus, bank, sink, sample_rate=8000, history_capacity=history_capacity
+        )
+        self.addCleanup(engine.close)
+        return engine, sink, bus
+
+    def test_spoken_phrases_are_recorded_in_history(self) -> None:
+        engine, _sink, bus = self._engine()
+        publish_event(bus, EventType.CELL_CREATED, {"cell_id": "c1"}, source="notebook")
+        publish_event(bus, EventType.CELL_CREATED, {"cell_id": "c2"}, source="notebook")
+        history = engine.narration_history
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[-1].text, "new cell c2")
+        self.assertEqual(history[-1].voice_id, "narrator")
+        self.assertEqual(history[-1].binding_id, "b_cell")
+        self.assertEqual(history[-1].event_type, "cell.created")
+
+    def test_empty_templates_are_not_recorded(self) -> None:
+        # A sound-only binding with no voice/text shouldn't land in
+        # the narration history — there's nothing to repeat.
+        bus = EventBus()
+        sink = MemorySink()
+        bank = SoundBank(
+            sounds=(_tone(),),
+            bindings=(
+                EventBinding(
+                    id="b",
+                    event_type=EventType.CELL_CREATED.value,
+                    sound_id="ding",
+                ),
+            ),
+        )
+        engine = SoundEngine(bus, bank, sink, sample_rate=8000)
+        self.addCleanup(engine.close)
+        publish_event(bus, EventType.CELL_CREATED, {}, source="notebook")
+        self.assertEqual(engine.narration_history, ())
+
+    def test_history_capacity_caps_growth(self) -> None:
+        engine, _sink, bus = self._engine(history_capacity=3)
+        for index in range(5):
+            publish_event(
+                bus, EventType.CELL_CREATED, {"cell_id": f"c{index}"}, source="notebook"
+            )
+        history = engine.narration_history
+        self.assertEqual(len(history), 3)
+        self.assertEqual(history[0].text, "new cell c2")
+        self.assertEqual(history[-1].text, "new cell c4")
+
+    def test_replay_last_narration_empty_history_returns_none(self) -> None:
+        engine, sink, _bus = self._engine()
+        self.assertIsNone(engine.replay_last_narration())
+        self.assertEqual(sink.buffers, ())
+
+    def test_replay_last_narration_replays_via_same_voice(self) -> None:
+        engine, sink, bus = self._engine()
+        replayed: list = []
+        bus.subscribe(EventType.NARRATION_REPLAYED, replayed.append)
+        publish_event(bus, EventType.CELL_CREATED, {"cell_id": "c1"}, source="notebook")
+        buffers_before = len(sink.buffers)
+        entry = engine.replay_last_narration()
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry.text, "new cell c1")
+        self.assertEqual(len(sink.buffers), buffers_before + 1)
+        self.assertEqual(len(replayed), 1)
+        payload = replayed[0].payload
+        self.assertEqual(payload["text"], "new cell c1")
+        self.assertEqual(payload["voice_id"], "narrator")
+        self.assertEqual(payload["binding_id"], "b_cell")
+        self.assertEqual(payload["event_type"], "cell.created")
+
+    def test_replay_last_does_not_recurse_into_history(self) -> None:
+        # The replay plays a pre-recorded text directly through TTS;
+        # it must not re-enter the bindings path and double the buffer.
+        engine, _sink, bus = self._engine()
+        publish_event(bus, EventType.CELL_CREATED, {"cell_id": "c1"}, source="notebook")
+        history_before = engine.narration_history
+        engine.replay_last_narration()
+        self.assertEqual(engine.narration_history, history_before)
+
+    def test_replay_skips_when_voice_was_removed(self) -> None:
+        # If the user swapped banks between speaking and replaying
+        # and the new bank has no matching voice, replay should
+        # gracefully no-op instead of crashing.
+        engine, sink, bus = self._engine()
+        publish_event(bus, EventType.CELL_CREATED, {"cell_id": "c1"}, source="notebook")
+        bare = SoundBank()
+        engine.set_bank(bare)
+        self.assertIsNone(engine.replay_last_narration())
+        # No new buffer, no NARRATION_REPLAYED.
+        self.assertEqual(len(sink.buffers), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

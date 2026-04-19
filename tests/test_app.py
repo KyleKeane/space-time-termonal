@@ -278,6 +278,136 @@ class ApplicationMetaCommandTests(unittest.TestCase):
         self.assertTrue(app.running)
 
 
+class ApplicationRepeatNarrationTests(unittest.TestCase):
+    """F30: `:repeat` and Ctrl+R replay the last narration."""
+
+    def test_colon_repeat_meta_command_replays_last_narration(self) -> None:
+        app = Application.build()
+        replays: list[dict] = []
+        app.bus.subscribe(
+            EventType.NARRATION_REPLAYED,
+            lambda e: replays.append(dict(e.payload)),
+        )
+        # SESSION_CREATED fired during build and is now the last phrase
+        # in the ring buffer, so `:repeat` has something to replay.
+        _type(app, ":repeat")
+        app.handle_key(kc.ENTER)
+        self.assertEqual(len(replays), 1)
+        self.assertTrue(app.running, ":repeat must not exit the app")
+
+    def test_ctrl_r_replays_last_narration(self) -> None:
+        app = Application.build()
+        replays: list[dict] = []
+        app.bus.subscribe(
+            EventType.NARRATION_REPLAYED,
+            lambda e: replays.append(dict(e.payload)),
+        )
+        app.handle_key(Key.combo("r", Modifier.CTRL))
+        self.assertEqual(len(replays), 1)
+
+    def test_repeat_with_empty_history_is_a_safe_noop(self) -> None:
+        # A fresh engine with an empty bank has nothing to replay, but
+        # the keystroke must stay harmless rather than crashing.
+        from asat.sound_bank import SoundBank
+
+        app = Application.build(bank=SoundBank())
+        replays: list[dict] = []
+        app.bus.subscribe(
+            EventType.NARRATION_REPLAYED,
+            lambda e: replays.append(dict(e.payload)),
+        )
+        app.handle_key(Key.combo("r", Modifier.CTRL))
+        self.assertEqual(replays, [])
+        self.assertTrue(app.running)
+
+
+class ApplicationEventLoggerTests(unittest.TestCase):
+    """F22: `log_factory` attaches a JsonlEventLogger before build events."""
+
+    def test_log_factory_captures_session_created(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from asat.jsonl_logger import JsonlEventLogger
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "events.jsonl"
+
+            def _factory(bus) -> JsonlEventLogger:
+                return JsonlEventLogger(bus, path)
+
+            app = Application.build(log_factory=_factory)
+            self.addCleanup(app.close)
+            types = [
+                json.loads(line)["event_type"]
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            # SESSION_CREATED is the first publish in build(); if the
+            # logger attaches late, the file will be missing it.
+            # (The typed SoundEngine handler runs before the wildcard
+            # logger, and the engine re-publishes audio.spoken, so
+            # audio.spoken lands first — but session.created still
+            # appears in the log.)
+            self.assertIn("session.created", types)
+
+    def test_close_flushes_and_closes_logger(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from asat.jsonl_logger import JsonlEventLogger
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "events.jsonl"
+            app = Application.build(
+                log_factory=lambda bus: JsonlEventLogger(bus, path),
+            )
+            app.close()
+            # After close, further events must not reach the logger.
+            size_after_close = path.stat().st_size
+            from asat.event_bus import publish_event
+
+            publish_event(
+                app.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": []},
+                source="test",
+            )
+            self.assertEqual(path.stat().st_size, size_after_close)
+
+
+class ApplicationCompletionAlertTests(unittest.TestCase):
+    """F34: completion on a non-focused cell fires COMMAND_COMPLETED_AWAY."""
+
+    def test_completion_on_moved_focus_fires_away_event(self) -> None:
+        app = Application.build()
+        app.kernel._runner = StubRunner(stdout="hi\n", exit_code=0)
+
+        away: list[dict] = []
+        app.bus.subscribe(
+            EventType.COMMAND_COMPLETED_AWAY,
+            lambda e: away.append(dict(e.payload)),
+        )
+
+        _type(app, "echo hi")
+        app.handle_key(kc.ENTER)
+        pending = app.drain_pending()
+        origin_cell_id = pending[0]
+
+        # User navigates to a second cell while the command "runs".
+        app.cursor.new_cell()
+        new_cell_id = app.cursor.focus.cell_id
+        self.assertNotEqual(origin_cell_id, new_cell_id)
+
+        app.execute(origin_cell_id)
+
+        self.assertEqual(len(away), 1)
+        self.assertEqual(away[0]["cell_id"], origin_cell_id)
+        self.assertEqual(away[0]["current_cell_id"], new_cell_id)
+        self.assertEqual(away[0]["original_event_type"], "command.completed")
+
+
 class ApplicationPersistenceTests(unittest.TestCase):
     def test_close_persists_session_when_path_given(self) -> None:
         import tempfile
