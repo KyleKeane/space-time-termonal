@@ -89,6 +89,10 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.HELP_REQUESTED,
     EventType.PROMPT_REFRESH,
     EventType.FIRST_RUN_DETECTED,
+    EventType.WORKSPACE_OPENED,
+    EventType.NOTEBOOK_OPENED,
+    EventType.NOTEBOOK_CREATED,
+    EventType.NOTEBOOK_LISTED,
 })
 
 
@@ -280,6 +284,41 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             voice_id="system",
             say_template="session saved",
             priority=150,
+        ),
+
+        # Workspace lifecycle (F50): a workspace open is overhead
+        # ("system" voice) and names the project so the user is
+        # oriented from the first second. Notebook open / create
+        # name the notebook; list narrates the count and lets the
+        # user follow up with `:open-notebook` once that ships.
+        EventBinding(
+            id="workspace_opened",
+            event_type=EventType.WORKSPACE_OPENED.value,
+            voice_id="system",
+            sound_id="session_chime",
+            say_template="workspace {name}, {notebook_count} notebooks",
+            priority=210,
+        ),
+        EventBinding(
+            id="notebook_opened",
+            event_type=EventType.NOTEBOOK_OPENED.value,
+            voice_id="system",
+            say_template="notebook {name}",
+            priority=200,
+        ),
+        EventBinding(
+            id="notebook_created",
+            event_type=EventType.NOTEBOOK_CREATED.value,
+            voice_id="system",
+            say_template="created notebook {name}",
+            priority=180,
+        ),
+        EventBinding(
+            id="notebook_listed",
+            event_type=EventType.NOTEBOOK_LISTED.value,
+            voice_id="narrator",
+            say_template="{summary}",
+            priority=140,
         ),
 
         # Cell lifecycle: small blips, no speech to stay quiet.

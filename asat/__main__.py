@@ -44,6 +44,11 @@ from asat.runner import ProcessRunner
 from asat.session import Session
 from asat.shell_backend import shell_backend_or_none
 from asat.sound_bank import SoundBank
+from asat.workspace import (
+    WORKSPACE_NOTEBOOK_EXTENSION,
+    Workspace,
+    WorkspaceError,
+)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
@@ -52,6 +57,22 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.version:
         print(f"asat {__version__}")
         return 0
+    try:
+        workspace, workspace_session_path = _resolve_workspace(args)
+    except _FriendlyExit as exc:
+        print(f"[asat] {exc}", file=sys.stderr)
+        return 2
+    if workspace_session_path is not None:
+        # The positional / --init-workspace path supplies its own
+        # session path; --session is incompatible with it.
+        if args.session is not None:
+            print(
+                "[asat] --session cannot be combined with a workspace; "
+                "open the notebook by name instead.",
+                file=sys.stderr,
+            )
+            return 2
+        args.session = workspace_session_path
     sink = _make_sink(args.wav_dir, args.live, quiet=args.quiet)
     if (
         not args.quiet
@@ -106,6 +127,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         log_factory=log_factory,
         runner=runner,
         async_execution=async_execution,
+        workspace=workspace,
     )
     if args.check:
         _print_check_report(app, args)
@@ -162,6 +184,37 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="asat",
         description="Launch the Accessible Spatial Audio Terminal.",
+    )
+    parser.add_argument(
+        "workspace",
+        nargs="?",
+        type=Path,
+        default=None,
+        help=(
+            "Workspace directory to open, OR a path to a `.asatnb` "
+            "notebook file (the enclosing workspace is inferred). "
+            "Omit for the legacy single-file mode driven by --session."
+        ),
+    )
+    parser.add_argument(
+        "notebook",
+        nargs="?",
+        default=None,
+        help=(
+            "Notebook name (stem) within the workspace to open. "
+            "Defaults to the last opened notebook, or `default.asatnb` "
+            "when the workspace is empty. Ignored when `workspace` is "
+            "already a `.asatnb` file."
+        ),
+    )
+    parser.add_argument(
+        "--init-workspace",
+        action="store_true",
+        help=(
+            "Initialise a fresh workspace at `workspace` (creates "
+            "`<root>/.asat/config.json` and `<root>/notebooks/`) and "
+            "then open it. Refuses to clobber an existing workspace."
+        ),
     )
     parser.add_argument(
         "--live",
@@ -341,6 +394,92 @@ def _pick_runner(*, no_shared_shell: bool, quiet: bool):
             file=sys.stderr,
         )
     return ProcessRunner()
+
+
+def _resolve_workspace(
+    args: argparse.Namespace,
+) -> tuple[Optional[Workspace], Optional[Path]]:
+    """Map CLI args onto a (workspace, session_path) pair.
+
+    Three shapes are supported:
+
+      1. ``asat`` (no positional, no flag) → legacy mode. Returns
+         ``(None, None)`` so the caller honours ``--session``.
+      2. ``asat <dir>`` → load the workspace at ``<dir>`` and pick
+         the default notebook (last opened, sole existing, or a
+         freshly-created ``default.asatnb``).
+      3. ``asat <dir> <name>`` → load the workspace and resolve the
+         notebook name relative to its notebooks dir.
+      4. ``asat <file.asatnb>`` → walk up to find the enclosing
+         workspace and open that notebook directly. The user does
+         not have to know the workspace root.
+      5. ``asat --init-workspace <dir>`` → ``Workspace.init`` then
+         the same default-notebook resolution as case 2.
+    """
+    raw = args.workspace
+    init = args.init_workspace
+    notebook = args.notebook
+    if raw is None:
+        if init:
+            raise _FriendlyExit(
+                "--init-workspace requires a directory path argument."
+            )
+        return None, None
+    target = Path(raw)
+    if init:
+        if notebook is not None:
+            raise _FriendlyExit(
+                "--init-workspace does not accept a notebook name; "
+                "create the workspace first, then open notebooks by name."
+            )
+        if Workspace.is_workspace(target):
+            raise _FriendlyExit(
+                f"--init-workspace: {target} is already a workspace. "
+                "Drop the flag to open it."
+            )
+        try:
+            workspace = Workspace.init(target)
+        except WorkspaceError as exc:
+            raise _FriendlyExit(str(exc)) from exc
+        return workspace, workspace.default_notebook()
+    if target.suffix == WORKSPACE_NOTEBOOK_EXTENSION:
+        if not target.exists():
+            raise _FriendlyExit(f"notebook not found: {target}")
+        if notebook is not None:
+            raise _FriendlyExit(
+                "cannot pass both a `.asatnb` file and a notebook name."
+            )
+        workspace = Workspace.find_enclosing(target)
+        if workspace is None:
+            raise _FriendlyExit(
+                f"{target} is not inside an ASAT workspace. Run "
+                "`asat --init-workspace <dir>` to create one."
+            )
+        return workspace, target.resolve()
+    if not target.exists():
+        raise _FriendlyExit(
+            f"workspace not found: {target}. Pass --init-workspace "
+            "to create it."
+        )
+    if not Workspace.is_workspace(target):
+        raise _FriendlyExit(
+            f"{target} is not an ASAT workspace. Pass "
+            "--init-workspace to initialise it."
+        )
+    workspace = Workspace.load(target)
+    if notebook is not None:
+        try:
+            session_path = workspace.notebook_path(notebook)
+        except WorkspaceError as exc:
+            raise _FriendlyExit(str(exc)) from exc
+        if not session_path.exists():
+            raise _FriendlyExit(
+                f"notebook {notebook!r} not found in {workspace.root}. "
+                "Use `:new-notebook <name>` (or `asat <dir> --init-workspace`) "
+                "to create it."
+            )
+        return workspace, session_path
+    return workspace, workspace.default_notebook()
 
 
 def _load_session(path: Optional[Path]) -> Optional[Session]:

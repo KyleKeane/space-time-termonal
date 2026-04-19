@@ -340,6 +340,24 @@ the `:welcome` meta-command with `replay=True`.
 `False` on the genuine first run; a binding that wants to sound
 different on replay can key off it.
 
+## Workspace
+
+Producer: `asat.app.Application` (`source="app"`) at launch and from
+the workspace meta-commands (`:workspace`, `:list-notebooks`,
+`:new-notebook`). `WORKSPACE_OPENED` and `NOTEBOOK_OPENED` fire once
+during `Application.build` after the working directory has been
+switched into the project root, so the very first `PROMPT_REFRESH`
+already carries the right cwd. `NOTEBOOK_LISTED` is the ambient
+response to `:list-notebooks`; `NOTEBOOK_CREATED` fires when
+`:new-notebook` (or `Workspace.new_notebook`) writes a fresh file.
+
+| EventType           | Payload keys                                     |
+|---------------------|--------------------------------------------------|
+| `WORKSPACE_OPENED`  | `root`, `name`, `notebook_count`                 |
+| `NOTEBOOK_OPENED`   | `path`, `name`                                   |
+| `NOTEBOOK_CREATED`  | `path`, `name`                                   |
+| `NOTEBOOK_LISTED`   | `names`, `summary`                               |
+
 ---
 
 ## Adding a new event

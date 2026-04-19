@@ -225,5 +225,108 @@ class SentinelLocationTests(_AsatHomeIsolated):
         )
 
 
+class WorkspaceResolutionTests(_AsatHomeIsolated):
+    """`asat <dir>` / `asat <file.asatnb>` / `--init-workspace` map to
+    a (Workspace, session_path) pair via `_resolve_workspace`."""
+
+    def _parse(self, *argv: str):
+        return cli._parse_args(list(argv))
+
+    def test_no_args_returns_legacy_mode(self) -> None:
+        args = self._parse()
+        workspace, session_path = cli._resolve_workspace(args)
+        self.assertIsNone(workspace)
+        self.assertIsNone(session_path)
+
+    def test_init_workspace_creates_layout_and_default_notebook(self) -> None:
+        from asat.workspace import (
+            DEFAULT_NOTEBOOK_NAME,
+            WORKSPACE_NOTEBOOK_EXTENSION,
+            Workspace,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "fresh"
+            args = self._parse("--init-workspace", str(root))
+            workspace, session_path = cli._resolve_workspace(args)
+            assert workspace is not None
+            assert session_path is not None
+            self.assertTrue(Workspace.is_workspace(workspace.root))
+            self.assertEqual(
+                session_path.name,
+                DEFAULT_NOTEBOOK_NAME + WORKSPACE_NOTEBOOK_EXTENSION,
+            )
+
+    def test_init_workspace_refuses_existing_workspace(self) -> None:
+        from asat.workspace import Workspace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Workspace.init(tmp)
+            args = self._parse("--init-workspace", tmp)
+            with self.assertRaises(cli._FriendlyExit):
+                cli._resolve_workspace(args)
+
+    def test_directory_arg_loads_existing_workspace(self) -> None:
+        from asat.workspace import Workspace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Workspace.init(tmp)
+            ws.new_notebook("only")
+            args = self._parse(tmp)
+            workspace, session_path = cli._resolve_workspace(args)
+            assert workspace is not None
+            assert session_path is not None
+            self.assertEqual(workspace.root, ws.root)
+            self.assertEqual(session_path.stem, "only")
+
+    def test_directory_without_marker_fails_friendly(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            args = self._parse(tmp)
+            with self.assertRaises(cli._FriendlyExit):
+                cli._resolve_workspace(args)
+
+    def test_notebook_name_resolves_within_workspace(self) -> None:
+        from asat.workspace import Workspace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Workspace.init(tmp)
+            ws.new_notebook("alpha")
+            ws.new_notebook("beta")
+            args = self._parse(tmp, "alpha")
+            workspace, session_path = cli._resolve_workspace(args)
+            assert session_path is not None
+            self.assertEqual(session_path.stem, "alpha")
+
+    def test_unknown_notebook_name_fails_friendly(self) -> None:
+        from asat.workspace import Workspace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Workspace.init(tmp)
+            args = self._parse(tmp, "missing")
+            with self.assertRaises(cli._FriendlyExit):
+                cli._resolve_workspace(args)
+
+    def test_asatnb_file_arg_finds_enclosing_workspace(self) -> None:
+        from asat.workspace import Workspace
+
+        with tempfile.TemporaryDirectory() as tmp:
+            ws = Workspace.init(tmp)
+            path = ws.new_notebook("entry")
+            args = self._parse(str(path))
+            workspace, session_path = cli._resolve_workspace(args)
+            assert workspace is not None
+            assert session_path is not None
+            self.assertEqual(workspace.root, ws.root)
+            self.assertEqual(session_path, path.resolve())
+
+    def test_asatnb_file_outside_any_workspace_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stray = Path(tmp) / "lone.asatnb"
+            stray.write_text("{}", encoding="utf-8")
+            args = self._parse(str(stray))
+            with self.assertRaises(cli._FriendlyExit):
+                cli._resolve_workspace(args)
+
+
 if __name__ == "__main__":
     unittest.main()

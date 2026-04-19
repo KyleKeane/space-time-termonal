@@ -39,6 +39,12 @@ class Session:
     cells: list[Cell] = field(default_factory=list)
     active_cell_id: Optional[str] = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Per-notebook working directory. When ``None`` the workspace (if
+    # any) falls through to its own root; when set it overrides the
+    # workspace so one project can mix notebooks that run in different
+    # sub-directories. Stored as a string for portable JSON; resolved
+    # by ``Workspace.resolve_cwd`` at open time.
+    cwd: Optional[str] = None
 
     @classmethod
     def new(cls) -> "Session":
@@ -143,6 +149,7 @@ class Session:
             "updated_at": self.updated_at.isoformat(),
             "active_cell_id": self.active_cell_id,
             "metadata": dict(self.metadata),
+            "cwd": self.cwd,
             "cells": [cell.to_dict() for cell in self.cells],
         }
 
@@ -156,6 +163,7 @@ class Session:
             cells=[Cell.from_dict(item) for item in data.get("cells", [])],
             active_cell_id=data.get("active_cell_id"),
             metadata=dict(data.get("metadata", {})),
+            cwd=data.get("cwd"),
         )
 
     def save(self, path: Path | str) -> None:
