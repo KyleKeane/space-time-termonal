@@ -3031,6 +3031,230 @@ invocation.
 
 ---
 
+## F59 — Macro conditional branching
+
+**Depends on F56 + F57 + F58.**
+
+**Gap.** F56 replays a fixed sequence. F57 adds outcome
+assertions. F58 adds variables. The combination still cannot
+express *"if the deploy passed, run smoke tests; otherwise,
+read the last 20 stderr lines"*. A macro that wants to react
+to earlier results has to abort on the first mismatch and
+demand the user re-run by hand — which defeats the point of
+automating the workflow in the first place.
+
+**Where it surfaces.** Every real automation workflow bigger
+than three steps needs at least one conditional:
+
+1. **Deploy pipeline.** "If `git status` is clean, push;
+   otherwise, narrate the dirty files and stop."
+2. **Test triage.** "If exit code is 0, narrate 'all green';
+   otherwise, capture stderr tail into `$last_fail` and
+   prompt for 'open in editor or skip?'"
+3. **Environment switch.** "If `{{env}}` is `prod`, prompt
+   for a confirmation token first; for staging, proceed
+   directly."
+
+Without F59, each of these is either a hand-maintained pair
+of macros (one per branch) that the user picks manually, or
+a shell pipeline that ASAT cannot narrate step-by-step.
+
+**Sketch.** Add one new step kind — `if` — whose condition
+is evaluated against the F58 variable namespace and the
+event stream captured so far. No nested branches. No loops.
+No `elif` chain.
+
+### Step kind: `if`
+
+```
+{
+  "step": 9,
+  "kind": "if",
+  "condition": {"left": "{{$last_cell.exit_code}}", "op": "eq", "right": 0},
+  "then_steps": [ /* steps run when condition true */ ],
+  "else_steps": [ /* steps run when false; optional */ ]
+}
+```
+
+Fields:
+
+- `condition` — an object with `left`, `op`, `right` fields.
+  `left` and `right` are substituted via F58's engine
+  before comparison. `op` is one of a closed set (see
+  below).
+- `then_steps` — non-empty list of steps. Each step is a
+  full step object; step indices inside `then_steps` /
+  `else_steps` use dotted notation (`9.1`, `9.2`, …) so
+  abort-at-step reports stay precise.
+- `else_steps` — optional list. Missing means "no-op on
+  false".
+
+### Operator set
+
+Deliberately small. Adding operators is cheap; removing
+them later breaks every macro on disk.
+
+| `op` | Meaning | Notes |
+|------|---------|-------|
+| `eq` | `left == right` | Strict — `0` ≠ `False`, `"1"` ≠ `1`. Strings compared verbatim. |
+| `ne` | `left != right` | Inverse of `eq`. |
+| `in` | `left in right` | `right` must be a list. Useful with `choices`. |
+| `contains` | `right in left` | Substring match when `left` is a string; membership when it is a list. |
+| `matches` | `re.search(right, left)` | Regex only here. Keeps the rest of the format regex-free per F57's rejection. |
+| `lt` / `le` / `gt` / `ge` | Numeric comparison. | Both operands coerced to `float`; failure to coerce aborts the macro (never silently compares as strings). |
+| `empty` | `left in (None, "", [], {})` | `right` ignored; lets a macro react to "capture produced nothing". |
+| `exit_ok` | `int(left) == 0` | Sugar for the dominant case. |
+
+### Condition evaluation failure
+
+If either side fails to substitute (undefined var, F58's
+abort rule), the `if` step itself aborts the macro —
+never silently defaults to `false`. Same policy as F58's
+substitution-failure rule, so users learn one behaviour.
+
+A `matches` regex that fails to compile also aborts —
+caught at macro load time, not run time, so the error
+surfaces before any steps run.
+
+### Flat AST enforced at load time
+
+The parser in `format.py` refuses to load a macro where
+a step inside `then_steps` or `else_steps` is itself an
+`if` step. Narrated: *"nested `if` at step 9.3 — flatten
+with a capture + `if` pair"*. A user who truly needs a
+tree of conditions records two macros and composes them
+with the "launch macro from macro" helper a future
+feature would introduce.
+
+Rationale for the nesting ban:
+
+- Keeps the step-index scheme one level deep (`9.2`, never
+  `9.3.1`).
+- Keeps the narration readable — "step 9.3.1 of 12" is
+  cognitively costly for audio.
+- The workflows motivating F59 are all guard-then-sequence
+  shapes; none has demanded a tree yet.
+
+The ban is a load-time check, not a schema constraint, so
+raising the limit later is one-line change when real need
+appears.
+
+### Events
+
+- `MACRO_BRANCH_TAKEN` — `{step_index, branch, condition}`
+  where `branch` is `"then"` or `"else"`. The full
+  substituted condition object lands in the payload so
+  diagnostic logs explain why the branch was taken.
+- `MACRO_CONDITION_FAILED` — `{step_index, reason, left,
+  right, op}`. Fires when evaluation itself failed
+  (undefined var, type coercion, regex compile), distinct
+  from the condition being merely false.
+
+### Interaction with F57 assertions
+
+A branch's `then_steps` can contain `expect` steps; so can
+`else_steps`. This is how a user asserts *different*
+outcomes in the two paths — *"if exit 0, expect
+`cell.status == COMPLETED`; if exit 1, expect a
+`COMMAND_FAILED_STDERR_TAIL`"*. The scenario harness runs
+exactly the branch that was taken; the other branch's
+assertions are skipped (not "passed by default") and
+noted in `ScenarioResult.skipped_steps`.
+
+### Tests (extending `tests/test_macros.py`)
+
+- `test_if_then_branch_executes_when_condition_true`
+- `test_if_else_branch_executes_when_condition_false`
+- `test_if_missing_else_is_noop_on_false`
+- `test_if_undefined_variable_aborts_macro`
+- `test_if_regex_compile_failure_aborts_at_load_time`
+- `test_if_numeric_coercion_failure_aborts`
+- `test_if_nested_refused_at_load_time`
+- `test_branch_taken_event_includes_substituted_condition`
+- `test_scenario_harness_skips_untaken_branch_assertions`
+- `test_exit_ok_sugar_matches_zero_exit_code`
+- `test_empty_op_treats_none_and_empty_collections_equally`
+
+### Docs touch points
+
+- `docs/USER_MANUAL.md` — "Macros" chapter gains a
+  "Conditionals" section with the deploy + test-triage
+  examples from the gap.
+- `docs/DEVELOPER_GUIDE.md` — one paragraph on "adding an
+  operator": table entry, evaluator dispatch, two tests.
+- `docs/EVENTS.md` — two new event rows.
+- `docs/CHEAT_SHEET.md` — one-line note under Macros that
+  `if` steps exist; the full grammar lives in the
+  USER_MANUAL.
+
+### Tradeoffs deliberately rejected
+
+- **No nested `if`.** Load-time refusal with migration
+  hint. Revisit only after three real user requests land.
+- **No loops (`for`, `while`, `repeat`).** Loop macros are
+  powerful and easy to get wrong (infinite loops, fixing
+  them mid-playback). A user who needs to iterate runs a
+  shell `for` inside a cell and captures its output.
+- **No boolean combinators (`and`, `or`, `not`).** A user
+  who needs `A and B` uses two `capture` steps and a
+  nested condition — one that compares a pre-computed
+  `$both` variable. Cheapest workaround for the cases
+  seen; revisit when a user files a concrete motivator.
+- **No else-if chain.** Equivalent of guards-then-else
+  expressed as a flat sequence of `if` steps that
+  short-circuit by setting a `$handled` variable. Slightly
+  verbose; keeps the AST flat.
+
+---
+
+## Cluster status: F56 – F59 at a glance
+
+Once all four entries ship, a user can:
+
+1. Press a keystroke to start recording (`:record deploy`).
+2. Walk through a workflow as they normally would.
+3. Stop recording; the JSONL file lands on disk next to
+   their other macros.
+4. Replay it verbatim with `:play deploy` — same
+   keystrokes, same narration, same outcomes.
+5. Replay it as a test with `:play deploy --assert` — any
+   drift between record-time and today fires an
+   `ASSERTION_FAILED` event with the diff.
+6. Parameterise it by hand-editing one step into a
+   `prompt` — the next run asks for env/version/etc. and
+   substitutes the answer.
+7. Branch on earlier results by adding an `if` step —
+   deploy-if-clean, read-tail-if-failed, etc.
+
+The format is append-only across the four PRs: every
+`.asatmacro.jsonl` recorded under F56 remains playable
+after F57/F58/F59 ship; new step kinds only appear when
+the recorder was told to emit them.
+
+### Future extensions after F59
+
+Each of these is a natural follow-up but deliberately
+out of scope for the initial cluster. Land only when a
+user files a concrete motivator.
+
+- **Macro composition.** A `call` step that runs another
+  macro inline; variable namespace handling (shared?
+  isolated? parent-visible?) is the open design question.
+- **Loops.** A `foreach` step that iterates a captured
+  list. Hardest safety surface — aborts on Ctrl+C, cap
+  total iterations, narrate progress.
+- **Record-by-replay editing.** Record a macro, replay
+  it in an editing mode where the user can drop / reorder
+  / modify steps live.
+- **Shared macro library.** A distributable format
+  (`~/.asat/macros/shared/`), signing, trust prompts.
+- **Auto-generated SMOKE_TEST.md.** Already flagged as a
+  stretch goal under F57; becomes much more valuable once
+  F58/F59 let the macro carry templating and branches the
+  doc would otherwise have to explain in prose.
+
+---
+
 ## How to add an entry
 
 Append a section using the template:
