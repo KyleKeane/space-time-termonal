@@ -2792,6 +2792,245 @@ same fixture passes on a laptop and on CI.
 
 ---
 
+## F58 — Macro templating: variables, prompts, and captures
+
+**Depends on F56 + F57.**
+
+**Gap.** A verbatim macro is brittle: record *"deploy to
+staging"* today and the commit hash is burned into the
+`text` step forever. F56's replay is useful for
+deterministic UI workflows but useless for the real
+automation target — "do this common thing, but fill in
+today's value for X". Without parameterisation, the user's
+only recourse is editing the JSONL by hand before each run,
+which defeats the point of a recorded macro.
+
+**Where it surfaces.** The three workflows that motivated
+the macro feature in the first place all need variables:
+
+1. **"Deploy foo to env"** — the env name varies each run.
+   Today the user would hand-edit the command cell.
+2. **"Find the failing test and open its log"** — the test
+   name is the output of the previous cell. The macro has to
+   *read* that output and *use* it in the next step.
+3. **"Bump version and publish"** — the version bump is
+   computed from the current tag (capture) *plus* a user
+   choice of patch/minor/major (prompt).
+
+**Sketch.** Introduce three new step kinds (`prompt`,
+`capture`, and a modifier on `text`/`expect` for
+substitution), a `{{var}}` substitution syntax, a small set
+of built-in variables, and one new event
+(`MACRO_PAUSED_FOR_PROMPT`).
+
+### Substitution syntax
+
+`{{name}}` marks a substitution slot. Resolved at **step
+execution time**, not at load time, so a `capture` in step
+3 can feed a `text` step in step 5. Unknown variables
+**abort the macro** with `MACRO_STEP_ASSERTION_FAILED`
+carrying `reason="undefined_variable"` and the variable
+name — never silently substitute an empty string.
+
+Escape: `\{\{literal\}\}` if a user genuinely needs the two
+braces in output. Double braces in recorded text are so
+rare the escape lands only as an addendum in docs; the
+recorder does not proactively escape.
+
+Substitution applies to:
+
+- `text` step `text` field
+- `expect` step `match` values (not keys — match paths stay
+  literal)
+- `prompt` step `question` and `default`
+- `capture` step `from` expression (see below)
+
+Substitution does **not** apply to:
+
+- `action` names (those are a closed set)
+- `key.name` fields (likewise)
+- `event_type` in `expect` (closed set)
+- `schema_version` / envelope fields
+
+### Step kind: `prompt`
+
+Pause the macro, ask the user for input, bind the answer
+to a variable:
+
+```
+{"step": 4, "kind": "prompt", "var": "env", "question": "deploy to which env?", "default": "staging", "choices": ["staging", "prod"]}
+```
+
+Fields:
+
+- `var` — variable name, required. Must match
+  `[a-z][a-z0-9_]*` to sidestep quoting surprises.
+- `question` — the spoken prompt. Templated (so
+  `"deploy to {{app}}?"` works).
+- `default` — optional default value (Enter accepts).
+  Templated.
+- `choices` — optional list of acceptable values. If set,
+  the user cycles with Up/Down and commits with Enter;
+  free-form typing is blocked. Narrates "choice 1 of N:
+  staging". Templated per-element.
+- `secret` — bool, default false. If true, echoed
+  narration says "value accepted" rather than reading back
+  the text. For tokens / passwords in future macros.
+
+Prompts run in a temporary sub-mode (`MACRO_PROMPT`, peer
+of `MACRO_PLAYBACK` — same mutual-exclusion rule the rest
+of the app follows). Escape aborts the macro; Ctrl+R
+replays the question. `MACRO_PAUSED_FOR_PROMPT` fires on
+entry with `{step_index, var, question, default, choices,
+secret}`; `MACRO_PROMPT_ANSWERED` fires on commit with
+`{step_index, var}` (never the value, for secret safety).
+
+### Step kind: `capture`
+
+Bind a variable from event payload or built-in source:
+
+```
+{"step": 7, "kind": "capture", "var": "last_output", "from": "event:output.chunk.last.text"}
+{"step": 8, "kind": "capture", "var": "now", "from": "builtin:clock.iso"}
+{"step": 9, "kind": "capture", "var": "cwd", "from": "builtin:workspace.root"}
+```
+
+`from` is a dotted path with a leading namespace:
+
+- `event:<event_type>.<selector>.<field>` — selector is
+  `last` (most recent event of that type), `first`, or
+  `nth(N)`. Field is a dotted path into the payload.
+- `builtin:<key>` — see the built-in table below.
+- `env:<NAME>` — OS environment variable (only with
+  `settings.macros.<name>.allow_env` set per-macro; default
+  off for safety).
+
+If the source resolves to nothing, the capture fails hard
+(`MACRO_STEP_ASSERTION_FAILED`, `reason="capture_empty"`)
+rather than binding an empty string. A macro that needs
+"empty is OK" uses a `prompt` step with an empty default
+instead.
+
+### Built-in variables
+
+Available in any `{{$...}}` reference (leading `$`
+distinguishes built-ins from user-defined vars) without
+requiring a `capture` step first:
+
+| Reference | Value |
+|-----------|-------|
+| `{{$workspace.root}}` | Absolute path to current workspace (F50). Empty string if no workspace bound. |
+| `{{$clock.iso}}` | UTC ISO8601 of step execution. |
+| `{{$clock.epoch}}` | Seconds since epoch, integer. |
+| `{{$session.id}}` | Current `Session.session_id`. |
+| `{{$last_cell.command}}` | Command of most recent completed cell. |
+| `{{$last_cell.exit_code}}` | Exit code (int). |
+| `{{$last_cell.stdout}}` | Full captured stdout. |
+| `{{$last_cell.stdout.first_line}}` | Convenience. |
+| `{{$last_cell.stdout.last_line}}` | Convenience. |
+| `{{$focus.mode}}` | `"notebook"`, `"input"`, etc. |
+| `{{$focus.cell_id}}` | Current cell's id. |
+
+Additional built-ins land in follow-ups as genuine user
+need proves them out. Resist adding "might be useful
+someday" entries — each one is a support burden.
+
+### Precedence and scope
+
+Variables live in a single namespace per macro run.
+Precedence on lookup:
+
+1. User-defined (set by `prompt` or `capture`).
+2. Built-in (`$`-prefixed).
+3. Undefined → abort.
+
+No inheritance across macros. Running `:play foo` then
+`:play bar` starts `bar` with an empty namespace — a
+future "macro composition" feature would introduce
+scoping, but F58 deliberately refuses to design for it.
+
+### Settings
+
+Extend `settings.macros.<name>` with:
+
+- `allow_env` (bool, default false) — permit `env:` source
+  in `capture` steps.
+- `default_vars` (object of var → value) — seed values the
+  macro starts with; useful for "my usual env" cases where
+  the prompt has a sensible personal default.
+- `prompt_timeout_ms` (int, optional) — if set, a prompt
+  auto-accepts its default after this many ms without
+  input. Surfaces in narration: *"3 seconds until
+  default"*.
+
+### Events
+
+- `MACRO_PAUSED_FOR_PROMPT` — `{step_index, var,
+  question, default, choices, secret}`
+- `MACRO_PROMPT_ANSWERED` — `{step_index, var}`  (never
+  the answer text, for secret safety)
+- `MACRO_VARIABLE_BOUND` — `{step_index, var, source}`
+  (source is `"prompt" | "capture" | "default"`; no value)
+- `MACRO_SUBSTITUTION_FAILED` — `{step_index, variable,
+  field_path}`
+
+### Tests (extending `tests/test_macros.py`)
+
+- `test_substitution_resolved_at_step_time_not_load_time`
+- `test_undefined_variable_aborts_macro`
+- `test_prompt_step_binds_answer_to_variable`
+- `test_prompt_default_accepted_on_enter`
+- `test_prompt_choices_clamp_free_text`
+- `test_prompt_escape_aborts_macro`
+- `test_capture_from_event_last_selector`
+- `test_capture_from_builtin_clock_iso`
+- `test_capture_from_empty_source_aborts`
+- `test_capture_from_env_refused_without_allow_env`
+- `test_secret_prompt_never_narrates_value`
+- `test_substitution_supports_nested_braces_via_escape`
+- `test_builtin_precedence_lower_than_user_defined`
+
+### Docs touch points
+
+- `docs/USER_MANUAL.md` — "Macros" chapter gains a
+  "Templating" section with a worked deploy example.
+- `docs/CHEAT_SHEET.md` — one-line note on `{{var}}` under
+  Macros; `MACRO_PROMPT` sub-mode gets a bindings row
+  (Up/Down cycle choices, Enter commits, Escape aborts,
+  Ctrl+R replays question).
+- `docs/EVENTS.md` — four new event rows.
+- `docs/DEVELOPER_GUIDE.md` — short "adding a built-in
+  variable" paragraph pointing at the lookup dispatcher.
+
+### Tradeoffs deliberately rejected
+
+- **No expression language.** `{{price * 1.2}}` is
+  tempting but turns the file into code. Users who need
+  arithmetic wrap the macro around a shell command and
+  capture its output.
+- **No file I/O from captures.** `from: "file:/etc/hosts"`
+  is a natural extension but a large attack surface. Users
+  who need a file's contents run `cat` in a cell and
+  capture the output.
+- **No nested templating.** `{{prefix_{{kind}}}}` is
+  forbidden — the substitution pass is single-shot.
+  A user who really needs this composes with a `capture`
+  step.
+- **No regex in prompt validation.** `choices` + free-text
+  covers every case that has surfaced so far.
+
+### Interaction with F57 `expect`
+
+An `expect` whose `match` values reference `{{var}}`
+substitutes before comparing. This turns
+parameter-dependent assertions into reusable scaffolds:
+*"after running `deploy to {{env}}`, expect
+`command.completed.payload.exit_code == 0`"*. The test
+lineage collapses to one macro, one variable set per
+invocation.
+
+---
+
 ## How to add an entry
 
 Append a section using the template:
