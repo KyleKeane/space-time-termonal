@@ -97,9 +97,11 @@ deterministic fallback for headless tests.
 
 ## F6 — Live-speaker audio sink (POSIX)
 
-**Status.** Windows live playback shipped (`WindowsLiveAudioSink` in
-`asat/audio_sink.py`, selected by `python -m asat --live`). The
-remaining gap is POSIX.
+**Status.** Partially shipped. Windows live playback ships
+(`WindowsLiveAudioSink` in `asat/audio_sink.py`, selected by
+`python -m asat --live`). POSIX (macOS / Linux) is still open —
+`pick_live_sink()` raises `LiveAudioUnavailable` on those platforms
+and the CLI falls back to `MemorySink` with a spoken warning.
 
 **Gap.** On macOS and Linux, `pick_live_sink()` raises
 `LiveAudioUnavailable` and the CLI falls back to `MemorySink` with a
@@ -801,6 +803,190 @@ but strip the UI to: one line at the top announcing
 navigation, nothing for the screen reader to wade through. Every
 visual surface stays single-pane and minimal so navigation cost is
 purely in keystrokes, not in spoken chrome.
+
+---
+
+## F30 — Audio history / "repeat last narration"
+
+**Gap.** When a narration passes by faster than the user can absorb
+it — or a new event speaks over the one they wanted to catch — there
+is no way to re-hear the last phrase. Assistive tech on desktops
+universally provides a "say-it-again" key; ASAT does not.
+
+**Where it surfaces.** Output-line narration during a noisy `pytest`
+run, or quick focus transitions that chain several short cues, where
+the user realises "what did that last one say?" too late.
+
+**Sketch.** Add a bounded ring buffer (default 20 entries) inside
+`SoundEngine` that records every rendered speech phrase with its
+`event_type`, `binding_id`, rendered `text`, and timestamp. Bind
+`Ctrl+R` (repeat) to replay the most recent entry via the same voice,
+and `Ctrl+Shift+R` to open an "audio history" overlay sub-mode where
+Up/Down walks back through the buffer and Enter replays the focused
+entry. Emit `NARRATION_REPLAYED` so tests can assert on the buffer
+depth and replay ordering. History is purely in-memory; it resets
+on process exit.
+
+---
+
+## F31 — Narration verbosity presets
+
+**Gap.** Some users want bare-minimum narration (errors + exit codes
+only), others want chatty feedback on every keystroke. Today, the
+only way to quiet a class of events is to manually disable bindings
+one-by-one in the settings editor.
+
+**Where it surfaces.** A user running a 10-minute build doesn't need
+per-line narration but does want the failure cue; today they have
+to navigate to each output binding and flip `enabled = false`.
+
+**Sketch.** Add a `verbosity: Literal["minimal", "normal", "verbose"]`
+field to each `EventBinding` (default `"normal"`) and a top-level
+`SoundBank.verbosity_level` with the same shape. The sound engine
+skips any binding whose `verbosity` is stricter than the bank's
+current level. Expose a `:verbosity <level>` meta-command and cycle
+via `Ctrl+M` inside SETTINGS. Every preset change fires a
+`VERBOSITY_CHANGED` event the narrator announces so the user hears
+which profile they just entered. Pairs cleanly with F21c reset so
+"reset to defaults" can include "and verbosity=normal".
+
+---
+
+## F32 — Audio ducking under active narration
+
+**Gap.** When TTS narration plays while non-speech output cues fire
+(output-line chords, keystroke blips), the speech gets masked. There
+is no automatic gain management to keep voice intelligible.
+
+**Where it surfaces.** Streaming output during a command: the
+per-line sound cues stack on top of the narrator reading a single
+line, and the combined mix is hard to parse.
+
+**Sketch.** Add `ducking_enabled: bool` (default `True`) and
+`duck_level: float` (0-1, default 0.4) to the top of `SoundBank`.
+`SoundEngine` tracks whether a speech buffer is currently mixing; if
+so, any concurrent non-speech buffer has its gain multiplied by
+`duck_level` before being mixed. The attenuation releases on the
+next mix cycle after the speech buffer finishes. Expose both fields
+as settings you can live-edit. The implementation lives entirely in
+the engine's mixing loop — no events or new subsystems.
+
+---
+
+## F34 — Completion alert when focus has moved
+
+**Gap.** A long-running command that completes in the background
+fires the normal completion cue, but if the user has tabbed to a
+different window or moved to OUTPUT mode on a different cell, the
+cue is easy to miss. Shells historically rang the terminal bell; we
+have no equivalent "I'm done, come back" signal.
+
+**Where it surfaces.** `make test` starts on cell 3, user moves to
+cell 5 to keep working, `make test` finishes and says "command
+completed exit 0" — but only once, at conversational volume, and
+the user is already typing into cell 5.
+
+**Sketch.** `ExecutionRunner` already knows the originating
+`cell_id` and start time. If `COMMAND_COMPLETED` fires and the
+current focus (notebook cursor + mode) has moved away from the
+originating cell since `COMMAND_STARTED`, publish an additional
+`COMMAND_COMPLETED_AWAY` event. Bind that to a distinctive chime
+(louder, wider spatial placement) in the default bank. Two-tier
+semantics: the normal completion cue still fires for correctness;
+the away-cue is a bonus nudge. Silence it with a binding-level
+toggle.
+
+---
+
+## F35 — Cell bookmarks
+
+**Gap.** In a long session the user wants to mark significant cells
+("the one where I set up the venv", "the broken test run") and jump
+back by name. There's no positional shortcut — a sighted user would
+scroll visually, but we don't have that affordance.
+
+**Where it surfaces.** Debugging a multi-step issue where the user
+needs to repeatedly revisit the same two or three cells while
+interleaving exploration in between.
+
+**Sketch.** Introduce a `BookmarkRegistry` stored on `Session`
+mapping user-chosen names to cell ids. Meta-commands: `:bookmark
+<name>` captures the focused cell, `:jump <name>` navigates to it,
+`:bookmarks` narrates the full list, `:unbookmark <name>` removes
+one. Persist the registry in the session JSON so it survives reload.
+Emit `BOOKMARK_CREATED` / `BOOKMARK_JUMPED` / `BOOKMARK_REMOVED` for
+narration. Tab-completes cleanly once F23 lands.
+
+---
+
+## F36 — Auto-read stderr tail on command failure
+
+**Gap.** When a command fails, the user hears the failure chord and
+the exit code, but has to manually enter OUTPUT mode and scroll to
+find the error text. The single most useful piece of information
+(what went wrong) is an extra navigation step away.
+
+**Where it surfaces.** Every failed build, failed test run, failed
+`cd`, failed `git pull`. The narrator says "command failed exit 1"
+— not "command failed: fatal: not a git repository".
+
+**Sketch.** On `COMMAND_FAILED` (or `COMMAND_COMPLETED` with
+`exit_code != 0`), the sound engine inspects the cell's captured
+output buffer, takes the last N stderr lines (default 3, configurable
+via `stderr_tail_lines` on the bank), and speaks them through the
+`alert` voice after the failure chord. The binding's predicate
+already supports `exit_code != 0`, so this is one new default
+binding plus a small helper to fetch the tail from the buffer.
+Explicitly opt-outable via a settings toggle — some users will
+prefer the minimal cue and navigate manually.
+
+---
+
+## F37 — Long-output pacing
+
+**Gap.** A command emitting thousands of lines produces a continuous
+narration stream. After thirty seconds the user has lost sense of
+progress and the per-line cues become noise. There's no silence
+detection ("it's been quiet for 10s — still running?") and no
+periodic progress beat during streaming.
+
+**Where it surfaces.** `pytest -v`, `make`, log-tailing. Also:
+commands that hang silently have no distinguishing cue from commands
+that are just slow.
+
+**Sketch.** A `StreamingMonitor` subscribes to `OUTPUT_CHUNK` and
+`COMMAND_STARTED`/`_COMPLETED` for the active cell. It tracks the
+time since the last chunk; if the gap crosses `silence_threshold_sec`
+(default 5.0) it publishes `OUTPUT_STREAM_PAUSED`, and every
+`progress_beat_interval_sec` (default 30.0) while output is
+streaming it publishes `OUTPUT_STREAM_BEAT`. Both are opt-in
+bindings — the default bank binds them to subtle non-speech cues.
+Pairs with F24 (continuous playback): together they give the user a
+temporal frame for long-running output.
+
+---
+
+## F38 — Self-voicing help topics
+
+**Gap.** `:help` prints the cheat sheet. A brand-new user — blind,
+with no sighted context — needs a spoken tour that explains the mode
+model, the key keystrokes, and how to discover things like `Ctrl+,`
+for settings. Today the only path is "read the USER_MANUAL in a
+screen reader".
+
+**Where it surfaces.** First-run onboarding (F20 shipped) reads a
+short welcome but doesn't cover navigation, settings, audio tuning,
+or search. A user who wants to learn more has to leave the terminal
+to do so.
+
+**Sketch.** Extend `:help` to accept a topic: `:help navigation`,
+`:help audio`, `:help settings`, `:help cells`, `:help search`,
+`:help topics` (lists the rest). Each topic narrates a 10-20 second
+tour via the `system` voice — short enough to absorb, long enough to
+be useful. Topics live as plain strings in a new
+`asat/help_topics.py` module so they're easy to edit and translate.
+`:help` with no argument keeps the current print-the-cheat-sheet
+behaviour for users who already know the layout.
 
 ---
 
