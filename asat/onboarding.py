@@ -26,8 +26,9 @@ launch — but the common case is a clean write.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import IO, Iterable, Optional
 
 from asat.event_bus import EventBus, publish_event
 from asat.events import EventType
@@ -42,6 +43,13 @@ DEFAULT_ONBOARDING_LINES: tuple[str, ...] = (
 )
 
 
+SILENT_SINK_HINT = (
+    "[asat] First-run welcome is narrating into an in-memory sink so "
+    "you will not hear it. Pass --live (Windows) or --wav-dir DIR to "
+    "hear or capture audio; --check runs a diagnostic self-test."
+)
+
+
 class OnboardingCoordinator:
     """Publish a welcome tour once per machine, gated by a sentinel file."""
 
@@ -53,18 +61,28 @@ class OnboardingCoordinator:
         sentinel_path: Path | str,
         *,
         lines: Optional[Iterable[str]] = None,
+        has_live_audio: bool = True,
+        hint_stream: Optional[IO[str]] = None,
     ) -> None:
         """Remember the bus, sentinel location, and welcome lines.
 
         `lines` defaults to `DEFAULT_ONBOARDING_LINES`. Callers can
         override to localise, shorten, or extend the tour without
         touching this module.
+
+        `has_live_audio=False` tells the coordinator to write
+        `SILENT_SINK_HINT` to `hint_stream` (default: `sys.stderr`)
+        before publishing the tour event. Without that cue, a new user
+        on a silent sink (F6 POSIX gap or a plain `python -m asat` with
+        no flags) hears nothing and reasonably concludes ASAT is broken.
         """
         self._bus = bus
         self._sentinel_path = Path(sentinel_path)
         self._lines: tuple[str, ...] = (
             tuple(lines) if lines is not None else DEFAULT_ONBOARDING_LINES
         )
+        self._has_live_audio = has_live_audio
+        self._hint_stream = hint_stream if hint_stream is not None else sys.stderr
 
     @property
     def sentinel_path(self) -> Path:
@@ -84,6 +102,8 @@ class OnboardingCoordinator:
         """
         if not self.is_first_run():
             return False
+        if not self._has_live_audio:
+            print(SILENT_SINK_HINT, file=self._hint_stream)
         publish_event(
             self._bus,
             EventType.FIRST_RUN_DETECTED,

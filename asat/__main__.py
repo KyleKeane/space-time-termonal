@@ -77,7 +77,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # `SESSION_CREATED`/`FOCUS_CHANGED`, so the launch banner and the
     # first `[input #…]` line reach the user.
     trace_stream = None if args.quiet or args.check else sys.stdout
-    onboarding_factory = _onboarding_factory(quiet=args.quiet, check=args.check)
+    # A user who asked for `--live` or `--wav-dir` has told us where
+    # audio goes; anything else is the silent MemorySink path F41
+    # guards against.
+    has_live_audio = bool(args.live) or args.wav_dir is not None
+    onboarding_factory = _onboarding_factory(
+        quiet=args.quiet, check=args.check, has_live_audio=has_live_audio
+    )
     app = Application.build(
         sink=sink,
         bank=bank,
@@ -233,7 +239,7 @@ def _asat_home() -> Path:
 
 
 def _onboarding_factory(
-    *, quiet: bool, check: bool
+    *, quiet: bool, check: bool, has_live_audio: bool
 ):
     """Return an onboarding factory or None.
 
@@ -242,13 +248,19 @@ def _onboarding_factory(
     stays pure. Otherwise we hand `Application.build` a factory that
     builds an `OnboardingCoordinator` pointing at
     `<ASAT_HOME>/first-run-done` (default: `~/.asat/first-run-done`).
+
+    `has_live_audio` is plumbed through so the coordinator can warn
+    on stderr before the welcome narration vanishes into a silent sink
+    (F41). True when the user passed `--live` or `--wav-dir DIR`.
     """
     if quiet or check:
         return None
     sentinel = _asat_home() / "first-run-done"
 
     def _factory(bus) -> OnboardingCoordinator:
-        return OnboardingCoordinator(bus, sentinel)
+        return OnboardingCoordinator(
+            bus, sentinel, has_live_audio=has_live_audio
+        )
 
     return _factory
 

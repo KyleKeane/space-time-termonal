@@ -229,6 +229,7 @@ HELP_LINES: tuple[str, ...] = (
     "           / search (type query, Enter commits), n / N next / prev hit, g jump-to-line.",
     "SETTINGS:  Up/Down walk, Right/Enter descend, Left/Escape ascend, e edit, Ctrl+S save, Ctrl+Q close.",
     "           / search (cross-section; Enter commits, Escape restores), n / N cycle matches.",
+    "           Ctrl+Z undo, Ctrl+Y redo edits in the order you made them.",
     "           Ctrl+R resets to defaults at cursor scope (Enter confirms, Escape cancels).",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
     "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :commands, :reset.",
