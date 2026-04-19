@@ -169,6 +169,9 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "names": ["default", "ideas"],
         "summary": "two notebooks: default, ideas",
     },
+    EventType.BOOKMARK_CREATED: {"name": "setup", "cell_id": "c1"},
+    EventType.BOOKMARK_JUMPED: {"name": "setup", "cell_id": "c1"},
+    EventType.BOOKMARK_REMOVED: {"name": "setup", "cell_id": "c1"},
 }
 
 

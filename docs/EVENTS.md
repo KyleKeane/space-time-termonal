@@ -358,6 +358,23 @@ response to `:list-notebooks`; `NOTEBOOK_CREATED` fires when
 | `NOTEBOOK_CREATED`  | `path`, `name`                                   |
 | `NOTEBOOK_LISTED`   | `names`, `summary`                               |
 
+## Cell bookmarks
+
+Producer: `asat.input_router.InputRouter` (`source="input_router"`),
+fired from the `:bookmark`, `:jump`, and `:unbookmark` meta-commands.
+The registry itself lives on `Session.bookmarks`; these events let
+narration / audio cues react without polling session state.
+`BOOKMARK_REMOVED` also fires implicitly when `Session.remove_cell`
+prunes a bookmark whose target was deleted (the registry does the
+prune; the router publishes the event when the user invoked
+`:unbookmark` directly).
+
+| EventType           | Payload keys                                     |
+|---------------------|--------------------------------------------------|
+| `BOOKMARK_CREATED`  | `name`, `cell_id`                                |
+| `BOOKMARK_JUMPED`   | `name`, `cell_id`                                |
+| `BOOKMARK_REMOVED`  | `name`, `cell_id`                                |
+
 ---
 
 ## Adding a new event

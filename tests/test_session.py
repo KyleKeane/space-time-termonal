@@ -162,6 +162,85 @@ class SessionCommandHistoryTests(unittest.TestCase):
         self.assertEqual(session.command_history, ["ls", "pwd", "ls"])
 
 
+class SessionBookmarkTests(unittest.TestCase):
+    """F35: Session tracks user-named cell bookmarks."""
+
+    def test_add_bookmark_stores_name(self) -> None:
+        session = Session.new()
+        cell = Cell.new("echo hi")
+        session.add_cell(cell)
+        normalised = session.add_bookmark("setup", cell.cell_id)
+        self.assertEqual(normalised, "setup")
+        self.assertEqual(session.get_bookmark("setup"), cell.cell_id)
+
+    def test_add_bookmark_strips_surrounding_whitespace(self) -> None:
+        session = Session.new()
+        cell = Cell.new("a")
+        session.add_cell(cell)
+        session.add_bookmark("  setup  ", cell.cell_id)
+        self.assertEqual(session.get_bookmark("setup"), cell.cell_id)
+
+    def test_add_bookmark_rejects_empty_name(self) -> None:
+        session = Session.new()
+        cell = Cell.new("a")
+        session.add_cell(cell)
+        with self.assertRaises(SessionError):
+            session.add_bookmark("   ", cell.cell_id)
+
+    def test_add_bookmark_requires_existing_cell(self) -> None:
+        session = Session.new()
+        with self.assertRaises(SessionError):
+            session.add_bookmark("setup", "missing-id")
+
+    def test_add_bookmark_rebinds_existing_name(self) -> None:
+        session = Session.new()
+        a, b = _cells(["a", "b"])
+        session.add_cell(a)
+        session.add_cell(b)
+        session.add_bookmark("here", a.cell_id)
+        session.add_bookmark("here", b.cell_id)
+        self.assertEqual(session.get_bookmark("here"), b.cell_id)
+
+    def test_remove_bookmark_returns_cell_id(self) -> None:
+        session = Session.new()
+        cell = Cell.new("a")
+        session.add_cell(cell)
+        session.add_bookmark("setup", cell.cell_id)
+        cleared = session.remove_bookmark("setup")
+        self.assertEqual(cleared, cell.cell_id)
+        self.assertIsNone(session.get_bookmark("setup"))
+
+    def test_remove_unknown_bookmark_raises(self) -> None:
+        session = Session.new()
+        with self.assertRaises(SessionError):
+            session.remove_bookmark("nope")
+
+    def test_list_bookmarks_returns_sorted_pairs(self) -> None:
+        session = Session.new()
+        a, b = _cells(["a", "b"])
+        session.add_cell(a)
+        session.add_cell(b)
+        session.add_bookmark("zeta", a.cell_id)
+        session.add_bookmark("alpha", b.cell_id)
+        self.assertEqual(
+            session.list_bookmarks(),
+            [("alpha", b.cell_id), ("zeta", a.cell_id)],
+        )
+
+    def test_remove_cell_prunes_dangling_bookmarks(self) -> None:
+        session = Session.new()
+        a, b = _cells(["a", "b"])
+        session.add_cell(a)
+        session.add_cell(b)
+        session.add_bookmark("first", a.cell_id)
+        session.add_bookmark("also_first", a.cell_id)
+        session.add_bookmark("second", b.cell_id)
+        session.remove_cell(a.cell_id)
+        self.assertEqual(
+            session.list_bookmarks(), [("second", b.cell_id)]
+        )
+
+
 class SessionSerializationTests(unittest.TestCase):
 
     def test_round_trip_preserves_state(self) -> None:
@@ -173,12 +252,14 @@ class SessionSerializationTests(unittest.TestCase):
         session.metadata["project"] = "asat"
         session.record_command("ls")
         session.record_command("pwd")
+        session.add_bookmark("start", a.cell_id)
         restored = Session.from_dict(session.to_dict())
         self.assertEqual(restored.session_id, session.session_id)
         self.assertEqual([c.command for c in restored], ["a", "b"])
         self.assertEqual(restored.active_cell_id, b.cell_id)
         self.assertEqual(restored.metadata, {"project": "asat"})
         self.assertEqual(restored.command_history, ["ls", "pwd"])
+        self.assertEqual(restored.bookmarks, {"start": a.cell_id})
 
     def test_save_and_load_roundtrip_on_disk(self) -> None:
         session = Session.new()

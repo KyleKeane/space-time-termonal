@@ -46,6 +46,7 @@ Each row is one binding. The `Action` column is the handler name `InputRouter._a
 | `Ctrl+U` | `delete_to_start` |
 | `Ctrl+W` | `delete_word_left` |
 | `Delete` | `delete_forward` |
+| `Down` | `history_next` |
 | `End` | `cursor_end` |
 | `Enter` | `submit` |
 | `Escape` | `exit_input` |
@@ -53,6 +54,7 @@ Each row is one binding. The `Action` column is the handler name `InputRouter._a
 | `Home` | `cursor_home` |
 | `Left` | `cursor_left` |
 | `Right` | `cursor_right` |
+| `Up` | `history_previous` |
 
 ## OUTPUT mode
 

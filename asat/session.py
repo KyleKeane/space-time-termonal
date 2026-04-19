@@ -52,6 +52,13 @@ class Session:
     # repeatedly. Persisted with the session so resuming preserves the
     # walk.
     command_history: list[str] = field(default_factory=list)
+    # Named cell-id bookmarks (F35). Maps user-chosen names to cell
+    # ids so ``:jump <name>`` can return to a labelled cell across
+    # reloads. Names are normalised to a single token (no whitespace,
+    # case preserved). When a bookmarked cell is removed via
+    # ``remove_cell`` the matching entries are pruned automatically so
+    # the registry can never point at a stale id.
+    bookmarks: dict[str, str] = field(default_factory=dict)
 
     @classmethod
     def new(cls) -> "Session":
@@ -87,12 +94,17 @@ class Session:
     def remove_cell(self, cell_id: str) -> Cell:
         """Remove and return the cell with the given id.
 
-        Clears active_cell_id if it pointed at the removed cell.
+        Clears active_cell_id if it pointed at the removed cell, and
+        prunes any bookmark whose target was that cell so ``:jump``
+        cannot resolve to a stale id.
         """
         index = self._require_index(cell_id)
         removed = self.cells.pop(index)
         if self.active_cell_id == cell_id:
             self.active_cell_id = None
+        for name, bookmarked in list(self.bookmarks.items()):
+            if bookmarked == cell_id:
+                del self.bookmarks[name]
         self.updated_at = utcnow()
         return removed
 
@@ -158,6 +170,7 @@ class Session:
             "metadata": dict(self.metadata),
             "cwd": self.cwd,
             "command_history": list(self.command_history),
+            "bookmarks": dict(self.bookmarks),
             "cells": [cell.to_dict() for cell in self.cells],
         }
 
@@ -173,7 +186,52 @@ class Session:
             metadata=dict(data.get("metadata", {})),
             cwd=data.get("cwd"),
             command_history=list(data.get("command_history", [])),
+            bookmarks=dict(data.get("bookmarks", {})),
         )
+
+    def add_bookmark(self, name: str, cell_id: str) -> str:
+        """Register ``name`` to point at ``cell_id``.
+
+        The name is stripped of surrounding whitespace; empty names
+        raise ``SessionError``. The cell must already belong to the
+        session — bookmarks to unknown ids would immediately dangle.
+        If the name is already in use it is rebound to the new cell so
+        users can reuse a mnemonic like ``here`` without first running
+        ``:unbookmark``. Returns the normalised name.
+        """
+        normalised = name.strip()
+        if not normalised:
+            raise SessionError("Bookmark name must not be empty")
+        self._require_index(cell_id)
+        self.bookmarks[normalised] = cell_id
+        self.updated_at = utcnow()
+        return normalised
+
+    def remove_bookmark(self, name: str) -> str:
+        """Delete the bookmark ``name`` and return the cell id it held.
+
+        Raises ``SessionError`` if no such bookmark exists so callers
+        can narrate an informative error rather than silently no-op.
+        """
+        normalised = name.strip()
+        if normalised not in self.bookmarks:
+            raise SessionError(f"Bookmark {name!r} not found")
+        cell_id = self.bookmarks.pop(normalised)
+        self.updated_at = utcnow()
+        return cell_id
+
+    def get_bookmark(self, name: str) -> Optional[str]:
+        """Return the cell id for ``name``, or ``None`` when unknown."""
+        return self.bookmarks.get(name.strip())
+
+    def list_bookmarks(self) -> list[tuple[str, str]]:
+        """Return ``(name, cell_id)`` pairs sorted by bookmark name.
+
+        Sorting keeps narration deterministic — ``:bookmarks`` always
+        reads the list in the same order so the user can anticipate
+        which entry they'll hear next.
+        """
+        return sorted(self.bookmarks.items())
 
     def record_command(self, command: str) -> bool:
         """Append ``command`` to the history if it's worth recalling.

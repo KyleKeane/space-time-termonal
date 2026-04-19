@@ -1999,5 +1999,133 @@ class BindingsMetaCommandTests(unittest.TestCase):
         self.assertIn("No bindings match", text)
 
 
+class BookmarkMetaCommandTests(unittest.TestCase):
+    """F35: `:bookmark`, `:jump`, `:bookmarks`, `:unbookmark` round-trip."""
+
+    def _submit_meta(self, router: InputRouter, line: str) -> None:
+        router.handle_key(ENTER)  # NOTEBOOK -> INPUT
+        for character in line:
+            router.handle_key(Key.printable(character))
+        router.handle_key(ENTER)
+
+    def test_bookmark_captures_focused_cell(self) -> None:
+        bus, session, cursor, router, cells = _build([""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":bookmark setup")
+        self.assertEqual(session.get_bookmark("setup"), cells[0].cell_id)
+        created = recorder.types_of(EventType.BOOKMARK_CREATED)
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0].payload["name"], "setup")
+        self.assertEqual(created[0].payload["cell_id"], cells[0].cell_id)
+        # Ambient: stays in INPUT mode with empty buffer.
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(cursor.focus.input_buffer, "")
+
+    def test_bookmark_without_name_emits_help(self) -> None:
+        bus, session, _, router, _ = _build([""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":bookmark")
+        self.assertEqual(session.bookmarks, {})
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertTrue(
+            any("name is one token" in line
+                for help in helps for line in help.payload["lines"])
+        )
+
+    def test_bookmark_rejects_multi_word_name(self) -> None:
+        bus, session, _, router, _ = _build([""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":bookmark two words")
+        self.assertEqual(session.bookmarks, {})
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertTrue(
+            any("name is one token" in line
+                for help in helps for line in help.payload["lines"])
+        )
+
+    def test_jump_moves_focus_to_bookmark_target(self) -> None:
+        bus, session, cursor, router, cells = _build(["", "", ""])
+        session.add_bookmark("end", cells[2].cell_id)
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":jump end")
+        self.assertEqual(cursor.focus.cell_id, cells[2].cell_id)
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+        jumped = recorder.types_of(EventType.BOOKMARK_JUMPED)
+        self.assertEqual(len(jumped), 1)
+        self.assertEqual(jumped[0].payload["cell_id"], cells[2].cell_id)
+        self.assertEqual(jumped[0].payload["name"], "end")
+
+    def test_jump_to_unknown_bookmark_emits_help(self) -> None:
+        bus, _, cursor, router, cells = _build(["", ""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":jump ghost")
+        # Focus stayed on the originally focused cell.
+        self.assertEqual(cursor.focus.cell_id, cells[0].cell_id)
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertTrue(
+            any("No bookmark named `ghost`" in line
+                for help in helps for line in help.payload["lines"])
+        )
+        self.assertEqual(recorder.types_of(EventType.BOOKMARK_JUMPED), [])
+
+    def test_unbookmark_removes_and_emits_event(self) -> None:
+        bus, session, _, router, cells = _build([""])
+        session.add_bookmark("here", cells[0].cell_id)
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":unbookmark here")
+        self.assertEqual(session.bookmarks, {})
+        removed = recorder.types_of(EventType.BOOKMARK_REMOVED)
+        self.assertEqual(len(removed), 1)
+        self.assertEqual(removed[0].payload["name"], "here")
+        self.assertEqual(removed[0].payload["cell_id"], cells[0].cell_id)
+
+    def test_unbookmark_unknown_name_emits_help(self) -> None:
+        bus, _, _, router, _ = _build([""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":unbookmark ghost")
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertTrue(
+            any("No bookmark named `ghost`" in line
+                for help in helps for line in help.payload["lines"])
+        )
+        self.assertEqual(recorder.types_of(EventType.BOOKMARK_REMOVED), [])
+
+    def test_bookmarks_lists_registry(self) -> None:
+        bus, session, _, router, cells = _build(["", ""])
+        session.add_bookmark("zeta", cells[0].cell_id)
+        session.add_bookmark("alpha", cells[1].cell_id)
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":bookmarks")
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertEqual(len(helps), 1)
+        text = "\n".join(helps[0].payload["lines"])
+        self.assertIn("alpha", text)
+        self.assertIn("zeta", text)
+        # Sorted: alpha appears before zeta in the narration.
+        self.assertLess(text.index("alpha"), text.index("zeta"))
+
+    def test_bookmarks_empty_lists_hint(self) -> None:
+        bus, _, _, router, _ = _build([""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, ":bookmarks")
+        text = "\n".join(
+            recorder.types_of(EventType.HELP_REQUESTED)[0].payload["lines"]
+        )
+        self.assertIn("No bookmarks yet", text)
+
+    def test_bookmark_then_jump_then_unbookmark_round_trip(self) -> None:
+        bus, session, cursor, router, cells = _build(["", ""])
+        # Focus cell 0, bookmark it.
+        cursor.focus_cell(cells[0].cell_id)
+        self._submit_meta(router, ":bookmark home")
+        # Move focus to cell 1, then jump back.
+        cursor.focus_cell(cells[1].cell_id)
+        self._submit_meta(router, ":jump home")
+        self.assertEqual(cursor.focus.cell_id, cells[0].cell_id)
+        # Remove bookmark — get_bookmark returns None.
+        self._submit_meta(router, ":unbookmark home")
+        self.assertIsNone(session.get_bookmark("home"))
+
+
 if __name__ == "__main__":
     unittest.main()
