@@ -38,6 +38,7 @@ from asat.events import EventType
 from asat.help_topics import HELP_TOPICS, lookup as lookup_help_topic, topic_names
 from asat.keys import Key, Modifier
 from asat.notebook import FocusMode, NotebookCursor
+from asat.output_buffer import OutputRecorder
 from asat.output_cursor import OutputCursor
 from asat.settings_controller import SettingsController
 from asat.settings_editor import ResetScope, SettingsEditorError
@@ -282,6 +283,7 @@ class InputRouter:
         output_cursor: Optional[OutputCursor] = None,
         settings_controller: Optional[SettingsController] = None,
         action_menu: Optional[ActionMenu] = None,
+        output_recorder: Optional[OutputRecorder] = None,
     ) -> None:
         """Attach the router to a cursor, event bus, and optional cursors.
 
@@ -297,6 +299,13 @@ class InputRouter:
         focused item, and Escape closes the menu without activating.
         Without an `action_menu` the `open_action_menu` action is a
         silent no-op.
+
+        When an `output_recorder` is supplied alongside `output_cursor`,
+        the `view_output` action (Ctrl+O) attaches the cursor to the
+        focused cell's buffer on transition, so Up/Down/`/`/`g` work
+        immediately without the user having to route through the F2
+        action menu first. Without it, Ctrl+O still flips the focus
+        mode but navigation keys no-op until something else attaches.
         """
         self._cursor = cursor
         self._bus = bus
@@ -304,6 +313,7 @@ class InputRouter:
         self._output_cursor = output_cursor
         self._settings_controller = settings_controller
         self._action_menu = action_menu
+        self._output_recorder = output_recorder
 
     @property
     def bindings(self) -> BindingMap:
@@ -738,6 +748,23 @@ class InputRouter:
             source=self.SOURCE,
         )
 
+    def _view_output(self) -> None:
+        """Enter OUTPUT mode and attach the output cursor to the cell's buffer.
+
+        Captures the focused cell id BEFORE the mode transition (which
+        may clear it) so the buffer attach lands on the right cell.
+        With no output_cursor / output_recorder wired, falls back to
+        the old behaviour of simply transitioning focus.
+        """
+        cell_id = self._cursor.focus.cell_id
+        self._cursor.view_output_mode()
+        if (
+            self._output_cursor is not None
+            and self._output_recorder is not None
+            and cell_id is not None
+        ):
+            self._output_cursor.attach(self._output_recorder.buffer_for(cell_id))
+
     @_requires_settings_controller
     def _open_settings(self) -> None:
         """Enter SETTINGS mode and open a controller session if available."""
@@ -970,7 +997,7 @@ class InputRouter:
             "delete_word_left": _void(self._cursor.delete_word_left),
             "delete_to_start": _void(self._cursor.delete_to_start),
             "delete_to_end": _void(self._cursor.delete_to_end),
-            "view_output": _void(self._cursor.view_output_mode),
+            "view_output": _void(self._view_output),
             "exit_output": _void(self._cursor.exit_output_mode),
             "submit": self._submit,
             "output_line_up": lambda: self._with_output_cursor(
