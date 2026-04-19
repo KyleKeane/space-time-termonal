@@ -3254,55 +3254,47 @@ user files a concrete motivator.
 
 ## F60 — Persistent computational backend (shared shell / REPL)
 
-**Gap.** Each cell launches its own one-shot `subprocess.Popen` via
-`asat/runner.py:48`. There is no carried state between cells: an
-`export X=hi` in cell 1 is gone by cell 2, `cd /tmp` does not change
-the cwd of any later cell, and there is no persistent Python / Node
-/ shell process the user can build state inside (no Jupyter-style
-kernel, no `tmux send-keys` model). Every cell is effectively a
-fresh `bash -c "<command>"` with the inherited environment of the
-ASAT process and nothing else.
+**Sketch (shipped).** POSIX hosts now launch one long-lived
+`bash --norc --noprofile` at session start and route every cell's
+command through it via stdin (`asat/shell_backend.py`). Sentinel
+framing on both pipes preserves the stdout/stderr split (no PTY
+needed), so ASAT's spatial L/R audio routing keeps working. State
+carries between cells exactly as a human at a real prompt would
+expect: `cd`, `export`, function definitions, shell options. A
+timer-driven `os.killpg(SIGINT)` interrupts a stuck command without
+killing the shell — the shell's own `trap : INT` catches SIGINT,
+while `exec` resets the disposition for the foreground child so it
+exits with 130. The CLI flips this on by default and falls back to
+the per-cell `ProcessRunner` when bash is missing, on Windows, or
+when the user passes `--no-shared-shell` (`asat/__main__.py
+:_pick_runner`). The kernel surfaces a crashed shell as the
+dedicated `EXIT_CODE_BACKEND_ERROR=125` so callers can distinguish
+it from any user-command failure. End-to-end coverage in
+`tests/test_shell_backend.py` (state persistence, timeout-without-
+killing-the-shell, sentinel-prefix-mid-line) and
+`tests/test_app.py::ApplicationSharedShellTests`.
 
-**Where it surfaces.** A blind developer who reasonably expects a
-"notebook of terminal cells" to behave like a single shell session
-runs `cd src` in cell 1, then `ls` in cell 2, and gets the
-launch-time cwd back instead of `src/`. Same with virtualenv
-activation, `source ~/.profile`, in-flight Python state, etc. Today
-USER_MANUAL.md does not state the limitation; the new
-"What a cell *is* (and is not) today" section calls it out and
-links here.
+**Open follow-ups.**
 
-**Sketch.** Give `Session` an optional `backend` (a long-lived
-subprocess) that cells route their command through instead of each
-spawning their own. The simplest first cut is a dedicated shell
-process (`bash -i` / `cmd /K`) addressed by writing to its stdin
-and framing output with sentinel markers (printf a known UUID
-before/after each command so the runner knows when output ends and
-can read the exit code). A richer second cut wraps the
-Jupyter-kernel protocol so non-shell kernels (IPython, Node, etc.)
-work the same way. Either way, the kernel is per-Session, restarts
-explicitly on `:restart` or when corrupted, and old transcripts
-remain valid because each cell still records its captured output
-and exit code.
-
-**Forward-looking notes.**
-
-- **Backend is a session-level setting.** A user might want
-  `bash` here and `ipython` there; record the chosen backend in
-  the Session JSON so resumes pick the same one back up.
+- **Per-session backend choice.** Today the backend is bash or
+  nothing. Record `backend = "bash" | "ipython" | …` in the
+  Session JSON so resumes pick the same one back up.
 - **Per-cell override.** A `:backend none` meta-command (or a
-  cell-level flag) keeps the existing fresh-subprocess behaviour
-  for one-off invocations like `git status` where shared state
-  is irrelevant or actively unwanted.
-- **Restart semantics.** Crashed kernels need a clear narration
+  cell-level flag) for one-off invocations like `git status` where
+  shared state is irrelevant or actively unwanted.
+- **Restart semantics.** A `:restart` meta-command + audio cue
   ("backend exited code N — press Ctrl+R to restart") and a
   way to mark every downstream cell as "ran against a different
   process" so a future re-run does not silently inherit different
   state.
-- **Security.** A long-lived shell amplifies the blast radius of
-  whatever the user types. Document it; never auto-run cells from
-  a loaded session against the new backend without an explicit
-  prompt.
+- **Windows backend.** Mirror the same protocol against `cmd /K`
+  (or `pwsh -NoProfile -NoExit`), reusing the sentinel framing.
+- **Non-shell kernels.** Wrap the Jupyter-kernel protocol so
+  IPython, Node, etc. work the same way.
+- **Security.** A long-lived shell amplifies blast radius. Today
+  `--no-shared-shell` is the only escape valve; never auto-run
+  cells from a loaded session against the new backend without an
+  explicit prompt.
 
 ---
 

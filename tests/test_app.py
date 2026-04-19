@@ -100,6 +100,37 @@ class ApplicationBuildTests(unittest.TestCase):
         app = Application.build()
         self.assertIsNone(app.onboarding)
 
+    def test_default_runner_is_process_runner(self) -> None:
+        # Tests don't pass `runner=`, so the default keeps the
+        # historical per-cell-Popen behaviour. The CLI is the only
+        # place that opportunistically swaps in a ShellBackend.
+        from asat.runner import ProcessRunner
+
+        app = Application.build()
+        self.assertIsInstance(app.runner, ProcessRunner)
+        self.assertIs(app.kernel._runner, app.runner)
+
+    def test_supplied_runner_is_threaded_through_to_kernel(self) -> None:
+        runner = StubRunner()
+        app = Application.build(runner=runner)
+        self.assertIs(app.runner, runner)
+        self.assertIs(app.kernel._runner, runner)
+
+    def test_close_invokes_runner_close_when_present(self) -> None:
+        # ShellBackend defines `close`; ProcessRunner does not. The
+        # Application must call it when present so a long-lived shell
+        # is shut down at exit.
+        closed: list[bool] = []
+
+        class _ClosableRunner(StubRunner):
+            def close(self) -> None:
+                closed.append(True)
+
+        app = Application.build(runner=_ClosableRunner())
+        app.close()
+        self.assertEqual(closed, [True])
+
+
     def test_onboarding_factory_runs_after_session_created(self) -> None:
         """F20: when a coordinator is installed, `.run()` must fire
         during `Application.build` so the welcome event reaches any
@@ -128,6 +159,43 @@ class ApplicationBuildTests(unittest.TestCase):
             welcome_idx = seen.index(EventType.FIRST_RUN_DETECTED)
             self.assertLess(session_idx, welcome_idx)
             self.assertTrue(sentinel.exists())
+
+
+class ApplicationSharedShellTests(unittest.TestCase):
+    """End-to-end check that two cells submitted through one
+    `ShellBackend` (the F60 PR-B headline feature) actually share
+    shell state — `cd` in cell 1 changes the cwd seen by cell 2.
+    """
+
+    def test_cd_in_one_cell_carries_to_the_next(self) -> None:
+        import os
+        import shutil
+        from asat.shell_backend import ShellBackend
+
+        if os.name == "nt" or shutil.which("bash") is None:
+            self.skipTest("requires bash on a POSIX host")
+
+        backend = ShellBackend()
+        self.addCleanup(backend.close)
+        app = Application.build(runner=backend)
+        self.addCleanup(app.close)
+
+        # Cell 1: `cd /tmp`
+        _type(app, "cd /tmp")
+        app.handle_key(kc.ENTER)
+        for cid in app.drain_pending():
+            app.execute(cid)
+
+        # Cell 2: `pwd`
+        _type(app, "pwd")
+        app.handle_key(kc.ENTER)
+        second_pending = app.drain_pending()
+        self.assertEqual(len(second_pending), 1)
+        app.execute(second_pending[0])
+
+        second_cell = app.session.get_cell(second_pending[0])
+        self.assertEqual(second_cell.stdout.strip(), "/tmp")
+        self.assertEqual(second_cell.exit_code, 0)
 
 
 class ApplicationSubmissionTests(unittest.TestCase):

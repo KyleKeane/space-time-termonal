@@ -7,10 +7,10 @@ and is bound to a spoken phrase or a spatialised tone. Keyboard
 only, standard library only, no mouse, no screen coordinates.
 
 > **Status.** Pre-1.0 (current `pyproject.toml` says `0.7.0`). The
-> Windows audio path and the notebook surface are usable end-to-end;
-> the POSIX live audio sink, a persistent computational backend, and
-> cell hierarchy are tracked as feature requests (see "What is not
-> here yet" below).
+> Windows audio path, the notebook surface, and the POSIX shared-shell
+> backend are usable end-to-end; the POSIX live audio sink and cell
+> hierarchy are tracked as feature requests (see "What is not here
+> yet" below).
 
 ## Who this is for
 
@@ -28,6 +28,12 @@ stdout that mirrors what the audio is saying.
 - A **session of editable cells**, each with its own command,
   captured stdout/stderr, and exit code; saved as JSON via
   `--session file.json` and resumable.
+- **A persistent shell backend** (POSIX with bash). Every cell flows
+  through one long-lived shell, so `cd`, `export`, function defs,
+  and shell options carry between cells exactly as they would at a
+  real prompt — `cd src` in cell 1, `ls` in cell 2 lists `src/`.
+  Pass `--no-shared-shell` to opt out (each cell back to a fresh
+  subprocess); Windows still uses per-cell subprocesses today.
 - **Four focus modes** — NOTEBOOK (walk cells), INPUT (type a
   command), OUTPUT (step line-by-line through one cell's captured
   output, with `/` search and `g` goto), SETTINGS (live editor for
@@ -44,9 +50,6 @@ stdout that mirrors what the audio is saying.
 
 What is **not** here yet, with the docs grounding the gap:
 
-- No persistent computational backend across cells (each cell is a
-  fresh subprocess) —
-  [F60](docs/FEATURE_REQUESTS.md#f60--persistent-computational-backend-shared-shell--repl).
 - No cell hierarchy / sections / folds —
   [F61](docs/FEATURE_REQUESTS.md#f61--cell-hierarchy-sections-folds-and-grouping).
 - No PTY inside a cell, so `vim` / `less` / curses programs do not
@@ -137,6 +140,7 @@ engine voices it.
 | `cell.py`                  | The Cell value object: command, captured outputs, status, exit code.      |
 | `kernel.py`                | `ExecutionKernel`: routes a cell to the runner and publishes lifecycle.   |
 | `runner.py`                | Thin `subprocess.Popen` wrapper with line-streamed stdout/stderr.         |
+| `shell_backend.py`         | F60 persistent shell: one long-lived bash per session via sentinel-framed I/O. |
 | `execution.py`             | `ExecutionRequest` / `ExecutionResult` value types.                       |
 | `output_buffer.py`         | `OutputRecorder` + `OutputBuffer`: per-cell line capture from events.     |
 | `output_cursor.py`         | OUTPUT-mode line cursor: navigation, search, goto.                        |
