@@ -99,7 +99,7 @@ Each PR follows the same recipe. Smaller diffs are better diffs.
    Zero failing tests, zero warnings. The count only goes up.
 6. **Update docs.** `USER_MANUAL.md` for any user-visible change;
    `EVENTS.md` for any new event; `FEATURE_REQUESTS.md` to mark
-   shipped; `HANDOFF.md` to bump the test count.
+   shipped.
 7. **Commit, push, open a PR.** Title starts with the feature id
    (e.g. `F21c: settings :reset …`). PR description includes a
    one-sentence summary, a short test-plan checklist, and the
@@ -122,7 +122,7 @@ Each PR follows the same recipe. Smaller diffs are better diffs.
 | Every event type and its payload          | [`EVENTS.md`](EVENTS.md)                           |
 | How audio is rendered and spatialised     | [`AUDIO.md`](AUDIO.md)                             |
 | What features are shipped / open          | [`FEATURE_REQUESTS.md`](FEATURE_REQUESTS.md)       |
-| What the next Claude session should do    | [`../HANDOFF.md`](../HANDOFF.md)                   |
+| Project overview + repository file map    | [`../README.md`](../README.md)                     |
 | How Claude Code modes interact with ASAT  | [`CLAUDE_CODE_MODES.md`](CLAUDE_CODE_MODES.md)     |
 
 ---
