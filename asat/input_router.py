@@ -384,6 +384,22 @@ class InputRouter:
         self._settings_controller = settings_controller
         self._action_menu = action_menu
         self._output_recorder = output_recorder
+        # F49: build the action -> handler table once at construction so
+        # _invoke is a flat dict lookup. Splitting by subsystem keeps the
+        # table searchable: every notebook key lives next to other
+        # notebook keys, every settings key next to other settings keys.
+        # The optional cursors (output / settings / menu / recorder) are
+        # not reassigned after __init__, so caching bound-method handlers
+        # is safe; handlers that need a missing cursor route through
+        # router methods that re-check the attribute at call time.
+        self._handlers: dict[str, ActionHandler] = {
+            **self._notebook_handlers(),
+            **self._input_handlers(),
+            **self._output_handlers(),
+            **self._settings_handlers(),
+            **self._menu_handlers(),
+            **self._global_handlers(),
+        }
 
     @property
     def bindings(self) -> BindingMap:
@@ -1276,14 +1292,24 @@ class InputRouter:
             self._action_menu.close()
 
     def _action_handler(self, action: str) -> ActionHandler:
-        """Map an action name to a zero-argument callable.
+        """Look up a zero-argument callable by action name.
 
         Handlers return an optional dict of extra payload fields. Only
         "submit" contributes extras today; every other handler runs a
         side effect and returns None via _void, which discards whatever
-        the underlying cursor method returned.
+        the underlying cursor method returned. The handler table is
+        built once at __init__ from per-subsystem helpers — see
+        _notebook_handlers, _input_handlers, _output_handlers,
+        _settings_handlers, _menu_handlers, _global_handlers.
         """
-        handlers: dict[str, ActionHandler] = {
+        try:
+            return self._handlers[action]
+        except KeyError:
+            raise KeyError(f"Unknown action: {action}") from None
+
+    def _notebook_handlers(self) -> dict[str, ActionHandler]:
+        """NOTEBOOK-mode motions and cell mutations."""
+        return {
             "move_up": _void(self._cursor.move_up),
             "move_down": _void(self._cursor.move_down),
             "move_to_top": _void(self._cursor.move_to_top),
@@ -1291,6 +1317,25 @@ class InputRouter:
             "enter_input": _void(self._cursor.enter_input_mode),
             "exit_input": _void(self._cursor.exit_input_mode),
             "new_cell": _void(self._cursor.new_cell),
+            "view_output": _void(self._view_output),
+            "exit_output": _void(self._cursor.exit_output_mode),
+            "delete_cell": _void(self._cursor.delete_focused_cell),
+            "duplicate_cell": _void(self._cursor.duplicate_focused_cell),
+            "move_cell_up": _void(lambda: self._cursor.move_focused_cell(-1)),
+            "move_cell_down": _void(lambda: self._cursor.move_focused_cell(+1)),
+            "next_heading": self._next_heading_action(None),
+            "prev_heading": self._prev_heading_action(None),
+            "next_heading_1": self._next_heading_action(1),
+            "next_heading_2": self._next_heading_action(2),
+            "next_heading_3": self._next_heading_action(3),
+            "next_heading_4": self._next_heading_action(4),
+            "next_heading_5": self._next_heading_action(5),
+            "next_heading_6": self._next_heading_action(6),
+        }
+
+    def _input_handlers(self) -> dict[str, ActionHandler]:
+        """INPUT-mode editing, history navigation, and submission."""
+        return {
             "backspace": _void(self._cursor.backspace),
             "cursor_left": _void(self._cursor.cursor_left),
             "cursor_right": _void(self._cursor.cursor_right),
@@ -1302,9 +1347,12 @@ class InputRouter:
             "delete_to_end": _void(self._cursor.delete_to_end),
             "history_previous": self._history_previous,
             "history_next": self._history_next,
-            "view_output": _void(self._view_output),
-            "exit_output": _void(self._cursor.exit_output_mode),
             "submit": self._submit,
+        }
+
+    def _output_handlers(self) -> dict[str, ActionHandler]:
+        """OUTPUT-mode scrolling, search, and composer keys."""
+        return {
             "output_line_up": lambda: self._with_output_cursor(
                 lambda oc: oc.move_line_up()
             ),
@@ -1323,6 +1371,19 @@ class InputRouter:
             "output_to_end": lambda: self._with_output_cursor(
                 lambda oc: oc.move_to_end()
             ),
+            "output_search_begin": self._output_search_begin,
+            "output_goto_begin": self._output_goto_begin,
+            "output_search_next": self._output_search_next,
+            "output_search_prev": self._output_search_prev,
+            "output_composer_extend": lambda: None,
+            "output_composer_backspace": self._output_composer_backspace,
+            "output_composer_commit": self._output_composer_commit,
+            "output_composer_cancel": self._output_composer_cancel,
+        }
+
+    def _settings_handlers(self) -> dict[str, ActionHandler]:
+        """SETTINGS-mode navigation, edit composer, search, reset."""
+        return {
             "open_settings": _void(self._open_settings),
             "settings_prev": _void(self._settings_prev),
             "settings_next": _void(self._settings_next),
@@ -1346,37 +1407,30 @@ class InputRouter:
             "settings_reset_begin": self._settings_reset_begin,
             "settings_reset_confirm": self._settings_reset_confirm,
             "settings_reset_cancel": _void(self._settings_reset_cancel),
+        }
+
+    def _menu_handlers(self) -> dict[str, ActionHandler]:
+        """Action-menu (F2) navigation and activation."""
+        return {
             "open_action_menu": self._open_action_menu,
             "menu_prev": _void(self._menu_prev),
             "menu_next": _void(self._menu_next),
             "menu_activate": _void(self._menu_activate),
             "menu_close": _void(self._menu_close),
-            "delete_cell": _void(self._cursor.delete_focused_cell),
-            "duplicate_cell": _void(self._cursor.duplicate_focused_cell),
-            "move_cell_up": _void(lambda: self._cursor.move_focused_cell(-1)),
-            "move_cell_down": _void(lambda: self._cursor.move_focused_cell(+1)),
-            "next_heading": self._next_heading_action(None),
-            "prev_heading": self._prev_heading_action(None),
-            "next_heading_1": self._next_heading_action(1),
-            "next_heading_2": self._next_heading_action(2),
-            "next_heading_3": self._next_heading_action(3),
-            "next_heading_4": self._next_heading_action(4),
-            "next_heading_5": self._next_heading_action(5),
-            "next_heading_6": self._next_heading_action(6),
-            "output_search_begin": self._output_search_begin,
-            "output_goto_begin": self._output_goto_begin,
-            "output_search_next": self._output_search_next,
-            "output_search_prev": self._output_search_prev,
-            "output_composer_extend": lambda: None,
-            "output_composer_backspace": self._output_composer_backspace,
-            "output_composer_commit": self._output_composer_commit,
-            "output_composer_cancel": self._output_composer_cancel,
+        }
+
+    def _global_handlers(self) -> dict[str, ActionHandler]:
+        """Mode-independent actions handled outside the router itself.
+
+        repeat_last_narration is observed by the SoundEngine to replay
+        the last spoken phrase; cancel_command is observed by the
+        kernel scheduler. The router only needs to publish
+        ACTION_INVOKED for them, so the handlers are no-ops here.
+        """
+        return {
             "repeat_last_narration": lambda: None,
             "cancel_command": lambda: None,
         }
-        if action not in handlers:
-            raise KeyError(f"Unknown action: {action}")
-        return handlers[action]
 
     def _with_output_cursor(
         self,
