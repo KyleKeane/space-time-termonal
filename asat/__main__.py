@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from asat import __version__
+from asat.actions import SystemClipboard
 from asat.app import Application
 from asat.audio_sink import (
     AudioSink,
@@ -81,6 +82,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         session=session,
         session_path=args.session,
         text_trace=trace_stream,
+        clipboard_factory=SystemClipboard,
     )
     if args.check:
         _print_check_report(app, args)

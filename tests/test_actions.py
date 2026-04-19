@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Optional
 
 from asat.actions import (
     ActionCatalog,
@@ -10,6 +11,7 @@ from asat.actions import (
     ActionMenu,
     MemoryClipboard,
     MenuItem,
+    SystemClipboard,
     default_actions,
 )
 from asat.cell import Cell
@@ -260,6 +262,141 @@ class DefaultActionsTests(unittest.TestCase):
         self.assertEqual(len(copied), 1)
         self.assertEqual(copied[0].payload["source"], "line")
         self.assertEqual(copied[0].payload["length"], 3)
+
+
+class _ScriptedRunner:
+    """Records every (cmd, text) call and can raise per-command errors."""
+
+    def __init__(self, failures: Optional[dict[str, Exception]] = None) -> None:
+        self.calls: list[tuple[tuple[str, ...], str]] = []
+        self._failures = failures or {}
+
+    def __call__(self, cmd: tuple[str, ...], text: str) -> None:
+        self.calls.append((cmd, text))
+        if cmd[0] in self._failures:
+            raise self._failures[cmd[0]]
+
+
+class SystemClipboardTests(unittest.TestCase):
+    """F18: OS-native clipboard adapter with platform fallthrough."""
+
+    def test_linux_prefers_wl_copy(self) -> None:
+        runner = _ScriptedRunner()
+        clipboard = SystemClipboard(
+            runner=runner, platform_name="linux"
+        )
+        clipboard.set_text("hello")
+        self.assertEqual(runner.calls, [(("wl-copy",), "hello")])
+        self.assertEqual(clipboard.last_backend, "wl-copy")
+        self.assertEqual(clipboard.text, "hello")
+
+    def test_linux_falls_through_to_xclip_when_wl_copy_missing(self) -> None:
+        from asat.actions import _ClipboardCommandError
+
+        runner = _ScriptedRunner(
+            failures={"wl-copy": _ClipboardCommandError("missing")}
+        )
+        clipboard = SystemClipboard(
+            runner=runner, platform_name="linux"
+        )
+        clipboard.set_text("hi")
+        self.assertEqual(len(runner.calls), 2)
+        self.assertEqual(runner.calls[1][0][0], "xclip")
+        self.assertEqual(clipboard.last_backend, "xclip")
+
+    def test_linux_falls_through_to_xsel_as_last_resort(self) -> None:
+        from asat.actions import _ClipboardCommandError
+
+        runner = _ScriptedRunner(
+            failures={
+                "wl-copy": _ClipboardCommandError("missing"),
+                "xclip": _ClipboardCommandError("missing"),
+            }
+        )
+        clipboard = SystemClipboard(
+            runner=runner, platform_name="linux"
+        )
+        clipboard.set_text("hi")
+        self.assertEqual(clipboard.last_backend, "xsel")
+        self.assertEqual([c[0][0] for c in runner.calls], ["wl-copy", "xclip", "xsel"])
+
+    def test_macos_uses_pbcopy(self) -> None:
+        runner = _ScriptedRunner()
+        clipboard = SystemClipboard(runner=runner, platform_name="darwin")
+        clipboard.set_text("mac text")
+        self.assertEqual(runner.calls, [(("pbcopy",), "mac text")])
+        self.assertEqual(clipboard.last_backend, "pbcopy")
+
+    def test_windows_uses_clip(self) -> None:
+        runner = _ScriptedRunner()
+        clipboard = SystemClipboard(runner=runner, platform_name="win32")
+        clipboard.set_text("win text")
+        self.assertEqual(runner.calls, [(("clip",), "win text")])
+        self.assertEqual(clipboard.last_backend, "clip")
+
+    def test_unsupported_platform_falls_back_to_memory(self) -> None:
+        runner = _ScriptedRunner()
+        bus = EventBus()
+        recorder = _Recorder(bus)
+        clipboard = SystemClipboard(
+            bus=bus, runner=runner, platform_name="plan9"
+        )
+        clipboard.set_text("fallback")
+        self.assertEqual(runner.calls, [])
+        self.assertEqual(clipboard.text, "fallback")
+        self.assertIsNone(clipboard.last_backend)
+        helps = [
+            e for e in recorder.events
+            if e.event_type == EventType.HELP_REQUESTED
+        ]
+        self.assertEqual(len(helps), 1)
+        self.assertIn(
+            "in-process only",
+            "\n".join(helps[0].payload["lines"]),
+        )
+
+    def test_all_candidates_failing_warns_once_and_stores_in_memory(self) -> None:
+        from asat.actions import _ClipboardCommandError
+
+        failures = {
+            "wl-copy": _ClipboardCommandError("missing"),
+            "xclip": _ClipboardCommandError("missing"),
+            "xsel": _ClipboardCommandError("missing"),
+        }
+        runner = _ScriptedRunner(failures=failures)
+        bus = EventBus()
+        recorder = _Recorder(bus)
+        clipboard = SystemClipboard(
+            bus=bus, runner=runner, platform_name="linux"
+        )
+        clipboard.set_text("first")
+        clipboard.set_text("second")
+        # Each call tries every candidate (since nothing ever works),
+        # but the warning event fires exactly once.
+        self.assertEqual(len(runner.calls), 6)
+        self.assertEqual(clipboard.text, "second")
+        helps = [
+            e for e in recorder.events
+            if e.event_type == EventType.HELP_REQUESTED
+        ]
+        self.assertEqual(len(helps), 1)
+
+    def test_warning_suppressed_without_bus(self) -> None:
+        from asat.actions import _ClipboardCommandError
+
+        runner = _ScriptedRunner(
+            failures={
+                "wl-copy": _ClipboardCommandError("missing"),
+                "xclip": _ClipboardCommandError("missing"),
+                "xsel": _ClipboardCommandError("missing"),
+            }
+        )
+        clipboard = SystemClipboard(
+            runner=runner, platform_name="linux"
+        )
+        clipboard.set_text("still works")
+        self.assertEqual(clipboard.text, "still works")
+        self.assertIsNone(clipboard.last_backend)
 
 
 if __name__ == "__main__":

@@ -384,6 +384,8 @@ cross-cutting file-system handling.
 
 ## F18 — OS clipboard adapter
 
+**Status.** Done.
+
 **Gap.** `MemoryClipboard` is the only `Clipboard` implementation.
 Even if F14 unlocked the menu, "copy output line" would store text
 in-process and nothing would land on the system clipboard.
@@ -398,6 +400,23 @@ subprocess `pbcopy`; on Linux try `wl-copy` then `xclip`/`xsel`.
 Fall back to `MemoryClipboard` with a one-line warning on first
 copy. `Application.build` picks the best available adapter unless
 tests pass one in explicitly.
+
+**Sketch (shipped).** `SystemClipboard` lives in `asat/actions.py`
+alongside `MemoryClipboard`. It holds a priority-ordered list of
+command runs per platform (Linux: `wl-copy` → `xclip` → `xsel`;
+macOS: `pbcopy`; Windows: `clip`) and invokes them via a
+`subprocess.run(..., input=text.encode("utf-8"))` runner. Windows
+uses the built-in `clip` tool rather than `ctypes` — it ships with
+every supported release and avoids a second code path. The runner
+and `sys.platform` are injectable so tests exercise every
+fallthrough path without spawning real subprocesses. When every
+candidate fails (or the platform has no candidates), the text is
+retained in-process and a one-shot `HELP_REQUESTED` event explains
+the situation. `Application.build` keeps `MemoryClipboard` as the
+in-process default (so tests stay deterministic) and adds a
+`clipboard_factory` kwarg; `python -m asat` passes
+`SystemClipboard` as the factory so the real CLI gets OS-native
+clipboard support automatically.
 
 ---
 

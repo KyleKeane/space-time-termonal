@@ -71,6 +71,31 @@ class ApplicationBuildTests(unittest.TestCase):
         app = Application.build()
         self.assertIsInstance(app.sink, MemorySink)
 
+    def test_default_clipboard_is_memory(self) -> None:
+        from asat.actions import MemoryClipboard
+
+        app = Application.build()
+        self.assertIsInstance(app.clipboard, MemoryClipboard)
+
+    def test_clipboard_factory_receives_event_bus(self) -> None:
+        """F18: callers can install an OS-aware clipboard adapter via the
+        factory, which gets handed the freshly-built EventBus."""
+        from asat.event_bus import EventBus
+
+        seen_bus: list[EventBus] = []
+
+        class _StubClipboard:
+            def __init__(self, bus: EventBus) -> None:
+                seen_bus.append(bus)
+                self.text = ""
+
+            def set_text(self, text: str) -> None:
+                self.text = text
+
+        app = Application.build(clipboard_factory=_StubClipboard)
+        self.assertIs(seen_bus[0], app.bus)
+        self.assertIsInstance(app.clipboard, _StubClipboard)
+
 
 class ApplicationSubmissionTests(unittest.TestCase):
     def test_typing_and_submit_executes_a_cell(self) -> None:

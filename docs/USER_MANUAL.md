@@ -266,8 +266,13 @@ While the menu is open the keymap is modal:
 Every transition narrates. Opening the menu reads the item labels,
 Up/Down reads the newly-focused label, Enter announces the invocation
 and fires the `menu_activate` cue, and Escape fires `menu_close`.
-Copy items route through the clipboard (in-memory by default;
-platform adapters can plug in an OS backend).
+Copy items route through the clipboard. `python -m asat` wires up
+`SystemClipboard`, which tries the native tool for your platform
+(Wayland's `wl-copy`, then `xclip`, then `xsel` on Linux; `pbcopy`
+on macOS; `clip` on Windows) and falls back to in-process storage
+with a spoken warning if none of them is installed. Tests and
+embeddings that build the Application directly still get the
+deterministic `MemoryClipboard` by default.
 
 ---
 
