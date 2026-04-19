@@ -52,8 +52,6 @@ from asat.sound_generators import SoundGeneratorRegistry
 from asat.tts import TTSEngine, ToneTTSEngine
 
 
-SOURCE_NAME = "sound_engine"
-
 NARRATION_HISTORY_CAPACITY = 20
 
 
@@ -73,7 +71,14 @@ class NarrationHistoryEntry(NamedTuple):
 
 
 class PredicateEvaluator(Protocol):
-    """Anything that decides whether a binding applies to a payload."""
+    """Anything that decides whether a binding applies to a payload.
+
+    Single in-tree implementation today: ``DefaultPredicateEvaluator``
+    (handles the tiny ``key == literal`` / ``key != literal`` /
+    ``key in [...]`` grammar documented at module top). Pluggable:
+    swap in a richer evaluator via ``SoundEngine(..., predicate=...)``
+    if a bank needs a different predicate language.
+    """
 
     def matches(self, expression: str, payload: dict[str, Any]) -> bool:
         """Return True when the expression matches against payload."""
@@ -112,6 +117,8 @@ class SoundEngineError(ValueError):
 
 class SoundEngine:
     """Drive audio output from a SoundBank by subscribing to events."""
+
+    SOURCE = "sound_engine"
 
     def __init__(
         self,
@@ -177,7 +184,7 @@ class SoundEngine:
                 "text": entry.text,
                 "voice_id": entry.voice_id,
             },
-            source=SOURCE_NAME,
+            source=self.SOURCE,
         )
         return entry
 
@@ -216,7 +223,7 @@ class SoundEngine:
 
     def _dispatch(self, event: Event) -> None:
         """Render every matching binding and play the result."""
-        if event.source == SOURCE_NAME:
+        if event.source == self.SOURCE:
             return
         bindings = self._bank.bindings_for(event.event_type.value)
         for binding in bindings:
@@ -263,7 +270,7 @@ class SoundEngine:
                 "voice_id": binding.voice_id,
                 "sound_id": binding.sound_id,
             },
-            source=SOURCE_NAME,
+            source=self.SOURCE,
         )
 
     def _resolve_voice(self, binding: EventBinding) -> Optional[Voice]:

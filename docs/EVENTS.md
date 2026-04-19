@@ -21,6 +21,18 @@ When designing a new subscriber, key off `event_type` only. `source`
 is informational (useful for debug logs or filtering) and can change
 over time.
 
+### Source convention
+
+Every class that publishes events exposes a `SOURCE` class attribute
+holding the string it passes as the `source=` keyword on
+`publish_event`. Examples: `ExecutionKernel.SOURCE == "kernel"`,
+`NotebookCursor.SOURCE == "notebook"`, `SoundEngine.SOURCE ==
+"sound_engine"`. Keep the name short and matching the module slug so
+a log reader can locate the publisher from the string alone. New
+event-publishing classes should follow this convention so cross-cutting
+tools (the JSONL logger, future filters, the event log viewer) can
+present a consistent vocabulary.
+
 ---
 
 ## Session lifecycle
@@ -264,12 +276,44 @@ fired when the user submits the `:help` meta-command.
 |------------------|--------------------------------------------------|
 | `HELP_REQUESTED` | `lines` (list of str: the cheat-sheet lines from `asat.input_router.HELP_LINES`) |
 
+## Prompt context
+
+Producer: `asat.prompt_context.PromptContext` (`source="prompt_context"`).
+`PROMPT_REFRESH` fires every time focus transitions into INPUT mode
+(and after each completed command) so renderers can redraw a
+bash-style prompt line with the last exit code and CWD.
+
+| EventType        | Payload keys                                                                  |
+|------------------|-------------------------------------------------------------------------------|
+| `PROMPT_REFRESH` | `last_exit_code`, `last_cell_id`, `last_timed_out`, `cwd`                     |
+
+Suppressed until at least one command has completed — `PromptContext`
+returns early if `last_exit_code is None`, so the very first input
+cell doesn't narrate a stale prompt.
+
+## Onboarding
+
+Producer: `asat.onboarding.OnboardingCoordinator` (`source="onboarding"`).
+`FIRST_RUN_DETECTED` fires once per machine (gated by a sentinel
+file) when ASAT launches for the first time, and again on demand via
+the `:welcome` meta-command with `replay=True`.
+
+| EventType            | Payload keys                                         |
+|----------------------|------------------------------------------------------|
+| `FIRST_RUN_DETECTED` | `lines`, `sentinel_path`, `replay`                   |
+
+`replay` is `True` when the event is a `:welcome` re-invocation and
+`False` on the genuine first run; a binding that wants to sound
+different on replay can key off it.
+
 ---
 
 ## Adding a new event
 
 1. Add the member to the `EventType` enum in `asat/events.py`.
 2. Document the payload in this file under the appropriate section.
+   `tests/test_events_docs_sync.py` fails the build if you skip this
+   step, so add the row at the same time as the enum member.
 3. Publish it via `publish_event(bus, EventType.X, payload, source=...)`
    from the producing module. Never hand-roll `Event(...)` — the
    helper keeps construction uniform for future audit/correlation

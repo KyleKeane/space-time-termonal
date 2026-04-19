@@ -26,7 +26,14 @@ from asat.audio import AudioBuffer, DEFAULT_SAMPLE_RATE, VoiceProfile
 
 
 class TTSEngine(Protocol):
-    """Synthesizes a line of text into a mono AudioBuffer."""
+    """Synthesizes a line of text into a mono AudioBuffer.
+
+    Single in-tree implementation today: ``ToneTTSEngine`` (a
+    deterministic tone-based stand-in). Pluggable: real TTS
+    backends (Windows SAPI, macOS NSSpeechSynthesizer, Piper, etc.)
+    can be swapped in via ``SoundEngine(..., tts=...)`` without
+    touching the rest of the pipeline.
+    """
 
     def synthesize(self, text: str, voice: VoiceProfile) -> AudioBuffer:
         """Return a mono AudioBuffer containing the rendered speech."""

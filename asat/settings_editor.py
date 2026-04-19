@@ -50,9 +50,6 @@ from asat.sound_bank import (
 )
 
 
-SOURCE = "settings_editor"
-
-
 MAX_HISTORY = 64
 
 
@@ -156,6 +153,8 @@ class SettingsEditor:
     SoundEngine can narrate in real time.
     """
 
+    SOURCE = "settings_editor"
+
     def __init__(
         self,
         bus: EventBus,
@@ -200,7 +199,7 @@ class SettingsEditor:
             bus,
             EventType.SETTINGS_OPENED,
             {"section": self._state.section.value, "record_count": self._record_count()},
-            source=SOURCE,
+            source=self.SOURCE,
         )
         self._publish_focus()
 
@@ -220,7 +219,7 @@ class SettingsEditor:
             self._bus,
             EventType.SETTINGS_CLOSED,
             {"dirty": self._state.dirty},
-            source=SOURCE,
+            source=self.SOURCE,
         )
 
     def next(self) -> None:
@@ -318,7 +317,7 @@ class SettingsEditor:
                 "old_value": _jsonable(old_value),
                 "new_value": _jsonable(parsed),
             },
-            source=SOURCE,
+            source=self.SOURCE,
         )
 
     @property
@@ -357,7 +356,7 @@ class SettingsEditor:
                     "old_value": _jsonable(record.new_value),
                     "new_value": _jsonable(record.old_value),
                 },
-                source=SOURCE,
+                source=self.SOURCE,
             )
         self._publish_focus()
         return True
@@ -385,7 +384,7 @@ class SettingsEditor:
                     "old_value": _jsonable(record.old_value),
                     "new_value": _jsonable(record.new_value),
                 },
-                source=SOURCE,
+                source=self.SOURCE,
             )
         self._publish_focus()
         return True
@@ -517,7 +516,7 @@ class SettingsEditor:
                 "origin_record_index": self._state.record_index,
                 "origin_field_index": self._state.field_index,
             },
-            source=SOURCE,
+            source=self.SOURCE,
         )
         return True
 
@@ -564,7 +563,7 @@ class SettingsEditor:
                 "match_count": match_count,
                 "committed": True,
             },
-            source=SOURCE,
+            source=self.SOURCE,
         )
         return True
 
@@ -597,7 +596,7 @@ class SettingsEditor:
                 "match_count": 0,
                 "committed": False,
             },
-            source=SOURCE,
+            source=self.SOURCE,
         )
         return True
 
@@ -667,7 +666,7 @@ class SettingsEditor:
             self._bus,
             EventType.SETTINGS_RESET_OPENED,
             self._reset_opened_payload(scope),
-            source=SOURCE,
+            source=self.SOURCE,
         )
         return True
 
@@ -717,7 +716,7 @@ class SettingsEditor:
                 "changed": changed,
                 "outcome": "applied" if changed else "already_default",
             },
-            source=SOURCE,
+            source=self.SOURCE,
         )
         return True
 
@@ -737,7 +736,7 @@ class SettingsEditor:
                 "changed": False,
                 "outcome": "cancelled",
             },
-            source=SOURCE,
+            source=self.SOURCE,
         )
         return True
 
@@ -922,7 +921,7 @@ class SettingsEditor:
             self._bus,
             EventType.SETTINGS_SEARCH_UPDATED,
             payload,
-            source=SOURCE,
+            source=self.SOURCE,
         )
 
     def save(self, path: Path | str) -> None:
@@ -940,7 +939,7 @@ class SettingsEditor:
             self._bus,
             EventType.SETTINGS_SAVED,
             {"path": str(path)},
-            source=SOURCE,
+            source=self.SOURCE,
         )
 
     def _move(self, delta: int) -> None:
@@ -983,7 +982,7 @@ class SettingsEditor:
             payload["value"] = _jsonable(
                 getattr(self._records()[self._state.record_index], field_name)
             )
-        publish_event(self._bus, EventType.SETTINGS_FOCUSED, payload, source=SOURCE)
+        publish_event(self._bus, EventType.SETTINGS_FOCUSED, payload, source=self.SOURCE)
 
     def _records(self) -> tuple[Any, ...]:
         """Return the current section's record tuple from the bank."""

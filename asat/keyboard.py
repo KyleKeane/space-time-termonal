@@ -77,7 +77,14 @@ _WINDOWS_SPECIAL: dict[int, Key] = {
 
 
 class KeyboardReader(Protocol):
-    """Produces one `Key` value per real keystroke."""
+    """Produces one `Key` value per real keystroke.
+
+    Implementations in-tree: ``PosixKeyboard`` (termios raw mode),
+    ``WindowsKeyboard`` (``msvcrt.getwch``), ``ScriptedKeyboard``
+    (test fixture that replays a pre-recorded list). Pluggable: any
+    driver that yields ``Key`` values one at a time via ``read_key``
+    satisfies the shape.
+    """
 
     def read_key(self) -> Optional[Key]:
         """Block until a keystroke arrives and return the decoded Key."""
