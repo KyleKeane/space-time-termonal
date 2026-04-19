@@ -291,6 +291,7 @@ command's narration flew by and you want to re-hear line 47.
 | `/`         | Search: type a query (case-insensitive). The cursor jumps to the first match as you type. Enter commits, Escape restores your starting line. |
 | `n` / `N`   | After a committed search, cycle to the next / previous match. |
 | `g`         | Jump to line: type a 1-based line number, Enter commits. |
+| F2 / Ctrl+. | Open the actions menu.                            |
 | Escape      | Return to NOTEBOOK mode.                          |
 
 Each step plays the `focus_shift` cue and the narrator reads the
@@ -488,6 +489,7 @@ Every key you need, one table.
 | NOTEBOOK   | `d`               | Delete focused cell                   |
 | NOTEBOOK   | `y`               | Duplicate focused cell                |
 | NOTEBOOK   | Alt+Up / Alt+Down | Move focused cell up / down           |
+| NOTEBOOK   | Ctrl+R            | Repeat the most recent narration      |
 | NOTEBOOK   | F2 / Ctrl+.       | Open actions menu                     |
 | INPUT      | Enter             | Submit command                        |
 | INPUT      | Backspace         | Delete char before caret              |
@@ -499,8 +501,11 @@ Every key you need, one table.
 | INPUT      | Ctrl+U            | Delete from start of line to caret    |
 | INPUT      | Ctrl+K            | Delete from caret to end of line      |
 | INPUT      | Escape            | Leave INPUT without running           |
+| INPUT      | Ctrl+R            | Repeat the most recent narration      |
 | INPUT      | F2 / Ctrl+.       | Open actions menu                     |
 | INPUT      | `:help`⏎          | Narrate + print the cheat sheet       |
+| INPUT      | `:welcome`⏎       | Replay the first-run welcome tour     |
+| INPUT      | `:repeat`⏎        | Re-hear the most recent narration     |
 | INPUT      | `:settings`⏎      | Open settings editor                  |
 | INPUT      | `:save`⏎          | Save session                          |
 | INPUT      | `:quit`⏎          | Exit ASAT                             |
