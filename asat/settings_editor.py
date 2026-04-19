@@ -34,7 +34,7 @@ import json
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from asat.event_bus import EventBus, publish_event
 from asat.events import EventType
@@ -1026,55 +1026,43 @@ class SettingsEditor:
     def _parse_field_value(self, field_name: str, raw: str) -> Any:
         """Convert raw text to the declared type of field_name."""
         section = self._state.section
-        if section == Section.VOICES:
-            return _parse_voice_field(field_name, raw)
-        if section == Section.SOUNDS:
-            return _parse_sound_field(field_name, raw)
-        return _parse_binding_field(field_name, raw)
+        parser = FIELD_PARSERS.get((section, field_name))
+        if parser is None:
+            raise SettingsEditorError(
+                f"unknown {section.value[:-1]} field {field_name!r}"
+            )
+        return parser(raw, field_name)
 
 
-def _parse_voice_field(field_name: str, raw: str) -> Any:
-    """Coerce raw into the appropriate Python type for a Voice field."""
-    if field_name in ("id", "engine"):
-        return raw
-    if field_name in ("rate", "pitch", "volume", "azimuth", "elevation"):
-        return _parse_float(raw, field_name)
-    raise SettingsEditorError(f"unknown voice field {field_name!r}")
+FieldParser = Callable[[str, str], Any]
 
 
-def _parse_sound_field(field_name: str, raw: str) -> Any:
-    """Coerce raw into the appropriate Python type for a SoundRecipe field."""
-    if field_name == "id":
-        return raw
-    if field_name == "kind":
-        if raw not in SOUND_KINDS:
-            raise SettingsEditorError(f"kind must be one of {SOUND_KINDS}, got {raw!r}")
-        return raw
-    if field_name == "params":
-        return _parse_mapping(raw, field_name)
-    if field_name in ("volume", "azimuth", "elevation"):
-        return _parse_float(raw, field_name)
-    raise SettingsEditorError(f"unknown sound field {field_name!r}")
+def _parse_str(raw: str, field_name: str) -> str:
+    """Identity parser; the raw text *is* the value."""
+    return raw
 
 
-def _parse_binding_field(field_name: str, raw: str) -> Any:
-    """Coerce raw into the appropriate Python type for an EventBinding field."""
-    if field_name in ("id", "event_type", "say_template", "predicate"):
-        return raw
-    if field_name in ("voice_id", "sound_id"):
-        stripped = raw.strip()
-        if stripped.lower() in ("null", "none", ""):
-            return None
-        return stripped
-    if field_name == "priority":
-        return _parse_int(raw, field_name)
-    if field_name == "enabled":
-        return _parse_bool(raw, field_name)
-    if field_name == "voice_overrides":
-        return _parse_override_mapping(raw, field_name, VOICE_OVERRIDE_FIELDS)
-    if field_name == "sound_overrides":
-        return _parse_override_mapping(raw, field_name, SOUND_OVERRIDE_FIELDS)
-    raise SettingsEditorError(f"unknown binding field {field_name!r}")
+def _parse_optional_id(raw: str, field_name: str) -> Optional[str]:
+    """Parse a reference id where empty / null / none means 'unset'."""
+    stripped = raw.strip()
+    if stripped.lower() in ("null", "none", ""):
+        return None
+    return stripped
+
+
+def _parse_kind(raw: str, field_name: str) -> str:
+    """Parse a sound kind, validating against the allow-list."""
+    if raw not in SOUND_KINDS:
+        raise SettingsEditorError(f"kind must be one of {SOUND_KINDS}, got {raw!r}")
+    return raw
+
+
+def _parse_voice_overrides(raw: str, field_name: str) -> dict[str, float]:
+    return _parse_override_mapping(raw, field_name, VOICE_OVERRIDE_FIELDS)
+
+
+def _parse_sound_overrides(raw: str, field_name: str) -> dict[str, float]:
+    return _parse_override_mapping(raw, field_name, SOUND_OVERRIDE_FIELDS)
 
 
 def _parse_float(raw: str, field_name: str) -> float:
@@ -1127,6 +1115,40 @@ def _parse_override_mapping(
             )
         result[key] = _parse_float(str(value), f"{field_name}.{key}")
     return result
+
+
+# F49: table-drive field parsing. The (section, field_name) -> parser
+# map replaces three per-section if/elif ladders; adding a new field
+# becomes one dict entry instead of a new branch in three places.
+# Every parser shares the (raw, field_name) -> Any signature so the
+# shared helpers (_parse_float / _parse_int / _parse_bool / ...) can
+# be slotted in directly. Keep this dict alphabetised by section so
+# new sections drop in without re-shuffling existing rows.
+FIELD_PARSERS: dict[tuple[Section, str], FieldParser] = {
+    (Section.VOICES, "id"): _parse_str,
+    (Section.VOICES, "engine"): _parse_str,
+    (Section.VOICES, "rate"): _parse_float,
+    (Section.VOICES, "pitch"): _parse_float,
+    (Section.VOICES, "volume"): _parse_float,
+    (Section.VOICES, "azimuth"): _parse_float,
+    (Section.VOICES, "elevation"): _parse_float,
+    (Section.SOUNDS, "id"): _parse_str,
+    (Section.SOUNDS, "kind"): _parse_kind,
+    (Section.SOUNDS, "params"): _parse_mapping,
+    (Section.SOUNDS, "volume"): _parse_float,
+    (Section.SOUNDS, "azimuth"): _parse_float,
+    (Section.SOUNDS, "elevation"): _parse_float,
+    (Section.BINDINGS, "id"): _parse_str,
+    (Section.BINDINGS, "event_type"): _parse_str,
+    (Section.BINDINGS, "say_template"): _parse_str,
+    (Section.BINDINGS, "predicate"): _parse_str,
+    (Section.BINDINGS, "voice_id"): _parse_optional_id,
+    (Section.BINDINGS, "sound_id"): _parse_optional_id,
+    (Section.BINDINGS, "priority"): _parse_int,
+    (Section.BINDINGS, "enabled"): _parse_bool,
+    (Section.BINDINGS, "voice_overrides"): _parse_voice_overrides,
+    (Section.BINDINGS, "sound_overrides"): _parse_sound_overrides,
+}
 
 
 def _search_haystack(section: Section, record: Any) -> str:
