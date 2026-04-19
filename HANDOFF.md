@@ -27,7 +27,9 @@ architecture tour lives in
 lives in [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md), with a
 single-page reference at
 [`docs/CHEAT_SHEET.md`](docs/CHEAT_SHEET.md) (every binding,
-meta-command, and cue that ships today).
+meta-command, and cue that ships today). For an end-to-end
+hands-on walkthrough — keystroke-by-keystroke with expected
+narrations — see [`docs/SMOKE_TEST.md`](docs/SMOKE_TEST.md).
 
 ## Test command
 
