@@ -649,45 +649,17 @@ class InputRouter:
     def _handle_meta_command(self, command: str, argument: str) -> None:
         """Dispatch a parsed meta-command (without its leading `:`).
 
-        `save` and `quit` are handled by the Application via the
-        ACTION_INVOKED payload's `meta_command` key, so the router
-        itself intentionally does nothing for them here. The trailing
-        `argument` is forwarded only where it has a defined meaning;
-        commands that do not read it simply ignore it.
+        Looks the command up in `_META_HANDLERS` (declared below the
+        class). `save`, `quit`, `repeat`, and `welcome` deliberately
+        have no router-side handler — they are handled by the
+        Application via the ACTION_INVOKED payload's `meta_command`
+        key, and we let the table miss for them. The trailing
+        `argument` is always passed; handlers that do not read it
+        simply ignore it.
         """
-        if command == "settings":
-            self._open_settings()
-        elif command == "help":
-            self._publish_help(argument)
-        elif command == "delete":
-            self._cursor.delete_focused_cell()
-        elif command == "duplicate":
-            self._cursor.duplicate_focused_cell()
-        elif command == "pwd":
-            self._publish_pwd()
-        elif command == "state":
-            self._publish_state()
-        elif command == "commands":
-            self._publish_commands()
-        elif command == "reset":
-            self._handle_meta_reset(argument)
-        elif command == "heading":
-            self._handle_meta_heading(argument)
-        elif command == "toc":
-            self._publish_toc()
-        elif command == "bindings":
-            self._publish_bindings(argument)
-        elif command == "bookmark":
-            self._handle_meta_bookmark(argument)
-        elif command == "unbookmark":
-            self._handle_meta_unbookmark(argument)
-        elif command == "bookmarks":
-            self._publish_bookmarks()
-        elif command == "jump":
-            self._handle_meta_jump(argument)
-        # `repeat`, `save`, `quit`, `welcome` are handled by the
-        # Application via the ACTION_INVOKED payload's `meta_command`
-        # key — no router-side dispatch needed here.
+        handler = _META_HANDLERS.get(command)
+        if handler is not None:
+            handler(self, argument)
 
     def _handle_meta_heading(self, argument: str) -> None:
         """Append a heading cell from `:heading <level> <title>`.
@@ -1558,6 +1530,33 @@ class InputRouter:
             payload,
             source=self.SOURCE,
         )
+
+
+# F49: table-drive `:meta` dispatch. Each entry is a small
+# `(router, argument) -> None` adapter so handlers with mixed
+# signatures (no-arg vs argument-taking) share one shape. Adding a
+# new meta-command becomes one row instead of a new branch in
+# `_handle_meta_command`. `save`, `quit`, `repeat`, and `welcome`
+# are intentionally absent — the Application handles them off the
+# ACTION_INVOKED payload, and a table miss is the right behaviour
+# for them on the router side.
+_META_HANDLERS: dict[str, Callable[["InputRouter", str], None]] = {
+    "settings": lambda router, _arg: router._open_settings(),
+    "help": lambda router, arg: router._publish_help(arg),
+    "delete": lambda router, _arg: router._cursor.delete_focused_cell(),
+    "duplicate": lambda router, _arg: router._cursor.duplicate_focused_cell(),
+    "pwd": lambda router, _arg: router._publish_pwd(),
+    "state": lambda router, _arg: router._publish_state(),
+    "commands": lambda router, _arg: router._publish_commands(),
+    "reset": lambda router, arg: router._handle_meta_reset(arg),
+    "heading": lambda router, arg: router._handle_meta_heading(arg),
+    "toc": lambda router, _arg: router._publish_toc(),
+    "bindings": lambda router, arg: router._publish_bindings(arg),
+    "bookmark": lambda router, arg: router._handle_meta_bookmark(arg),
+    "unbookmark": lambda router, arg: router._handle_meta_unbookmark(arg),
+    "bookmarks": lambda router, _arg: router._publish_bookmarks(),
+    "jump": lambda router, arg: router._handle_meta_jump(arg),
+}
 
 
 def _parse_meta_command(
