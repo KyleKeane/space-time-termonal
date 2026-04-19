@@ -6,6 +6,12 @@ highlight, an ANSI event — flows through one synchronous event bus
 and is bound to a spoken phrase or a spatialised tone. Keyboard
 only, standard library only, no mouse, no screen coordinates.
 
+> **Status.** Pre-1.0 (current `pyproject.toml` says `0.7.0`). The
+> Windows audio path and the notebook surface are usable end-to-end;
+> the POSIX live audio sink, a persistent computational backend, and
+> cell hierarchy are tracked as feature requests (see "What is not
+> here yet" below).
+
 ## Who this is for
 
 ASAT is for developers who work without sight on the command line and
@@ -104,10 +110,11 @@ suite mirrors module names one-for-one under `tests/`.
 
 ```
 space-time-termonal/
-├── README.md            ← you are here
-├── HANDOFF.md           ← one-paragraph pointer for new sessions
-├── asat/                ← the application code
-├── docs/                ← user, developer, and architectural docs
+├── README.md            ← you are here: project overview + file map
+├── LICENSE              ← MIT
+├── pyproject.toml       ← package metadata; declares Python ≥ 3.10, no runtime deps
+├── asat/                ← the application code (see file table below)
+├── docs/                ← user, developer, and architectural docs (see table)
 └── tests/               ← unit + scenario tests (one file per module)
 ```
 
@@ -188,10 +195,20 @@ Run the whole suite with `python -m unittest discover -s tests -t .`.
 
 ## Contributing
 
-New contributors: read [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)
+The fast path: read [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md)
 for guiding principles (core Python only, narration-first, one feature
-per PR, documentation lands with the code) and the PR recipe.
+per PR, documentation lands with the code) and the PR recipe — then
+pick an entry from
+[docs/FEATURE_REQUESTS.md](docs/FEATURE_REQUESTS.md), which holds every
+open gap with a code-and-doc sketch of how to close it. The
+architecture overview at
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) is the right backstop
+when a feature touches more than one module.
 
-The roadmap — every open gap and a sketch of how to close it — is
-in [docs/FEATURE_REQUESTS.md](docs/FEATURE_REQUESTS.md). Pick an
-entry, follow the developer guide's PR recipe, and ship.
+If you are starting a fresh AI-coding session against this repo, this
+README plus the chosen feature-request entry are usually enough
+context — both files are kept current on every PR.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
