@@ -1572,9 +1572,7 @@ Pick any one when you want a short refactor loop.
   message so future regressions are self-describing.
 
 **Documentation touch points.** Each bullet updates at most one
-docstring in the touched module; no user-manual changes; the
-`HANDOFF.md` test count moves forward by whatever new regression
-tests the bullet adds.
+docstring in the touched module; no user-manual changes.
 
 ---
 
@@ -2589,7 +2587,6 @@ pipeline. `say_template` values follow the conventions in
 - `docs/EVENTS.md` — seven new event rows.
 - `docs/DEVELOPER_GUIDE.md` — one paragraph on how to add a
   new step kind (dispatch table in `replayer.py`).
-- `HANDOFF.md` — F56 moves from "suggested next PR" to shipped.
 
 ---
 

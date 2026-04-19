@@ -459,8 +459,10 @@ NOTEBOOK to walk them.
 ## Red-flag checklist
 
 Run this list at the end. If any line has a mismatch, capture a
-log (`python -m asat --log /tmp/events.jsonl --live`) and file
-it with the HANDOFF.
+log (`python -m asat --log /tmp/events.jsonl --live`) and file an
+issue against the relevant module — the file map in
+[`README.md`](../README.md#asat--application-modules) names every
+collaborator.
 
 | # | Check | Expected |
 |---|-------|----------|
