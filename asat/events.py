@@ -125,6 +125,8 @@ class EventType(str, Enum):
     SETTINGS_SEARCH_OPENED = "settings.search.opened"
     SETTINGS_SEARCH_UPDATED = "settings.search.updated"
     SETTINGS_SEARCH_CLOSED = "settings.search.closed"
+    SETTINGS_RESET_OPENED = "settings.reset.opened"
+    SETTINGS_RESET_CLOSED = "settings.reset.closed"
 
     ANSI_CURSOR_MOVED = "ansi.cursor.moved"
     ANSI_SGR_CHANGED = "ansi.sgr.changed"

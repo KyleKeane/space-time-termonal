@@ -18,7 +18,12 @@ from pathlib import Path
 from typing import Optional
 
 from asat.event_bus import EventBus
-from asat.settings_editor import Level, SettingsEditor, SettingsEditorError
+from asat.settings_editor import (
+    Level,
+    ResetScope,
+    SettingsEditor,
+    SettingsEditorError,
+)
 from asat.sound_bank import SoundBank
 
 
@@ -40,11 +45,18 @@ class SettingsController:
         bus: EventBus,
         bank: SoundBank,
         save_path: Optional[Path | str] = None,
+        defaults_bank: Optional[SoundBank] = None,
     ) -> None:
-        """Create a controller bound to a bus with an initial bank."""
+        """Create a controller bound to a bus with an initial bank.
+
+        `defaults_bank` is the factory-fresh bank that F21c reset
+        operations restore from. Pass `None` to disable the reset
+        sub-mode; `begin_reset` will then return False.
+        """
         self._bus = bus
         self._bank = bank
         self._save_path = Path(save_path) if save_path is not None else None
+        self._defaults_bank = defaults_bank
         self._editor: Optional[SettingsEditor] = None
         self._editing = False
         self._edit_buffer = ""
@@ -86,7 +98,9 @@ class SettingsController:
         if self._editor is not None:
             # Already open; leave state alone so we don't lose in-flight edits.
             return self._editor
-        self._editor = SettingsEditor(self._bus, self._bank)
+        self._editor = SettingsEditor(
+            self._bus, self._bank, defaults_bank=self._defaults_bank
+        )
         self._editing = False
         self._edit_buffer = ""
         return self._editor
@@ -118,12 +132,16 @@ class SettingsController:
 
         While editing, ascend cancels the in-progress edit instead.
         While searching, ascend cancels the in-progress search.
+        While resetting, ascend cancels the reset confirmation.
         """
         if self._editing:
             self.cancel_edit()
             return True
         if self.searching:
             self.cancel_search()
+            return True
+        if self.resetting:
+            self.cancel_reset()
             return True
         if self.editor.state.level == Level.SECTION:
             return False
@@ -134,6 +152,10 @@ class SettingsController:
         """Start composing a new value for the focused field."""
         if self.editor.state.level != Level.FIELD:
             raise SettingsControllerError("can only edit at the FIELD level")
+        if self.resetting:
+            raise SettingsControllerError(
+                "cannot begin edit while a reset confirmation is open"
+            )
         self._editing = True
         self._edit_buffer = ""
 
@@ -180,19 +202,30 @@ class SettingsController:
         Returns False when the session is closed, the user is
         composing a replacement value (the edit sub-mode owns the
         buffer; undo at that point would be surprising), the user is
-        composing a `/` search query (same rationale), or when there
-        is nothing on the undo stack. Otherwise delegates to
-        `SettingsEditor.undo()` which restores the prior bank,
-        refocuses the cursor on the field it mutated, and publishes
-        SETTINGS_VALUE_EDITED so narration reacts.
+        composing a `/` search query (same rationale), the user is
+        confirming a reset, or when there is nothing on the undo
+        stack. Otherwise delegates to `SettingsEditor.undo()` which
+        restores the prior bank, refocuses the cursor on the field it
+        mutated, and publishes SETTINGS_VALUE_EDITED so narration
+        reacts.
         """
-        if self._editor is None or self._editing or self.searching:
+        if (
+            self._editor is None
+            or self._editing
+            or self.searching
+            or self.resetting
+        ):
             return False
         return self._editor.undo()
 
     def redo(self) -> bool:
         """Re-apply the most recently undone edit. Mirror of `undo()`."""
-        if self._editor is None or self._editing or self.searching:
+        if (
+            self._editor is None
+            or self._editing
+            or self.searching
+            or self.resetting
+        ):
             return False
         return self._editor.redo()
 
@@ -209,12 +242,15 @@ class SettingsController:
     def begin_search(self) -> bool:
         """Open the `/` search overlay. Cancels any in-progress edit first.
 
-        Returns False when no session is open or the bank has no
-        records to search across. Opening a second search over an
-        active one is a no-op (the buffer is preserved so an
-        accidental retap can't wipe the query).
+        Returns False when no session is open, the user is inside a
+        reset confirmation, or the bank has no records to search
+        across. Opening a second search over an active one is a no-op
+        (the buffer is preserved so an accidental retap can't wipe
+        the query).
         """
         if self._editor is None:
+            return False
+        if self.resetting:
             return False
         if self._editing:
             self.cancel_edit()
@@ -245,6 +281,52 @@ class SettingsController:
         if self._editor is None or not self.searching:
             return False
         return self._editor.cancel_search()
+
+    @property
+    def resetting(self) -> bool:
+        """Return True while a reset confirmation sub-mode is active."""
+        return self._editor is not None and self._editor.resetting
+
+    @property
+    def reset_scope(self) -> Optional[ResetScope]:
+        """Return the scope of the in-progress reset confirmation, if any."""
+        return self._editor.reset_scope if self._editor is not None else None
+
+    def default_reset_scope(self) -> ResetScope:
+        """Scope `:reset` / Ctrl+R picks when the user doesn't name one."""
+        return self.editor.default_reset_scope()
+
+    def begin_reset(self, scope: Optional[ResetScope] = None) -> bool:
+        """Open the reset confirmation for `scope` (default: cursor-level).
+
+        Cancels any in-progress edit first — the user tapping Ctrl+R
+        while mid-edit clearly wants to drop the half-typed value.
+        Refuses while a search composer is active so the two overlays
+        don't race. Returns False when no session is open, the reset
+        cannot be applied (no defaults bank, or unsupported scope for
+        the current cursor, or the focused record has no default).
+        """
+        if self._editor is None:
+            return False
+        if self.searching:
+            return False
+        if self._editing:
+            self.cancel_edit()
+        if scope is None:
+            scope = self.default_reset_scope()
+        return self._editor.begin_reset(scope)
+
+    def confirm_reset(self) -> bool:
+        """Apply the pending reset and close the confirmation sub-mode."""
+        if self._editor is None or not self.resetting:
+            return False
+        return self._editor.confirm_reset()
+
+    def cancel_reset(self) -> bool:
+        """Leave the reset confirmation without mutating the bank."""
+        if self._editor is None or not self.resetting:
+            return False
+        return self._editor.cancel_reset()
 
     def save(self, path: Optional[Path | str] = None) -> Path:
         """Persist the bank. Uses the configured save_path if none is given."""

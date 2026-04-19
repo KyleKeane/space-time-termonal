@@ -118,6 +118,17 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "match_count": 1,
         "committed": True,
     },
+    EventType.SETTINGS_RESET_OPENED: {
+        "scope": "section",
+        "section": "voices",
+        "target_count": 3,
+    },
+    EventType.SETTINGS_RESET_CLOSED: {
+        "scope": "section",
+        "committed": True,
+        "changed": True,
+        "outcome": "applied",
+    },
     EventType.HELP_REQUESTED: {"lines": ["help"]},
     EventType.PROMPT_REFRESH: {
         "last_exit_code": 1,
@@ -262,6 +273,42 @@ class DefaultBankSmokeTests(unittest.TestCase):
                 "command_completed_nonzero",
                 "command_failed_timeout",
                 "command_failed_generic",
+            ],
+        )
+
+    def test_settings_reset_outcome_branches_each_pick_a_binding(self) -> None:
+        """F21c: applied / already_default / cancelled each map to a
+        distinct binding so the user hears the right feedback."""
+        bus = EventBus()
+        sink = MemorySink()
+        engine = SoundEngine(bus, default_sound_bank(), sink, sample_rate=8000)
+        self.addCleanup(engine.close)
+
+        spoken_labels: list[str] = []
+        bus.subscribe(
+            EventType.AUDIO_SPOKEN,
+            lambda event: spoken_labels.append(event.payload["binding_id"]),
+        )
+
+        for outcome in ("applied", "already_default", "cancelled"):
+            publish_event(
+                bus,
+                EventType.SETTINGS_RESET_CLOSED,
+                {
+                    "scope": "section",
+                    "committed": outcome != "cancelled",
+                    "changed": outcome == "applied",
+                    "outcome": outcome,
+                },
+                source="test",
+            )
+
+        self.assertEqual(
+            spoken_labels,
+            [
+                "settings_reset_applied",
+                "settings_reset_already_default",
+                "settings_reset_cancelled",
             ],
         )
 

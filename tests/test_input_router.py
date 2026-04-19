@@ -1241,5 +1241,267 @@ class CellLifecycleBindingTests(unittest.TestCase):
         self.assertIn(":duplicate", joined)
 
 
+def _defaults_bank() -> SoundBank:
+    """Defaults bank paired with `_settings_bank` so reset has somewhere to go."""
+    return SoundBank(
+        voices=(Voice(id="v1", rate=1.0),),
+        sounds=(SoundRecipe(id="s1", kind="tone", params={"frequency": 440.0}),),
+        bindings=(
+            EventBinding(
+                id="b1",
+                event_type="cell.created",
+                voice_id="v1",
+                say_template="hello",
+            ),
+        ),
+    )
+
+
+def _build_with_reset(
+    commands: list[str],
+) -> tuple[EventBus, NotebookCursor, InputRouter, SettingsController]:
+    """Router + controller wired with a defaults bank so Ctrl+R can fire."""
+    bus = EventBus()
+    session = Session.new()
+    for command in commands:
+        session.add_cell(Cell.new(command))
+    cursor = NotebookCursor(session, bus)
+    # Use a mutated working bank so reset has a visible change to apply.
+    working = SoundBank(
+        voices=(Voice(id="v1", rate=9.0),),
+        sounds=(SoundRecipe(id="s1", kind="tone", params={"frequency": 100.0}),),
+        bindings=_defaults_bank().bindings,
+    )
+    controller = SettingsController(bus, working, defaults_bank=_defaults_bank())
+    router = InputRouter(cursor, bus, settings_controller=controller)
+    return bus, cursor, router, controller
+
+
+class SettingsResetBindingTests(unittest.TestCase):
+    """F21c: Ctrl+R and reset-confirm key handling inside SETTINGS mode."""
+
+    def test_ctrl_r_opens_reset_confirmation_at_cursor_scope(self) -> None:
+        _, _, router, controller = _build_with_reset(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        result = router.handle_key(Key.combo("r", Modifier.CTRL))
+        self.assertEqual(result, "settings_reset_begin")
+        self.assertTrue(controller.resetting)
+        # Cursor is at SECTION level → scope defaults to SECTION.
+        self.assertEqual(controller.reset_scope.value, "section")
+
+    def test_enter_confirms_the_pending_reset(self) -> None:
+        _, _, router, controller = _build_with_reset(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.combo("r", Modifier.CTRL))
+        result = router.handle_key(ENTER)
+        self.assertEqual(result, "settings_reset_confirm")
+        self.assertFalse(controller.resetting)
+        # Reset applied: voices[0].rate back to 1.0.
+        self.assertAlmostEqual(controller.bank.voices[0].rate, 1.0)
+
+    def test_escape_cancels_the_pending_reset(self) -> None:
+        _, _, router, controller = _build_with_reset(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.combo("r", Modifier.CTRL))
+        result = router.handle_key(ESCAPE)
+        self.assertEqual(result, "settings_reset_cancel")
+        self.assertFalse(controller.resetting)
+        # No change: the mutated bank survives.
+        self.assertAlmostEqual(controller.bank.voices[0].rate, 9.0)
+
+    def test_arrow_keys_swallowed_while_reset_is_pending(self) -> None:
+        """Stray arrow keys must not move the cursor while a confirmation
+        is open — acknowledging the reset has to be deliberate."""
+        _, _, router, controller = _build_with_reset(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.combo("r", Modifier.CTRL))
+        section_before = controller.editor.state.section
+        self.assertIsNone(router.handle_key(UP))
+        self.assertIsNone(router.handle_key(DOWN))
+        self.assertTrue(controller.resetting)
+        self.assertEqual(controller.editor.state.section, section_before)
+
+    def test_reset_begin_payload_reports_scope(self) -> None:
+        bus, _, router, _ = _build_with_reset(["echo"])
+        recorder = _Recorder(bus)
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.combo("r", Modifier.CTRL))
+        begins = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "settings_reset_begin"
+        ]
+        self.assertEqual(len(begins), 1)
+        self.assertEqual(begins[0].payload["scope"], "section")
+        self.assertTrue(begins[0].payload["opened"])
+
+    def test_reset_confirm_payload_reports_scope_and_applied(self) -> None:
+        bus, _, router, _ = _build_with_reset(["echo"])
+        recorder = _Recorder(bus)
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.combo("r", Modifier.CTRL))
+        router.handle_key(ENTER)
+        confirms = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "settings_reset_confirm"
+        ]
+        self.assertEqual(len(confirms), 1)
+        self.assertEqual(confirms[0].payload["scope"], "section")
+        self.assertTrue(confirms[0].payload["applied"])
+
+    def test_ctrl_r_without_controller_is_safe_noop(self) -> None:
+        """A router without a settings_controller must not crash on Ctrl+R."""
+        bus = EventBus()
+        session = Session.new()
+        session.add_cell(Cell.new("echo"))
+        cursor = NotebookCursor(session, bus)
+        cursor.enter_settings_mode()  # simulate SETTINGS focus
+        router = InputRouter(cursor, bus)
+        self.assertEqual(
+            router.handle_key(Key.combo("r", Modifier.CTRL)),
+            "settings_reset_begin",
+        )
+
+    def test_ctrl_r_while_searching_is_refused(self) -> None:
+        """While a `/` composer is open the `r` key flows into the query;
+        since `r` in Modifier.CTRL isn't a printable, the begin-reset
+        handler runs but the controller refuses because searching."""
+        _, _, router, controller = _build_with_reset(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(Key.printable("/"))
+        self.assertTrue(controller.searching)
+        # The Ctrl+R binding isn't dispatched (we're in the search
+        # composer sub-mode), so controller.resetting stays False.
+        router.handle_key(Key.combo("r", Modifier.CTRL))
+        self.assertFalse(controller.resetting)
+
+    def test_ctrl_r_while_editing_cancels_edit_then_opens_reset(self) -> None:
+        _, _, router, controller = _build_with_reset(["echo"])
+        router.handle_key(Key.combo(",", Modifier.CTRL))
+        router.handle_key(ENTER)
+        router.handle_key(ENTER)  # FIELD
+        router.handle_key(Key.printable("e"))
+        router.handle_key(Key.printable("x"))
+        # Ctrl+R in edit sub-mode is swallowed (not printable), so
+        # the binding map doesn't see it — reset stays unopened.
+        self.assertIsNone(router.handle_key(Key.combo("r", Modifier.CTRL)))
+        self.assertTrue(controller.editing)
+        self.assertFalse(controller.resetting)
+
+    def test_help_mentions_ctrl_r_reset(self) -> None:
+        from asat.input_router import HELP_LINES
+        joined = "\n".join(HELP_LINES).lower()
+        self.assertIn("ctrl+r", joined)
+        self.assertIn("reset", joined)
+
+    def test_help_mentions_meta_reset(self) -> None:
+        from asat.input_router import HELP_LINES
+        joined = "\n".join(HELP_LINES)
+        self.assertIn(":reset", joined)
+
+
+class MetaResetCommandTests(unittest.TestCase):
+    """F21c: `:reset` meta-command from INPUT mode."""
+
+    def _submit_meta(
+        self, router: InputRouter, cursor: NotebookCursor, text: str
+    ) -> None:
+        """Type `text` in INPUT mode and submit."""
+        cursor.enter_input_mode()
+        cursor.reset_input_buffer()
+        for ch in text:
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+
+    def test_colon_reset_bank_opens_settings_and_begins_bank_reset(self) -> None:
+        _, cursor, router, controller = _build_with_reset([""])
+        self._submit_meta(router, cursor, ":reset bank")
+        self.assertEqual(cursor.focus.mode, FocusMode.SETTINGS)
+        self.assertTrue(controller.is_open)
+        self.assertTrue(controller.resetting)
+        self.assertEqual(controller.reset_scope.value, "bank")
+
+    def test_colon_reset_all_is_alias_for_bank(self) -> None:
+        _, cursor, router, controller = _build_with_reset([""])
+        self._submit_meta(router, cursor, ":reset all")
+        self.assertEqual(controller.reset_scope.value, "bank")
+
+    def test_colon_reset_without_argument_emits_help(self) -> None:
+        bus, cursor, router, controller = _build_with_reset([""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, cursor, ":reset")
+        self.assertFalse(controller.resetting)
+        # The cursor does not change modes for a help-only meta.
+        help_events = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertGreaterEqual(len(help_events), 1)
+        lines = help_events[-1].payload["lines"]
+        joined = "\n".join(lines).lower()
+        self.assertIn("ctrl+r", joined)
+
+    def test_colon_reset_section_is_refused_from_input(self) -> None:
+        """Finer-grained scopes require Ctrl+R inside SETTINGS — from
+        INPUT we deliberately refuse them so a user cannot reset the
+        wrong slice without cursor context."""
+        bus, cursor, router, controller = _build_with_reset([""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, cursor, ":reset section")
+        self.assertFalse(controller.resetting)
+        help_events = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertGreaterEqual(len(help_events), 1)
+
+    def test_colon_reset_is_case_insensitive(self) -> None:
+        _, cursor, router, controller = _build_with_reset([""])
+        self._submit_meta(router, cursor, ":RESET BANK")
+        self.assertTrue(controller.resetting)
+        self.assertEqual(controller.reset_scope.value, "bank")
+
+    def test_meta_reset_payload_carries_command_and_argument(self) -> None:
+        bus, cursor, router, _ = _build_with_reset([""])
+        recorder = _Recorder(bus)
+        self._submit_meta(router, cursor, ":reset bank")
+        submit = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "submit"
+        ]
+        self.assertGreaterEqual(len(submit), 1)
+        self.assertEqual(submit[-1].payload["meta_command"], "reset")
+        self.assertEqual(submit[-1].payload["meta_argument"], "bank")
+
+    def test_meta_reset_listed_in_meta_commands(self) -> None:
+        from asat.input_router import META_COMMANDS
+        self.assertIn("reset", META_COMMANDS)
+
+
+class ParseResetScopeTests(unittest.TestCase):
+    """F21c: the module-level `:reset <arg>` argument parser."""
+
+    def test_parse_reset_scope_recognises_bank_and_all(self) -> None:
+        from asat.input_router import _parse_reset_scope
+        from asat.settings_editor import ResetScope
+        self.assertEqual(_parse_reset_scope("bank"), ResetScope.BANK)
+        self.assertEqual(_parse_reset_scope("all"), ResetScope.BANK)
+
+    def test_parse_reset_scope_recognises_each_grain(self) -> None:
+        from asat.input_router import _parse_reset_scope
+        from asat.settings_editor import ResetScope
+        self.assertEqual(_parse_reset_scope("section"), ResetScope.SECTION)
+        self.assertEqual(_parse_reset_scope("record"), ResetScope.RECORD)
+        self.assertEqual(_parse_reset_scope("field"), ResetScope.FIELD)
+
+    def test_parse_reset_scope_empty_returns_none(self) -> None:
+        from asat.input_router import _parse_reset_scope
+        self.assertIsNone(_parse_reset_scope(""))
+        self.assertIsNone(_parse_reset_scope("   "))
+
+    def test_parse_reset_scope_is_case_insensitive(self) -> None:
+        from asat.input_router import _parse_reset_scope
+        from asat.settings_editor import ResetScope
+        self.assertEqual(_parse_reset_scope("BANK"), ResetScope.BANK)
+        self.assertEqual(_parse_reset_scope("Record"), ResetScope.RECORD)
+
+    def test_parse_reset_scope_unknown_returns_none(self) -> None:
+        from asat.input_router import _parse_reset_scope
+        self.assertIsNone(_parse_reset_scope("everything"))
+
+
 if __name__ == "__main__":
     unittest.main()
