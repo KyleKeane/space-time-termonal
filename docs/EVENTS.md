@@ -215,6 +215,8 @@ Producer: `asat.settings_editor.SettingsEditor`
 | `SETTINGS_SEARCH_OPENED`   | `origin_level`, `origin_section`, `origin_record_index`, `origin_field_index` |
 | `SETTINGS_SEARCH_UPDATED`  | `query`, `match_count`, (optional, when matched) `section`, `record_index`, `record_id` |
 | `SETTINGS_SEARCH_CLOSED`   | `query`, `match_count`, `committed`                                 |
+| `SETTINGS_RESET_OPENED`    | `scope` (`field`/`record`/`section`/`bank`), `section`, `target_count`, (when scope ∈ {`field`, `record`}) `record_id`, (when scope=`field`) `field` |
+| `SETTINGS_RESET_CLOSED`    | `scope`, `committed`, `changed`, `outcome` (`applied`/`already_default`/`cancelled`) |
 
 The `SETTINGS_SEARCH_*` family fires from the `/` search overlay
 described in [USER_MANUAL.md § Searching the bank](USER_MANUAL.md#searching-the-bank).
@@ -222,6 +224,19 @@ described in [USER_MANUAL.md § Searching the bank](USER_MANUAL.md#searching-the
 zero-match queries (so narration can announce "0 matches").
 `SETTINGS_SEARCH_CLOSED` carries `committed=True` on Enter and
 `committed=False` on Escape / ascend cancel.
+
+The `SETTINGS_RESET_*` family fires from the Ctrl+R / `:reset`
+confirmation sub-mode described in
+[USER_MANUAL.md § Resetting to defaults](USER_MANUAL.md#resetting-to-defaults).
+`target_count` on `SETTINGS_RESET_OPENED` is the number of records
+the confirmation would touch (1 for field/record scope, the section
+length for section scope, and the total record count across every
+section for bank scope). `SETTINGS_RESET_CLOSED`'s `outcome` key
+discriminates the three end states so each can fire its own
+single-clause predicate binding: `applied` when the reset mutated
+the bank, `already_default` when the targeted slice already matched
+defaults (no history entry is pushed), and `cancelled` when the
+user escaped out of the confirmation.
 
 ## Help surface
 

@@ -58,7 +58,16 @@ MAX_HISTORY = 64
 
 @dataclass(frozen=True)
 class _EditRecord:
-    """One undoable mutation, enough to both replay and reverse."""
+    """One undoable mutation, enough to both replay and reverse.
+
+    `scope` marks the grain of the mutation: a single `"field"` edit
+    (the default, produced by `edit()`), or a wider `"record"` /
+    `"section"` / `"bank"` reset produced by `confirm_reset()`. The
+    scope decides where `_apply_history_cursor` parks the cursor when
+    the step is replayed, and whether the cursor re-fires
+    `SETTINGS_VALUE_EDITED` (field-scope only — broader resets don't
+    map to a single field-shaped payload).
+    """
 
     section: "Section"
     record_index: int
@@ -67,6 +76,7 @@ class _EditRecord:
     new_value: Any
     bank_before: "SoundBank"
     bank_after: "SoundBank"
+    scope: str = "field"
 
 
 class SettingsEditorError(ValueError):
@@ -87,6 +97,21 @@ class Level(str, Enum):
     SECTION = "section"
     RECORD = "record"
     FIELD = "field"
+
+
+class ResetScope(str, Enum):
+    """Grain of a reset-to-defaults operation.
+
+    FIELD resets just the focused field on the focused record; RECORD
+    replaces the whole focused record; SECTION swaps the entire
+    section tuple; BANK replaces voices, sounds, and bindings all at
+    once. Each scope is applied as a single atomic undoable step.
+    """
+
+    FIELD = "field"
+    RECORD = "record"
+    SECTION = "section"
+    BANK = "bank"
 
 
 # Ordered field lists per record type. Using tuples keeps the editor
@@ -131,11 +156,24 @@ class SettingsEditor:
     SoundEngine can narrate in real time.
     """
 
-    def __init__(self, bus: EventBus, bank: SoundBank) -> None:
-        """Open an editor session over the given bank."""
+    def __init__(
+        self,
+        bus: EventBus,
+        bank: SoundBank,
+        defaults_bank: Optional[SoundBank] = None,
+    ) -> None:
+        """Open an editor session over the given bank.
+
+        `defaults_bank` is the "factory fresh" bank that
+        `confirm_reset()` restores from. Callers that don't need reset
+        can pass `None`; `begin_reset` will then refuse. Tests can
+        inject a bespoke defaults bank to verify scope logic without
+        loading the stock one.
+        """
         self._bus = bus
         self._bank = bank
         self._saved_bank = bank
+        self._defaults_bank = defaults_bank
         self._state = EditorState()
         self._undo_stack: list[_EditRecord] = []
         self._redo_stack: list[_EditRecord] = []
@@ -151,6 +189,13 @@ class SettingsEditor:
         self._search_origin: Optional[
             tuple[Level, Section, int, int]
         ] = None
+        # F21c reset confirm sub-mode. Set while the user is being
+        # asked "reset to defaults? press Enter to confirm". The scope
+        # chosen at `begin_reset` time is remembered so confirm_reset
+        # can apply the right-size mutation. No origin is stored — a
+        # cancel leaves the cursor where it was when the user asked.
+        self._reset_mode: bool = False
+        self._reset_scope: Optional[ResetScope] = None
         publish_event(
             bus,
             EventType.SETTINGS_OPENED,
@@ -301,18 +346,19 @@ class SettingsEditor:
         self._redo_stack.append(record)
         self._apply_history_cursor(record)
         self._state = replace(self._state, dirty=self._compute_dirty())
-        publish_event(
-            self._bus,
-            EventType.SETTINGS_VALUE_EDITED,
-            {
-                "section": record.section.value,
-                "record_index": record.record_index,
-                "field": record.field,
-                "old_value": _jsonable(record.new_value),
-                "new_value": _jsonable(record.old_value),
-            },
-            source=SOURCE,
-        )
+        if record.scope == "field":
+            publish_event(
+                self._bus,
+                EventType.SETTINGS_VALUE_EDITED,
+                {
+                    "section": record.section.value,
+                    "record_index": record.record_index,
+                    "field": record.field,
+                    "old_value": _jsonable(record.new_value),
+                    "new_value": _jsonable(record.old_value),
+                },
+                source=SOURCE,
+            )
         self._publish_focus()
         return True
 
@@ -328,18 +374,19 @@ class SettingsEditor:
         self._undo_stack.append(record)
         self._apply_history_cursor(record)
         self._state = replace(self._state, dirty=self._compute_dirty())
-        publish_event(
-            self._bus,
-            EventType.SETTINGS_VALUE_EDITED,
-            {
-                "section": record.section.value,
-                "record_index": record.record_index,
-                "field": record.field,
-                "old_value": _jsonable(record.old_value),
-                "new_value": _jsonable(record.new_value),
-            },
-            source=SOURCE,
-        )
+        if record.scope == "field":
+            publish_event(
+                self._bus,
+                EventType.SETTINGS_VALUE_EDITED,
+                {
+                    "section": record.section.value,
+                    "record_index": record.record_index,
+                    "field": record.field,
+                    "old_value": _jsonable(record.old_value),
+                    "new_value": _jsonable(record.new_value),
+                },
+                source=SOURCE,
+            )
         self._publish_focus()
         return True
 
@@ -353,11 +400,42 @@ class SettingsEditor:
             del self._undo_stack[0]
 
     def _apply_history_cursor(self, record: _EditRecord) -> None:
-        """Park the cursor on the field the history step mutated.
+        """Park the cursor on the slice the history step mutated.
 
         Undo/redo implicitly "takes the user there" so the narration
         and any visible focus cue reflect the change they just heard.
+        For field-scope edits the cursor lands on the exact field;
+        for wider reset scopes it lands at the coarsest level that
+        still makes sense so the narrated record_id / section frames
+        the change.
         """
+        if record.scope == "bank":
+            self._state = replace(
+                self._state,
+                level=Level.SECTION,
+                section=record.section,
+                record_index=0,
+                field_index=0,
+            )
+            return
+        if record.scope == "section":
+            self._state = replace(
+                self._state,
+                level=Level.SECTION,
+                section=record.section,
+                record_index=0,
+                field_index=0,
+            )
+            return
+        if record.scope == "record":
+            self._state = replace(
+                self._state,
+                level=Level.RECORD,
+                section=record.section,
+                record_index=record.record_index,
+                field_index=0,
+            )
+            return
         fields = self._fields_for(record.section)
         try:
             field_index = fields.index(record.field)
@@ -540,6 +618,244 @@ class SettingsEditor:
         section, record_index = self._search_matches[self._search_position]
         self._goto_record_match(section, record_index)
         return True
+
+    @property
+    def resetting(self) -> bool:
+        """True while the reset confirm sub-mode is active."""
+        return self._reset_mode
+
+    @property
+    def reset_scope(self) -> Optional[ResetScope]:
+        """Return the scope `begin_reset` captured, or None outside sub-mode."""
+        return self._reset_scope
+
+    def default_reset_scope(self) -> ResetScope:
+        """Scope `:reset` / Ctrl+R picks when the user doesn't name one.
+
+        Matches the cursor's current level: FIELD at FIELD, RECORD at
+        RECORD, SECTION at SECTION. Whole-bank reset is always
+        explicit (`:reset all` / `:reset bank`).
+        """
+        if self._state.level == Level.FIELD:
+            return ResetScope.FIELD
+        if self._state.level == Level.RECORD:
+            return ResetScope.RECORD
+        return ResetScope.SECTION
+
+    def begin_reset(self, scope: ResetScope) -> bool:
+        """Enter the reset confirm sub-mode at the given scope.
+
+        Returns False when no defaults bank is available (the editor
+        was constructed without one), when the requested scope cannot
+        be applied from the current cursor (e.g. FIELD scope at RECORD
+        level), or when the focused record has no matching default
+        (user-added record with a novel id). Already-open sub-mode is
+        a no-op and returns True so an accidental retap does nothing.
+
+        Publishes `SETTINGS_RESET_OPENED` describing what would change
+        so the default bank can narrate the confirmation prompt.
+        """
+        if self._defaults_bank is None:
+            return False
+        if self._reset_mode:
+            return True
+        if not self._is_scope_applicable(scope):
+            return False
+        self._reset_mode = True
+        self._reset_scope = scope
+        publish_event(
+            self._bus,
+            EventType.SETTINGS_RESET_OPENED,
+            self._reset_opened_payload(scope),
+            source=SOURCE,
+        )
+        return True
+
+    def confirm_reset(self) -> bool:
+        """Apply the pending reset, push one history entry, close sub-mode.
+
+        `changed` in the closing payload is False when the current
+        state already matched defaults — no history entry is pushed
+        in that case, but the sub-mode still closes so the user hears
+        "already at defaults". Returns False if not in the sub-mode.
+        """
+        if not self._reset_mode or self._reset_scope is None:
+            return False
+        scope = self._reset_scope
+        bank_before = self._bank
+        bank_after = self._compute_reset_bank(scope)
+        try:
+            bank_after.validate()
+        except SoundBankError as exc:  # pragma: no cover - defaults are valid
+            raise SettingsEditorError(str(exc)) from exc
+        changed = bank_after is not bank_before
+        if changed:
+            self._bank = bank_after
+            self._push_undo(
+                _EditRecord(
+                    section=self._state.section,
+                    record_index=self._state.record_index,
+                    field=self._current_field_name() if self._state.level == Level.FIELD else "",
+                    old_value=None,
+                    new_value=None,
+                    bank_before=bank_before,
+                    bank_after=bank_after,
+                    scope=scope.value,
+                )
+            )
+            self._redo_stack.clear()
+            self._state = replace(self._state, dirty=self._compute_dirty())
+            self._publish_focus()
+        self._reset_mode = False
+        self._reset_scope = None
+        publish_event(
+            self._bus,
+            EventType.SETTINGS_RESET_CLOSED,
+            {
+                "scope": scope.value,
+                "committed": True,
+                "changed": changed,
+                "outcome": "applied" if changed else "already_default",
+            },
+            source=SOURCE,
+        )
+        return True
+
+    def cancel_reset(self) -> bool:
+        """Leave the reset sub-mode without mutating the bank."""
+        if not self._reset_mode or self._reset_scope is None:
+            return False
+        scope = self._reset_scope
+        self._reset_mode = False
+        self._reset_scope = None
+        publish_event(
+            self._bus,
+            EventType.SETTINGS_RESET_CLOSED,
+            {
+                "scope": scope.value,
+                "committed": False,
+                "changed": False,
+                "outcome": "cancelled",
+            },
+            source=SOURCE,
+        )
+        return True
+
+    def _is_scope_applicable(self, scope: ResetScope) -> bool:
+        """True when the current cursor position permits the requested scope."""
+        if scope == ResetScope.BANK:
+            return True
+        if scope == ResetScope.SECTION:
+            return True
+        if scope == ResetScope.RECORD:
+            if self._state.level == Level.SECTION:
+                return False
+            return self._current_record_has_default()
+        # FIELD
+        if self._state.level != Level.FIELD:
+            return False
+        return self._current_record_has_default()
+
+    def _current_record_has_default(self) -> bool:
+        """True when the focused record's id exists in the defaults bank."""
+        if self._defaults_bank is None:
+            return False
+        if self._record_count() == 0:
+            return False
+        record = self._records()[self._state.record_index]
+        record_id = getattr(record, "id", None)
+        if record_id is None:
+            return False
+        return any(
+            getattr(default_record, "id", None) == record_id
+            for default_record in getattr(self._defaults_bank, self._state.section.value)
+        )
+
+    def _reset_opened_payload(self, scope: ResetScope) -> dict[str, Any]:
+        """Shape the SETTINGS_RESET_OPENED payload for the given scope."""
+        payload: dict[str, Any] = {
+            "scope": scope.value,
+            "section": self._state.section.value,
+            "target_count": self._reset_target_count(scope),
+        }
+        if scope in (ResetScope.FIELD, ResetScope.RECORD):
+            record = self._records()[self._state.record_index]
+            payload["record_id"] = getattr(record, "id", "")
+            if scope == ResetScope.FIELD:
+                payload["field"] = self._current_field_name()
+        return payload
+
+    def _reset_target_count(self, scope: ResetScope) -> int:
+        """Number of records a reset at `scope` would touch."""
+        if scope == ResetScope.BANK:
+            assert self._defaults_bank is not None
+            return sum(
+                len(getattr(self._defaults_bank, section.value))
+                for section in SECTION_ORDER
+            )
+        if scope == ResetScope.SECTION:
+            assert self._defaults_bank is not None
+            return len(getattr(self._defaults_bank, self._state.section.value))
+        return 1
+
+    def _compute_reset_bank(self, scope: ResetScope) -> SoundBank:
+        """Build the post-reset bank for the given scope.
+
+        Returns `self._bank` unchanged when the targeted slice already
+        matches defaults — the caller treats identity equality as "no
+        change" to skip the history entry and narrate accordingly.
+        """
+        assert self._defaults_bank is not None
+        if scope == ResetScope.BANK:
+            if self._bank == self._defaults_bank:
+                return self._bank
+            return self._defaults_bank
+        if scope == ResetScope.SECTION:
+            section = self._state.section
+            default_records = getattr(self._defaults_bank, section.value)
+            current_records = getattr(self._bank, section.value)
+            if current_records == default_records:
+                return self._bank
+            return self._swap_section(section, list(default_records))
+        # FIELD / RECORD share the default-record lookup
+        record = self._records()[self._state.record_index]
+        record_id = getattr(record, "id", "")
+        default_record = self._find_default_record(record_id)
+        assert default_record is not None
+        if scope == ResetScope.RECORD:
+            if record == default_record:
+                return self._bank
+            new_records = list(self._records())
+            new_records[self._state.record_index] = default_record
+            return self._swap_section(self._state.section, new_records)
+        # FIELD
+        field_name = self._current_field_name()
+        default_value = getattr(default_record, field_name)
+        if getattr(record, field_name) == default_value:
+            return self._bank
+        new_record = replace(record, **{field_name: default_value})
+        new_records = list(self._records())
+        new_records[self._state.record_index] = new_record
+        return self._swap_section(self._state.section, new_records)
+
+    def _find_default_record(self, record_id: str) -> Optional[Any]:
+        """Return the defaults record with matching id, or None."""
+        if self._defaults_bank is None or not record_id:
+            return None
+        for record in getattr(self._defaults_bank, self._state.section.value):
+            if getattr(record, "id", None) == record_id:
+                return record
+        return None
+
+    def _swap_section(
+        self, section: Section, new_records: list[Any]
+    ) -> SoundBank:
+        """Return a new bank with `section` replaced by `new_records`."""
+        if section == Section.VOICES:
+            return self._bank.with_replaced(voices=new_records)
+        if section == Section.SOUNDS:
+            return self._bank.with_replaced(sounds=new_records)
+        return self._bank.with_replaced(bindings=new_records)
 
     def _is_bank_empty(self) -> bool:
         """True when every section is empty — nothing to search across."""

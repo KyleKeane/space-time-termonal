@@ -402,6 +402,32 @@ edit. After committing, `n` and `N` cycle forward and backward
 through the remaining matches (wrapping at the ends). A zero-match
 query still narrates the count so you know the overlay heard you.
 
+### Resetting to defaults
+
+If a field, record, or whole section has drifted from the stock
+bank and you want to start over, press **Ctrl+R** to open the
+reset confirmation. The scope follows your cursor:
+
+* At **field** level, only the focused field is restored.
+* At **record** level, the whole record goes back to its default.
+* At **section** level, every record in the section is replaced.
+
+Press **Enter** to confirm the reset or **Escape** to cancel — no
+other key is accepted while the confirmation is open, so a stray
+motion key can't accidentally wipe a record. Every reset is a
+single undoable step, so Ctrl+Z afterwards puts your edits back.
+
+From **INPUT** mode you can also type `:reset bank` (or the alias
+`:reset all`) to reset the entire bank at once; this opens the
+settings editor and walks straight into the confirmation. Finer-
+grained scopes (`:reset section`, `:reset record`, `:reset field`)
+are deliberately not accepted from INPUT — use Ctrl+R inside the
+editor where the cursor gives the reset a specific target.
+
+If the targeted slice is already at defaults, the confirmation
+still opens but pressing Enter narrates "already at defaults" and
+leaves the bank untouched (nothing to undo).
+
 ### What the fields mean
 
 For a full reference of every field and how the audio pipeline
@@ -456,6 +482,7 @@ Every key you need, one table.
 | INPUT      | `:duplicate`⏎     | Duplicate focused cell                |
 | INPUT      | `:pwd`⏎           | Announce working directory            |
 | INPUT      | `:commands`⏎      | List every meta-command               |
+| INPUT      | `:reset bank`⏎    | Reset the whole bank to defaults      |
 | OUTPUT     | Up / Down         | Prev / next line                      |
 | OUTPUT     | PageUp / PageDown | Jump a page                           |
 | OUTPUT     | Home / End        | First / last line                     |
@@ -474,6 +501,7 @@ Every key you need, one table.
 | SETTINGS   | `/`               | Search (live), Enter commits, Escape restores |
 | SETTINGS   | `n` / `N`         | Next / previous search match          |
 | SETTINGS   | Ctrl+Z / Ctrl+Y   | Undo / redo field edit                |
+| SETTINGS   | Ctrl+R            | Reset to defaults at cursor scope (Enter confirms, Escape cancels) |
 | SETTINGS   | Ctrl+S            | Save bank                             |
 | SETTINGS   | Ctrl+Q            | Close editor                          |
 

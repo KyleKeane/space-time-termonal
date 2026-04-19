@@ -501,8 +501,8 @@ re-onboarding scenarios.
 
 ## F21 — Settings: undo, search, and reset
 
-**Status.** In progress. Undo/redo and `/` search shipped; `:reset`
-still pending.
+**Status.** Shipped. Undo/redo, `/` search, and `:reset` / Ctrl+R
+reset-to-defaults are all live.
 
 **Gap.** The settings editor has no undo, no search, and no "reset
 this field / record / whole bank to defaults". A user who mistypes
@@ -558,8 +558,43 @@ exposes `begin_search` / `extend_search` / `backspace_search` /
 `redo()` all refuse while the search sub-mode is active.
 `InputRouter` binds `/` to open, `n` / `N` to cycle, and routes
 every key through a dedicated dispatch while searching so motion
-keys do not leak into the editor. Reset is the remaining F21
-sub-feature.
+keys do not leak into the editor.
+
+**Sketch (shipped — `:reset` / Ctrl+R reset-to-defaults).** The
+editor now takes an optional `defaults_bank` on construction and
+exposes a reset confirmation sub-mode at four scopes: `field`,
+`record`, `section`, `bank`. `begin_reset(scope)` publishes
+`SETTINGS_RESET_OPENED` (with `scope`, `section`, `target_count`,
+and — for field/record scope — `record_id` / `field`) so the
+default bank narrates "reset foo? press enter to confirm, escape
+to cancel". `confirm_reset()` swaps the targeted slice with its
+default, pushes one polymorphic `_EditRecord` (scope-aware) onto
+the undo stack so Ctrl+Z puts the edits back in one step, and
+publishes `SETTINGS_RESET_CLOSED` with an `outcome` of `applied`
+or (when the slice already matched defaults) `already_default`.
+`cancel_reset()` publishes `outcome="cancelled"`. `_apply_history_cursor`
+parks the cursor at the coarsest level that still frames the
+change on undo/redo of a wider-scope reset, and `undo`/`redo` only
+re-publish `SETTINGS_VALUE_EDITED` for field-scope records so
+broader resets don't pretend to be a field edit. `SettingsController`
+threads `defaults_bank` through on `open()`, exposes `begin_reset`
+/ `confirm_reset` / `cancel_reset` / `resetting` / `reset_scope`,
+defaults the scope to the cursor's current level when called with
+`None`, refuses while searching, cancels any mid-edit first, and
+extends `ascend()` / `undo()` / `redo()` / `begin_edit()` /
+`begin_search()` to refuse during the reset sub-mode.
+`InputRouter` binds **Ctrl+R** to `settings_reset_begin` inside
+SETTINGS mode; while the confirmation is active Enter confirms,
+Escape cancels, and every other key is swallowed. From INPUT
+mode, `:reset bank` (alias `:reset all`) opens SETTINGS and walks
+straight into a bank-level confirmation; any other argument
+(`:reset section`, a bare `:reset`, …) surfaces a HELP_REQUESTED
+hint that directs the user to Ctrl+R inside SETTINGS so the
+cursor gives the reset a specific target. The default bank binds
+`SETTINGS_RESET_OPENED` (alert voice + settings chime) and three
+single-clause predicate branches on `SETTINGS_RESET_CLOSED`
+(`outcome == applied`, `outcome == already_default`, `outcome ==
+cancelled`) so the user hears the right feedback every time.
 
 ---
 

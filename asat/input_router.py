@@ -38,7 +38,7 @@ from asat.keys import Key, Modifier
 from asat.notebook import FocusMode, NotebookCursor
 from asat.output_cursor import OutputCursor
 from asat.settings_controller import SettingsController
-from asat.settings_editor import SettingsEditorError
+from asat.settings_editor import ResetScope, SettingsEditorError
 
 
 BindingMap = dict[FocusMode, dict[Key, str]]
@@ -109,6 +109,8 @@ def default_bindings() -> BindingMap:
         narrow matches live, Enter commits, Escape restores the
         pre-search cursor), `n` / `N` cycle through matches,
         Ctrl+S saves the bank, Ctrl+Q closes the editor,
+        Ctrl+R opens a reset-to-defaults confirmation for the
+        cursor's current scope (Enter confirms, Escape cancels),
         Escape ascends or (at the top level) closes.
     """
     menu_open = Key.combo(".", Modifier.CTRL)
@@ -176,6 +178,7 @@ def default_bindings() -> BindingMap:
             Key.combo("q", Modifier.CTRL): "settings_close",
             Key.combo("z", Modifier.CTRL): "settings_undo",
             Key.combo("y", Modifier.CTRL): "settings_redo",
+            Key.combo("r", Modifier.CTRL): "settings_reset_begin",
         },
     }
 
@@ -193,6 +196,7 @@ META_COMMANDS: tuple[str, ...] = (
     "duplicate",
     "pwd",
     "commands",
+    "reset",
 )
 
 # "Ambient" meta-commands do their job without taking focus away from
@@ -225,8 +229,9 @@ HELP_LINES: tuple[str, ...] = (
     "           / search (type query, Enter commits), n / N next / prev hit, g jump-to-line.",
     "SETTINGS:  Up/Down walk, Right/Enter descend, Left/Escape ascend, e edit, Ctrl+S save, Ctrl+Q close.",
     "           / search (cross-section; Enter commits, Escape restores), n / N cycle matches.",
+    "           Ctrl+R resets to defaults at cursor scope (Enter confirms, Escape cancels).",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
-    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :commands.",
+    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :commands, :reset.",
     "           Meta-commands are case-insensitive and accept a trailing argument.",
     "Exit:      :quit, or EOF (Ctrl+D on POSIX, Ctrl+Z Enter on Windows).",
     "Docs:      docs/USER_MANUAL.md for the full keystroke reference.",
@@ -290,6 +295,8 @@ class InputRouter:
             return self._dispatch_settings_edit_key(key)
         if mode == FocusMode.SETTINGS and self._settings_active_searching():
             return self._dispatch_settings_search_key(key)
+        if mode == FocusMode.SETTINGS and self._settings_active_resetting():
+            return self._dispatch_settings_reset_key(key)
         if mode == FocusMode.OUTPUT and self._output_composing():
             return self._dispatch_output_composer_key(key)
         mode_map = self._bindings.get(mode, {})
@@ -434,6 +441,32 @@ class InputRouter:
             return "settings_search_extend"
         return None
 
+    def _settings_active_resetting(self) -> bool:
+        """Return True while the reset confirmation sub-mode is active."""
+        return (
+            self._settings_controller is not None
+            and self._settings_controller.is_open
+            and self._settings_controller.resetting
+        )
+
+    def _dispatch_settings_reset_key(self, key: Key) -> Optional[str]:
+        """Route keys while the user is being asked to confirm a reset.
+
+        Enter confirms and applies the reset; Escape cancels and
+        leaves the bank untouched. Every other key is swallowed so
+        stray input can neither silently confirm nor dismiss the
+        prompt — a user has to acknowledge the confirmation
+        deliberately.
+        """
+        assert self._settings_controller is not None
+        if key == kc.ENTER:
+            self._invoke("settings_reset_confirm", key)
+            return "settings_reset_confirm"
+        if key == kc.ESCAPE:
+            self._invoke("settings_reset_cancel", key)
+            return "settings_reset_cancel"
+        return None
+
     def _invoke(self, action: str, key: Key) -> None:
         """Run a named action and publish ACTION_INVOKED for it.
 
@@ -507,6 +540,41 @@ class InputRouter:
             self._publish_pwd()
         elif command == "commands":
             self._publish_commands()
+        elif command == "reset":
+            self._handle_meta_reset(argument)
+
+    def _handle_meta_reset(self, argument: str) -> None:
+        """Open settings mode and begin a reset confirmation.
+
+        `:reset bank` / `:reset all` start a bank-level confirmation.
+        Any other argument (or none) surfaces a HELP_REQUESTED hint
+        instead of silently picking a scope — from INPUT mode there
+        is no cursor-level context, so asking the user to be explicit
+        avoids the "oops, I reset the wrong thing" failure mode. For
+        finer-grained scopes, the user is directed to press Ctrl+R
+        inside SETTINGS mode.
+        """
+        scope = _parse_reset_scope(argument)
+        if scope is not ResetScope.BANK:
+            publish_event(
+                self._bus,
+                EventType.HELP_REQUESTED,
+                {
+                    "lines": [
+                        "`:reset` from INPUT mode only supports `:reset bank` "
+                        "(also `:reset all`) for a whole-bank reset.",
+                        "For finer-grained resets, press Ctrl+, to open "
+                        "settings then Ctrl+R at the record, field, or "
+                        "section you want to restore.",
+                    ],
+                },
+                source=self.SOURCE,
+            )
+            return
+        if self._settings_controller is None:
+            return
+        self._open_settings()
+        self._settings_controller.begin_reset(ResetScope.BANK)
 
     def _publish_pwd(self) -> None:
         """Announce the current working directory via HELP_REQUESTED."""
@@ -664,6 +732,44 @@ class InputRouter:
         if self._settings_controller is not None:
             self._settings_controller.backspace_search()
 
+    def _settings_reset_begin(
+        self, scope: Optional[ResetScope] = None
+    ) -> Optional[dict[str, object]]:
+        """Open the reset confirmation; report the scope the editor chose.
+
+        When `scope` is None (Ctrl+R with no argument, or `:reset`
+        with no scope), the controller picks the cursor-level default
+        — FIELD at FIELD, RECORD at RECORD, SECTION at SECTION. For
+        explicit scope arguments (`:reset record`, `:reset bank`, …)
+        the caller passes the parsed enum value through.
+        """
+        if self._settings_controller is None:
+            return None
+        started = self._settings_controller.begin_reset(scope)
+        payload: dict[str, object] = {"opened": started}
+        active_scope = self._settings_controller.reset_scope
+        if active_scope is not None:
+            payload["scope"] = active_scope.value
+        elif scope is not None:
+            payload["scope"] = scope.value
+        return payload
+
+    def _settings_reset_confirm(self) -> Optional[dict[str, object]]:
+        """Confirm the pending reset; report whether the bank changed."""
+        if self._settings_controller is None:
+            return None
+        scope = self._settings_controller.reset_scope
+        applied = self._settings_controller.confirm_reset()
+        payload: dict[str, object] = {"applied": applied}
+        if scope is not None:
+            payload["scope"] = scope.value
+        return payload
+
+    def _settings_reset_cancel(self) -> None:
+        """Cancel the pending reset; leave the bank untouched."""
+        if self._settings_controller is not None:
+            self._settings_controller.cancel_reset()
+
     def _settings_search_next(self) -> Optional[dict[str, object]]:
         """Cycle to the next match; no-op without prior results."""
         if self._settings_controller is None:
@@ -804,6 +910,9 @@ class InputRouter:
             "settings_search_extend": lambda: None,
             "settings_search_next": self._settings_search_next,
             "settings_search_prev": self._settings_search_prev,
+            "settings_reset_begin": self._settings_reset_begin,
+            "settings_reset_confirm": self._settings_reset_confirm,
+            "settings_reset_cancel": _void(self._settings_reset_cancel),
             "open_action_menu": self._open_action_menu,
             "menu_prev": _void(self._menu_prev),
             "menu_next": _void(self._menu_next),
@@ -960,3 +1069,23 @@ def _suggest_meta_command(name: str) -> Optional[str]:
         name.lower(), META_COMMANDS, n=1, cutoff=0.6
     )
     return matches[0] if matches else None
+
+
+def _parse_reset_scope(argument: str) -> Optional[ResetScope]:
+    """Map a `:reset <arg>` argument to a ResetScope, or None for "unknown".
+
+    `bank` and `all` both resolve to ResetScope.BANK; `section` /
+    `record` / `field` resolve to their matching enums. Empty or
+    unrecognised arguments return None so the caller can surface a
+    help hint rather than a silent wrong scope.
+    """
+    normalized = argument.strip().lower()
+    if normalized in ("bank", "all"):
+        return ResetScope.BANK
+    if normalized == "section":
+        return ResetScope.SECTION
+    if normalized == "record":
+        return ResetScope.RECORD
+    if normalized == "field":
+        return ResetScope.FIELD
+    return None

@@ -12,6 +12,7 @@ from asat.events import Event, EventType
 from asat.settings_editor import (
     BINDING_FIELDS,
     Level,
+    ResetScope,
     SECTION_ORDER,
     SOUND_FIELDS,
     Section,
@@ -742,6 +743,297 @@ class DefaultBankIntegrationTests(unittest.TestCase):
             editor.save(path)
             reopened = SoundBank.load(path)
         self.assertEqual(reopened, default_sound_bank())
+
+
+class ResetToDefaultsTests(unittest.TestCase):
+    """F21c: reset-to-defaults sub-mode at field/record/section/bank scope."""
+
+    def _defaults(self) -> SoundBank:
+        """A stable defaults bank with predictable fields to reset from."""
+        return SoundBank(
+            voices=(Voice(id="v1", rate=1.0, pitch=1.0), Voice(id="v2", rate=1.1)),
+            sounds=(
+                SoundRecipe(id="s1", kind="tone", params={"frequency": 440.0}),
+                SoundRecipe(id="s2", kind="silence", params={"duration": 0.1}),
+            ),
+            bindings=(
+                EventBinding(
+                    id="b1",
+                    event_type="cell.created",
+                    voice_id="v1",
+                    say_template="hello",
+                ),
+            ),
+        )
+
+    def _field_editor(self, section: Section, record_index: int, field_name: str) -> SettingsEditor:
+        """Editor parked at FIELD level on the given (section, record, field)."""
+        editor = SettingsEditor(EventBus(), _bank(), defaults_bank=self._defaults())
+        for _ in range(SECTION_ORDER.index(section)):
+            editor.next()
+        editor.enter()
+        for _ in range(record_index):
+            editor.next()
+        editor.enter()
+        fields = (
+            VOICE_FIELDS
+            if section == Section.VOICES
+            else SOUND_FIELDS
+            if section == Section.SOUNDS
+            else BINDING_FIELDS
+        )
+        for _ in range(fields.index(field_name)):
+            editor.next()
+        return editor
+
+    def test_begin_reset_without_defaults_returns_false(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank())
+        self.assertFalse(editor.begin_reset(ResetScope.BANK))
+        self.assertFalse(editor.resetting)
+
+    def test_begin_reset_publishes_opened_with_scope_and_target_count(self) -> None:
+        bus = EventBus()
+        opened = _Recorder(bus, EventType.SETTINGS_RESET_OPENED)
+        editor = SettingsEditor(bus, _bank(), defaults_bank=self._defaults())
+        self.assertTrue(editor.begin_reset(ResetScope.SECTION))
+        self.assertEqual(len(opened.events), 1)
+        payload = opened.events[0].payload
+        self.assertEqual(payload["scope"], "section")
+        self.assertEqual(payload["section"], "voices")
+        self.assertEqual(payload["target_count"], 2)
+
+    def test_begin_reset_section_is_applicable_from_section_level(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank(), defaults_bank=self._defaults())
+        self.assertTrue(editor.begin_reset(ResetScope.SECTION))
+
+    def test_begin_reset_field_from_section_level_refused(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank(), defaults_bank=self._defaults())
+        self.assertFalse(editor.begin_reset(ResetScope.FIELD))
+
+    def test_begin_reset_record_from_section_level_refused(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank(), defaults_bank=self._defaults())
+        self.assertFalse(editor.begin_reset(ResetScope.RECORD))
+
+    def test_begin_reset_record_without_default_match_refused(self) -> None:
+        # Defaults have only v1/v2; current bank adds v3 which has no peer.
+        working = SoundBank(
+            voices=(
+                Voice(id="v1", rate=1.0, pitch=1.0),
+                Voice(id="v2", rate=1.1),
+                Voice(id="v3", rate=2.0),
+            ),
+            sounds=self._defaults().sounds,
+            bindings=self._defaults().bindings,
+        )
+        editor = SettingsEditor(EventBus(), working, defaults_bank=self._defaults())
+        editor.enter()
+        editor.next()
+        editor.next()  # voices[2] = v3 — no default
+        self.assertFalse(editor.begin_reset(ResetScope.RECORD))
+
+    def test_begin_reset_while_already_open_is_noop(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank(), defaults_bank=self._defaults())
+        self.assertTrue(editor.begin_reset(ResetScope.SECTION))
+        self.assertTrue(editor.begin_reset(ResetScope.BANK))  # retap
+        # First-captured scope wins.
+        self.assertEqual(editor.reset_scope, ResetScope.SECTION)
+
+    def test_confirm_reset_field_restores_default_value(self) -> None:
+        editor = self._field_editor(Section.VOICES, 0, "rate")
+        editor.edit("1.9")
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.9)
+        self.assertTrue(editor.begin_reset(ResetScope.FIELD))
+        self.assertTrue(editor.confirm_reset())
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.0)
+        self.assertFalse(editor.resetting)
+
+    def test_confirm_reset_record_restores_whole_record(self) -> None:
+        editor = self._field_editor(Section.VOICES, 0, "rate")
+        editor.edit("1.9")
+        editor.back()  # RECORD level for record-scope reset
+        self.assertTrue(editor.begin_reset(ResetScope.RECORD))
+        self.assertTrue(editor.confirm_reset())
+        self.assertEqual(editor.bank.voices[0], self._defaults().voices[0])
+
+    def test_confirm_reset_section_replaces_all_records_in_section(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank(), defaults_bank=self._defaults())
+        editor.enter()
+        editor.enter()
+        editor.next()  # voices[0].engine
+        editor.edit("sapi")
+        editor.back()
+        editor.back()  # SECTION level
+        self.assertTrue(editor.begin_reset(ResetScope.SECTION))
+        self.assertTrue(editor.confirm_reset())
+        self.assertEqual(editor.bank.voices, self._defaults().voices)
+
+    def test_confirm_reset_bank_swaps_every_section(self) -> None:
+        # Mutate something in every section so the reset proves it did work.
+        working = SoundBank(
+            voices=(Voice(id="v1", rate=9.0),),
+            sounds=(SoundRecipe(id="s1", kind="tone", params={"frequency": 100.0}),),
+            bindings=(
+                EventBinding(
+                    id="b1",
+                    event_type="cell.created",
+                    voice_id="v1",
+                    say_template="custom",
+                ),
+            ),
+        )
+        editor = SettingsEditor(EventBus(), working, defaults_bank=self._defaults())
+        self.assertTrue(editor.begin_reset(ResetScope.BANK))
+        self.assertTrue(editor.confirm_reset())
+        self.assertEqual(editor.bank, self._defaults())
+
+    def test_confirm_reset_without_begin_returns_false(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank(), defaults_bank=self._defaults())
+        self.assertFalse(editor.confirm_reset())
+
+    def test_cancel_reset_without_begin_returns_false(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank(), defaults_bank=self._defaults())
+        self.assertFalse(editor.cancel_reset())
+
+    def test_cancel_reset_publishes_closed_with_cancelled_outcome(self) -> None:
+        bus = EventBus()
+        closed = _Recorder(bus, EventType.SETTINGS_RESET_CLOSED)
+        editor = SettingsEditor(bus, _bank(), defaults_bank=self._defaults())
+        editor.begin_reset(ResetScope.SECTION)
+        self.assertTrue(editor.cancel_reset())
+        self.assertEqual(len(closed.events), 1)
+        payload = closed.events[0].payload
+        self.assertEqual(payload["outcome"], "cancelled")
+        self.assertFalse(payload["changed"])
+
+    def test_confirm_reset_when_already_default_has_no_op_outcome(self) -> None:
+        bus = EventBus()
+        closed = _Recorder(bus, EventType.SETTINGS_RESET_CLOSED)
+        # Current bank identical to defaults → reset is a no-op.
+        editor = SettingsEditor(bus, self._defaults(), defaults_bank=self._defaults())
+        editor.begin_reset(ResetScope.BANK)
+        self.assertTrue(editor.confirm_reset())
+        self.assertEqual(closed.events[-1].payload["outcome"], "already_default")
+        self.assertFalse(closed.events[-1].payload["changed"])
+        self.assertFalse(editor.can_undo)
+
+    def test_confirm_reset_applied_outcome_and_history_entry(self) -> None:
+        bus = EventBus()
+        closed = _Recorder(bus, EventType.SETTINGS_RESET_CLOSED)
+        editor = SettingsEditor(bus, _bank(), defaults_bank=self._defaults())
+        editor.enter()
+        editor.enter()
+        editor.next()
+        editor.edit("sapi")
+        editor.back()
+        editor.back()
+        editor.begin_reset(ResetScope.SECTION)
+        self.assertTrue(editor.confirm_reset())
+        self.assertEqual(closed.events[-1].payload["outcome"], "applied")
+        self.assertTrue(closed.events[-1].payload["changed"])
+        self.assertTrue(editor.can_undo)
+
+    def test_undo_after_bank_reset_restores_prior_bank(self) -> None:
+        editor = self._field_editor(Section.VOICES, 0, "rate")
+        editor.edit("1.9")
+        editor.back()
+        editor.back()  # back to SECTION
+        editor.begin_reset(ResetScope.BANK)
+        editor.confirm_reset()
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.0)
+        self.assertTrue(editor.undo())
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.9)
+
+    def test_undo_after_section_reset_parks_cursor_at_section_level(self) -> None:
+        editor = self._field_editor(Section.VOICES, 0, "rate")
+        editor.edit("1.9")
+        editor.back()
+        editor.back()  # SECTION
+        editor.begin_reset(ResetScope.SECTION)
+        editor.confirm_reset()
+        # Navigate away then undo to check the cursor is re-parked.
+        editor.next()  # section → sounds
+        editor.undo()
+        self.assertEqual(editor.state.level, Level.SECTION)
+        self.assertEqual(editor.state.section, Section.VOICES)
+
+    def test_undo_after_record_reset_parks_cursor_at_record_level(self) -> None:
+        editor = self._field_editor(Section.VOICES, 0, "rate")
+        editor.edit("1.9")
+        editor.back()  # RECORD
+        editor.begin_reset(ResetScope.RECORD)
+        editor.confirm_reset()
+        editor.undo()
+        self.assertEqual(editor.state.level, Level.RECORD)
+        self.assertEqual(editor.state.section, Section.VOICES)
+        self.assertEqual(editor.state.record_index, 0)
+
+    def test_undo_after_field_reset_parks_cursor_on_the_field(self) -> None:
+        editor = self._field_editor(Section.VOICES, 0, "rate")
+        editor.edit("1.9")
+        editor.begin_reset(ResetScope.FIELD)
+        editor.confirm_reset()
+        editor.undo()
+        self.assertEqual(editor.state.level, Level.FIELD)
+        self.assertEqual(editor.current_field_name(), "rate")
+
+    def test_undo_of_non_field_reset_does_not_publish_value_edited(self) -> None:
+        bus = EventBus()
+        edited = _Recorder(bus, EventType.SETTINGS_VALUE_EDITED)
+        editor = SettingsEditor(bus, _bank(), defaults_bank=self._defaults())
+        editor.enter()
+        editor.enter()
+        editor.next()
+        editor.edit("sapi")
+        editor.back()
+        editor.back()
+        editor.begin_reset(ResetScope.SECTION)
+        editor.confirm_reset()
+        edited.events.clear()
+        editor.undo()
+        self.assertEqual(len(edited.events), 0)
+
+    def test_redo_after_undo_of_reset_reapplies_default_bank(self) -> None:
+        editor = self._field_editor(Section.VOICES, 0, "rate")
+        editor.edit("1.9")
+        editor.back()
+        editor.back()
+        editor.begin_reset(ResetScope.BANK)
+        editor.confirm_reset()
+        editor.undo()
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.9)
+        self.assertTrue(editor.redo())
+        self.assertAlmostEqual(editor.bank.voices[0].rate, 1.0)
+
+    def test_default_reset_scope_follows_cursor_level(self) -> None:
+        editor = SettingsEditor(EventBus(), _bank(), defaults_bank=self._defaults())
+        self.assertEqual(editor.default_reset_scope(), ResetScope.SECTION)
+        editor.enter()
+        self.assertEqual(editor.default_reset_scope(), ResetScope.RECORD)
+        editor.enter()
+        self.assertEqual(editor.default_reset_scope(), ResetScope.FIELD)
+
+    def test_reset_opened_payload_for_field_includes_record_id_and_field(self) -> None:
+        bus = EventBus()
+        opened = _Recorder(bus, EventType.SETTINGS_RESET_OPENED)
+        editor = SettingsEditor(bus, _bank(), defaults_bank=self._defaults())
+        editor.enter()
+        editor.enter()
+        editor.next()  # engine
+        editor.begin_reset(ResetScope.FIELD)
+        payload = opened.events[-1].payload
+        self.assertEqual(payload["scope"], "field")
+        self.assertEqual(payload["record_id"], "v1")
+        self.assertEqual(payload["field"], "engine")
+        self.assertEqual(payload["target_count"], 1)
+
+    def test_reset_opened_payload_for_bank_includes_total_record_count(self) -> None:
+        bus = EventBus()
+        opened = _Recorder(bus, EventType.SETTINGS_RESET_OPENED)
+        editor = SettingsEditor(bus, _bank(), defaults_bank=self._defaults())
+        editor.begin_reset(ResetScope.BANK)
+        payload = opened.events[-1].payload
+        # 2 voices + 2 sounds + 1 binding = 5
+        self.assertEqual(payload["target_count"], 5)
 
 
 if __name__ == "__main__":

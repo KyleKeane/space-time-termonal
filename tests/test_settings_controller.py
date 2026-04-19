@@ -9,7 +9,7 @@ from pathlib import Path
 from asat.event_bus import EventBus
 from asat.events import EventType
 from asat.settings_controller import SettingsController, SettingsControllerError
-from asat.settings_editor import Level, SettingsEditorError
+from asat.settings_editor import Level, ResetScope, SettingsEditorError
 from asat.sound_bank import EventBinding, SoundBank, SoundRecipe, Voice
 
 
@@ -399,6 +399,187 @@ class SaveTests(unittest.TestCase):
         controller.open()
         with self.assertRaises(SettingsControllerError):
             controller.save()
+
+
+class ResetTests(unittest.TestCase):
+    """F21c: reset confirmation sub-mode wiring at the controller layer."""
+
+    def _defaults(self) -> SoundBank:
+        return SoundBank(
+            voices=(Voice(id="v1", rate=1.0), Voice(id="v2", rate=1.2)),
+            sounds=(SoundRecipe(id="s1", kind="tone", params={"frequency": 440.0}),),
+            bindings=(
+                EventBinding(
+                    id="b1",
+                    event_type="cell.created",
+                    voice_id="v1",
+                    say_template="hello",
+                ),
+            ),
+        )
+
+    def test_controller_without_defaults_refuses_begin_reset(self) -> None:
+        controller = SettingsController(EventBus(), _bank())
+        controller.open()
+        self.assertFalse(controller.begin_reset(ResetScope.BANK))
+        self.assertFalse(controller.resetting)
+
+    def test_begin_reset_defaults_to_cursor_level_scope(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        self.assertTrue(controller.begin_reset())  # scope=None → SECTION at top
+        self.assertEqual(controller.reset_scope, ResetScope.SECTION)
+
+    def test_begin_reset_without_open_session_returns_false(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        self.assertFalse(controller.begin_reset(ResetScope.BANK))
+
+    def test_begin_reset_while_searching_is_refused(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        controller.begin_search()
+        self.assertTrue(controller.searching)
+        self.assertFalse(controller.begin_reset(ResetScope.BANK))
+        self.assertFalse(controller.resetting)
+
+    def test_begin_reset_while_editing_cancels_edit(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        controller.descend()
+        controller.descend()
+        controller.next()  # engine field
+        controller.begin_edit()
+        controller.extend_edit("s")
+        self.assertTrue(controller.editing)
+        self.assertTrue(controller.begin_reset(ResetScope.FIELD))
+        self.assertFalse(controller.editing)
+        self.assertTrue(controller.resetting)
+
+    def test_confirm_reset_applies_change_and_closes(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        # Stage a difference at voices[0].engine so the reset has something to do.
+        controller.descend()
+        controller.descend()
+        controller.next()  # engine
+        controller.begin_edit()
+        for ch in "sapi":
+            controller.extend_edit(ch)
+        controller.commit_edit()
+        controller.ascend()  # RECORD
+        self.assertTrue(controller.begin_reset(ResetScope.RECORD))
+        self.assertTrue(controller.confirm_reset())
+        self.assertFalse(controller.resetting)
+        self.assertEqual(controller.bank.voices[0].engine, "")
+
+    def test_cancel_reset_leaves_bank_untouched(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        controller.descend()
+        controller.descend()
+        controller.next()
+        controller.begin_edit()
+        for ch in "sapi":
+            controller.extend_edit(ch)
+        controller.commit_edit()
+        controller.ascend()
+        self.assertTrue(controller.begin_reset(ResetScope.RECORD))
+        self.assertTrue(controller.cancel_reset())
+        self.assertFalse(controller.resetting)
+        self.assertEqual(controller.bank.voices[0].engine, "sapi")
+
+    def test_ascend_cancels_a_pending_reset_and_returns_true(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        controller.begin_reset(ResetScope.BANK)
+        self.assertTrue(controller.resetting)
+        still_open = controller.ascend()
+        self.assertTrue(still_open)
+        self.assertFalse(controller.resetting)
+
+    def test_undo_is_refused_while_reset_is_pending(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        # Stage an edit so undo would have something to revert otherwise.
+        controller.descend()
+        controller.descend()
+        controller.next()  # engine
+        controller.begin_edit()
+        for ch in "sapi":
+            controller.extend_edit(ch)
+        controller.commit_edit()
+        controller.ascend()
+        controller.ascend()
+        controller.begin_reset(ResetScope.SECTION)
+        self.assertFalse(controller.undo())
+        self.assertEqual(controller.bank.voices[0].engine, "sapi")
+
+    def test_begin_edit_refused_while_reset_is_pending(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        controller.descend()
+        controller.descend()
+        controller.next()
+        controller.begin_reset(ResetScope.FIELD)
+        with self.assertRaises(SettingsControllerError):
+            controller.begin_edit()
+
+    def test_begin_search_refused_while_reset_is_pending(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        controller.begin_reset(ResetScope.BANK)
+        self.assertFalse(controller.begin_search())
+        self.assertFalse(controller.searching)
+
+    def test_confirm_reset_without_pending_returns_false(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        self.assertFalse(controller.confirm_reset())
+
+    def test_cancel_reset_without_pending_returns_false(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        self.assertFalse(controller.cancel_reset())
+
+    def test_default_reset_scope_matches_editor_cursor(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        self.assertEqual(controller.default_reset_scope(), ResetScope.SECTION)
+        controller.descend()
+        self.assertEqual(controller.default_reset_scope(), ResetScope.RECORD)
+
+    def test_reset_scope_property_is_none_when_not_resetting(self) -> None:
+        controller = SettingsController(
+            EventBus(), _bank(), defaults_bank=self._defaults()
+        )
+        controller.open()
+        self.assertIsNone(controller.reset_scope)
 
 
 if __name__ == "__main__":

@@ -81,6 +81,8 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.SETTINGS_SEARCH_OPENED,
     EventType.SETTINGS_SEARCH_UPDATED,
     EventType.SETTINGS_SEARCH_CLOSED,
+    EventType.SETTINGS_RESET_OPENED,
+    EventType.SETTINGS_RESET_CLOSED,
     EventType.HELP_REQUESTED,
     EventType.PROMPT_REFRESH,
     EventType.FIRST_RUN_DETECTED,
@@ -540,6 +542,50 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             sound_id="soft_tick",
             say_template="search closed",
             priority=150,
+        ),
+
+        # F21c reset overlay — confirmation prompt narrates the scope
+        # and how many records would change, so the user can back out
+        # before they lose any in-progress tweaks. Closing narrates
+        # three distinct outcomes (applied, already-at-defaults, or
+        # cancelled) so the audible feedback matches what actually
+        # happened.
+        EventBinding(
+            id="settings_reset_opened",
+            event_type=EventType.SETTINGS_RESET_OPENED.value,
+            voice_id="alert",
+            sound_id="settings_chime",
+            say_template=(
+                "reset {scope}? press enter to confirm, escape to cancel"
+            ),
+            priority=230,
+        ),
+        EventBinding(
+            id="settings_reset_applied",
+            event_type=EventType.SETTINGS_RESET_CLOSED.value,
+            voice_id="system",
+            sound_id="settings_save",
+            say_template="reset {scope} to defaults",
+            predicate="outcome == applied",
+            priority=220,
+        ),
+        EventBinding(
+            id="settings_reset_already_default",
+            event_type=EventType.SETTINGS_RESET_CLOSED.value,
+            voice_id="system",
+            sound_id="soft_tick",
+            say_template="{scope} already at defaults",
+            predicate="outcome == already_default",
+            priority=215,
+        ),
+        EventBinding(
+            id="settings_reset_cancelled",
+            event_type=EventType.SETTINGS_RESET_CLOSED.value,
+            voice_id="system",
+            sound_id="soft_tick",
+            say_template="reset cancelled",
+            predicate="outcome == cancelled",
+            priority=210,
         ),
 
         # Help: speak a short summary so :help is useful without a

@@ -148,6 +148,7 @@ class Application:
             bus,
             resolved_bank,
             save_path=bank_path,
+            defaults_bank=default_sound_bank(),
         )
         if clipboard_factory is None:
             clipboard: Clipboard = MemoryClipboard()
