@@ -289,6 +289,7 @@ discarded and the cell is not modified.
 | `:workspace` | Re-announce the active project root and notebook count (no-op without a workspace). |
 | `:list-notebooks` | Narrate every notebook in the workspace by name. |
 | `:new-notebook <name>` | Create a fresh notebook on disk; restart ASAT with `asat <root> <name>` to open it. |
+| `:bindings`  | List every active keybinding grouped by mode (F64). Add a `<mode>` or `<key>` argument to filter (`:bindings notebook`, `:bindings up`, or both). |
 
 Meta-command names are **case-insensitive** — `:HELP`, `:Help`, and
 `:help` all do the same thing. A single trailing argument is
