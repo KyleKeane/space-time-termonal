@@ -184,6 +184,7 @@ class Application:
             output_cursor=output_cursor,
             settings_controller=settings_controller,
             action_menu=action_menu,
+            output_recorder=recorder,
         )
         resolved_sink: AudioSink = sink if sink is not None else MemorySink()
         sound_engine = SoundEngine(bus, resolved_bank, resolved_sink)

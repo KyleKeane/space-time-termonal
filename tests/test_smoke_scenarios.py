@@ -280,6 +280,30 @@ class Act5OutputModeTests(unittest.TestCase):
         texts = [e.payload["text"] for e in appended]
         self.assertEqual(texts, ["line a", "line b", "line c"])
 
+    def test_ctrl_o_attaches_buffer_and_up_navigates(self) -> None:
+        """End-to-end keyboard-only path into OUTPUT mode: Ctrl+O not
+        only flips focus mode but attaches the output cursor to the
+        focused cell's buffer, so Up/Down work immediately without
+        routing through the F2 action menu. This is the behaviour
+        SMOKE_TEST.md Act 5.2 promises."""
+        fx = _ScenarioFixture(stdout="line a\nline b\nline c\n", exit_code=0)
+        fx.type_text("produce lines")
+        fx.submit()
+        fx.press(kc.ESCAPE)
+        fx.press(kc.UP)  # back to the completed cell
+        fx.press(Key.combo("o", Modifier.CTRL))
+
+        # Attach should have fired an initial OUTPUT_LINE_FOCUSED
+        # landing on the last line.
+        focused = fx.types_of(EventType.OUTPUT_LINE_FOCUSED)
+        self.assertGreaterEqual(len(focused), 1)
+        self.assertEqual(focused[-1].payload["line_number"], 2)
+
+        before = len(focused)
+        fx.press(kc.UP)
+        after = len(fx.types_of(EventType.OUTPUT_LINE_FOCUSED))
+        self.assertGreater(after, before, "Up in OUTPUT did not focus a new line")
+
 
 # -------------------------------------------------------------------
 # Act 6 — Meta-commands and discoverability
