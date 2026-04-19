@@ -155,15 +155,19 @@ duplicate, and delete cells without leaving the keyboard.
 
 It is **not** Jupyter. Two limits to be aware of from day one:
 
-1. **Each cell runs in a fresh subprocess.** `export FOO=bar` in
-   cell 1 is gone by cell 2. `cd /tmp` does not change the cwd of
-   any later cell. There is no persistent Python REPL or shared
-   shell sitting behind the cells — every command you submit
-   launches its own `subprocess.Popen`, inherits the ASAT process's
-   environment, and exits. If you need shared state today, fold it
-   into a single cell (e.g. `cd src && python script.py`). A
-   persistent computational backend is tracked as
-   [F60](FEATURE_REQUESTS.md#f60--persistent-computational-backend-shared-shell--repl).
+1. **All cells share one shell.** On POSIX hosts ASAT launches a
+   single long-lived bash at session start and routes every cell's
+   command through it. So `cd /tmp` in cell 1 *does* change the cwd
+   of cell 2, `export FOO=bar` in cell 1 is visible in cell 2, and
+   shell options (`set -o pipefail`, `shopt -s nullglob`) carry
+   forward — exactly as they would at a real prompt. If you would
+   rather isolate each cell in its own one-shot subprocess, launch
+   with `--no-shared-shell`. A long-lived shell amplifies blast
+   radius (a stuck `read`, a `set -e` exit) — when bash is missing
+   or you opt out, ASAT silently falls back to per-cell subprocesses
+   and prints a one-line stderr note. Windows currently always uses
+   per-cell subprocesses; a Windows persistent backend is tracked
+   alongside [F60](FEATURE_REQUESTS.md#f60--persistent-computational-backend-shared-shell--repl).
 2. **Cells are not interactive terminals (no PTY).** A cell is a
    command string plus its captured output and exit code. Programs
    that take over the screen — `vim`, `less`, `top`, `python`

@@ -41,6 +41,7 @@ from asat.input_router import InputRouter, default_bindings
 from asat.jsonl_logger import JsonlEventLogger
 from asat.kernel import ExecutionKernel
 from asat.keys import Key
+from asat.runner import ProcessRunner
 from asat.notebook import FocusMode, NotebookCursor
 from asat.onboarding import OnboardingCoordinator
 from asat.output_buffer import OutputRecorder
@@ -68,6 +69,7 @@ class Application:
     session: Session
     cursor: NotebookCursor
     kernel: ExecutionKernel
+    runner: object  # ProcessRunner or ShellBackend; both expose `.run(...)`.
     router: InputRouter
     recorder: OutputRecorder
     output_cursor: OutputCursor
@@ -109,6 +111,7 @@ class Application:
         log_factory: Optional[
             "Callable[[EventBus], JsonlEventLogger]"
         ] = None,
+        runner: Optional[object] = None,
     ) -> "Application":
         """Wire every collaborator with sensible defaults.
 
@@ -147,6 +150,14 @@ class Application:
         startup event fires so the diagnostic log captures the full
         session including `SESSION_CREATED` and the initial
         `FOCUS_CHANGED`. Tests and default invocations leave it unset.
+
+        `runner` is the execution backend the kernel routes every cell
+        through. `None` (the default) builds a fresh `ProcessRunner` —
+        the per-cell `subprocess.Popen` model. Pass a `ShellBackend`
+        instance to give the whole session one long-lived shell so
+        `cd`, `export`, function definitions, and shell options carry
+        between cells (F60). The Application owns the lifecycle either
+        way and calls `runner.close()` (when present) from `close()`.
         """
         bus = EventBus()
         # Attach the diagnostic logger FIRST so SESSION_CREATED and the
@@ -155,7 +166,8 @@ class Application:
         seeded = session is None
         resolved_session = session if session is not None else Session.new()
         cursor = NotebookCursor(resolved_session, bus)
-        kernel = ExecutionKernel(bus)
+        resolved_runner = runner if runner is not None else ProcessRunner()
+        kernel = ExecutionKernel(bus, runner=resolved_runner)
         recorder = OutputRecorder(bus)
         output_cursor = OutputCursor(bus)
         resolved_bank = bank if bank is not None else default_sound_bank()
@@ -210,6 +222,7 @@ class Application:
             session=resolved_session,
             cursor=cursor,
             kernel=kernel,
+            runner=resolved_runner,
             router=router,
             recorder=recorder,
             output_cursor=output_cursor,
@@ -284,6 +297,11 @@ class Application:
                 source="app",
             )
         self.sink.close()
+        # `ShellBackend` owns a long-lived process; `ProcessRunner` has
+        # nothing to clean up and so doesn't define `close`.
+        runner_close = getattr(self.runner, "close", None)
+        if callable(runner_close):
+            runner_close()
         if self.event_logger is not None:
             self.event_logger.close()
 

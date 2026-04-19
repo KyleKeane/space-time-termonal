@@ -40,7 +40,9 @@ from asat.audio_sink import (
 from asat.jsonl_logger import JsonlEventLogger
 from asat.keyboard import KeyboardNotAvailable, KeyboardReader, pick_default
 from asat.onboarding import OnboardingCoordinator
+from asat.runner import ProcessRunner
 from asat.session import Session
+from asat.shell_backend import shell_backend_or_none
 from asat.sound_bank import SoundBank
 
 
@@ -86,6 +88,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         quiet=args.quiet, check=args.check, has_live_audio=has_live_audio
     )
     log_factory = _log_factory(args.log)
+    runner = _pick_runner(no_shared_shell=args.no_shared_shell, quiet=args.quiet)
     app = Application.build(
         sink=sink,
         bank=bank,
@@ -96,6 +99,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         clipboard_factory=SystemClipboard,
         onboarding_factory=onboarding_factory,
         log_factory=log_factory,
+        runner=runner,
     )
     if args.check:
         _print_check_report(app, args)
@@ -126,6 +130,7 @@ def _print_check_report(app: Application, args: argparse.Namespace) -> None:
         f"platform       {sys.platform}",
         f"stdin tty      {sys.stdin.isatty()}",
         f"sink           {type(app.sink).__name__}",
+        f"runner         {type(app.runner).__name__}",
         f"bank path      {args.bank if args.bank is not None else '(built-in default)'}",
         f"session path   {args.session if args.session is not None else '(fresh)'}",
         f"session id     {app.session.session_id}",
@@ -215,6 +220,16 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
             "and a maintainer can replay it locally."
         ),
     )
+    parser.add_argument(
+        "--no-shared-shell",
+        action="store_true",
+        help=(
+            "Disable the persistent shell backend (F60). Each cell "
+            "spawns its own one-shot subprocess as in pre-0.8 ASAT. "
+            "Use this when state-leakage between cells is undesirable, "
+            "or when bash is missing and the fallback would be silent."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -296,6 +311,30 @@ def _log_factory(path: Optional[Path]):
         return JsonlEventLogger(bus, path)
 
     return _factory
+
+
+def _pick_runner(*, no_shared_shell: bool, quiet: bool):
+    """Return the execution runner the kernel should use.
+
+    Defaults to a `ShellBackend` (F60) so cells share state. Falls back
+    to `ProcessRunner` (the per-cell-Popen model) when bash is missing,
+    on Windows, or when `--no-shared-shell` was requested. A one-line
+    stderr note explains the fallback so the user is never surprised
+    by silently per-cell behaviour.
+    """
+    if no_shared_shell:
+        return ProcessRunner()
+    backend = shell_backend_or_none()
+    if backend is not None:
+        return backend
+    if not quiet:
+        print(
+            "[asat] persistent shell backend unavailable on this host; "
+            "falling back to per-cell subprocesses. State will not "
+            "carry between cells. Pass --no-shared-shell to silence.",
+            file=sys.stderr,
+        )
+    return ProcessRunner()
 
 
 def _load_session(path: Optional[Path]) -> Optional[Session]:

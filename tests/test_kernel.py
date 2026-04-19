@@ -15,8 +15,14 @@ from asat.cell import Cell, CellStatus
 from asat.event_bus import EventBus
 from asat.events import Event, EventType
 from asat.execution import ExecutionMode, ExecutionRequest, ExecutionResult
-from asat.kernel import EXIT_CODE_NOT_FOUND, EXIT_CODE_PARSE_ERROR, ExecutionKernel
+from asat.kernel import (
+    EXIT_CODE_BACKEND_ERROR,
+    EXIT_CODE_NOT_FOUND,
+    EXIT_CODE_PARSE_ERROR,
+    ExecutionKernel,
+)
 from asat.runner import ProcessRunner
+from asat.shell_backend import ShellBackendError
 
 
 class StubRunner:
@@ -178,6 +184,23 @@ class KernelFailureTests(unittest.TestCase):
         kernel = ExecutionKernel(bus, runner=runner)
         kernel.execute(Cell.new("nope"))
         self.assertNotIn(EventType.ERROR_CHUNK, recorder.types())
+
+    def test_shell_backend_crash_surfaces_as_command_failed(self) -> None:
+        # When the persistent shell backend (F60) raises mid-command,
+        # the kernel must convert it into the same launch-failure
+        # path FileNotFoundError uses so the audio cue + stderr-tail
+        # pipeline narrates it. The exit code is the dedicated 125
+        # so callers can distinguish it from user-command failures.
+        bus = EventBus()
+        recorder = _Recorder(bus)
+        runner = StubRunner(raises=ShellBackendError("shell exited mid-command"))
+        kernel = ExecutionKernel(bus, runner=runner)
+        result = kernel.execute(Cell.new("ls"))
+        self.assertEqual(result.exit_code, EXIT_CODE_BACKEND_ERROR)
+        failed = [e for e in recorder.events if e.event_type == EventType.COMMAND_FAILED]
+        self.assertEqual(len(failed), 1)
+        self.assertEqual(failed[0].payload["error_type"], "ShellBackendError")
+        self.assertIn(EventType.ERROR_CHUNK, recorder.types())
 
     def test_parse_error_fails_gracefully(self) -> None:
         bus = EventBus()

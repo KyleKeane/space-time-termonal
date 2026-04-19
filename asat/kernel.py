@@ -32,10 +32,16 @@ from asat.event_bus import EventBus, publish_event
 from asat.events import EventType
 from asat.execution import ExecutionMode, ExecutionRequest, ExecutionResult
 from asat.runner import ProcessRunner
+from asat.shell_backend import ShellBackendError
 
 
 EXIT_CODE_NOT_FOUND = 127
 EXIT_CODE_PARSE_ERROR = 2
+# Bash convention: 125 is the "command itself failed to launch" rung
+# below "127 not found" and "126 not executable". We reuse it for the
+# persistent shell crashing mid-command — distinct from any exit code
+# the user's command could plausibly emit.
+EXIT_CODE_BACKEND_ERROR = 125
 
 
 class ExecutionKernel:
@@ -98,6 +104,13 @@ class ExecutionKernel:
             return self._fail_before_launch(cell, exc, EXIT_CODE_NOT_FOUND)
         except ValueError as exc:
             return self._fail_before_launch(cell, exc, EXIT_CODE_PARSE_ERROR)
+        except ShellBackendError as exc:
+            # The persistent shell crashed mid-command (or was already
+            # dead). Surface as a launch-time failure so the user gets
+            # the same audio cue and stderr-tail narration they'd get
+            # for any other failed command. Restart of the backend is
+            # the caller's job; the kernel just records what happened.
+            return self._fail_before_launch(cell, exc, EXIT_CODE_BACKEND_ERROR)
 
         cell.mark_completed(
             stdout=result.stdout,

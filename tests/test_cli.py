@@ -100,7 +100,20 @@ class CheckFlagTests(_AsatHomeIsolated):
         self.assertIn("asat", report)
         self.assertIn("platform", report)
         self.assertIn("sink", report)
+        self.assertIn("runner", report)
         self.assertIn("bindings", report)
+
+    def test_no_shared_shell_falls_back_to_process_runner(self) -> None:
+        # `--no-shared-shell` opts out of the F60 persistent backend
+        # so each cell runs in its own one-shot subprocess. The runner
+        # line in `--check` is the user-visible signal that the flag
+        # took effect.
+        out = io.StringIO()
+        with mock.patch("asat.__main__.pick_default", side_effect=AssertionError), \
+             mock.patch("sys.stdout", out):
+            rc = cli.main(["--check", "--no-shared-shell"])
+        self.assertEqual(rc, 0)
+        self.assertIn("runner         ProcessRunner", out.getvalue())
 
 
 class NonTTYTests(_AsatHomeIsolated):
