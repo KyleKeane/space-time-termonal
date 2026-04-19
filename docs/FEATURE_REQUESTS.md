@@ -1600,6 +1600,13 @@ silently regress discoverability.
 
 ## F49 — Code-quality hygiene backlog
 
+**Status: Shipped.** Every bullet below landed in its own PR
+(#76 None-guard decorator, #77 search sentinel, #78 _action_handler
+split, #79 FIELD_PARSERS, #80 _META_HANDLERS, #81 state-machine
+doc links). The `ComposerMode(str, Enum)` bullet had already
+shipped against `asat/output_cursor.py` before this entry was
+formalised.
+
 **Gap.** A handful of small refactor and regression-guard items
 surfaced during the repo audit. None is blocking; each is short
 enough to serve as a palate cleanser between larger features.
