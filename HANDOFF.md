@@ -24,7 +24,10 @@ The roadmap — open work and shipped history — lives in
 [`docs/FEATURE_REQUESTS.md`](docs/FEATURE_REQUESTS.md). The
 architecture tour lives in
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md). The user contract
-lives in [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md).
+lives in [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md), with a
+single-page reference at
+[`docs/CHEAT_SHEET.md`](docs/CHEAT_SHEET.md) (every binding,
+meta-command, and cue that ships today).
 
 ## Test command
 
