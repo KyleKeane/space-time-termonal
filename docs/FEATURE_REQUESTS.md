@@ -1510,6 +1510,64 @@ table.
 
 ---
 
+## F49 — Code-quality hygiene backlog
+
+**Gap.** A handful of small refactor and regression-guard items
+surfaced during the repo audit. None is blocking; each is short
+enough to serve as a palate cleanser between larger features.
+Kept grouped under one entry so the top of the backlog stays
+focused on user-visible features, not code churn.
+
+**Where it surfaces.** Mostly readability and future-author
+confusion. Each bullet names the exact file and the concrete
+smell so an implementer can land a tiny, reviewable PR without
+re-discovering the problem.
+
+**Sketch.** Each bullet below is a self-contained standalone PR.
+Pick any one when you want a short refactor loop.
+
+- **Factor repeated `None` guards.** `asat/input_router.py` has
+  9 sites of `if self._settings_controller is None: return` and
+  3 matching sites in `asat/output_cursor.py` for
+  `self._output_cursor`. Extract a small decorator or helper
+  method (`_require_controller`). Tiny; clarifies every affected
+  method.
+- **Split `InputRouter._action_handler` dispatch.** Today it is
+  one 84-line inline dict. Split into per-subsystem dicts
+  (`_settings_handlers()`, `_output_handlers()`,
+  `_menu_handlers()`) and merge at init. No behaviour change;
+  one-screen-per-subsystem reading order.
+- **Table-drive `SettingsEditor._parse_field_value()`.** Replace
+  the per-section if/elif ladders with a `FIELD_PARSERS` dict
+  keyed by `(section, field_name)`. Adding a new field type
+  becomes one dict entry instead of a new branch.
+- **Table-drive `InputRouter._handle_meta_command()`.** Replace
+  the if/elif chain with `_META_HANDLERS: dict[str, Callable]`.
+  Already partially shaped that way since F17; finish the job.
+- **Name the composer modes.** Replace the `"search"` / `"goto"`
+  magic strings in `asat/output_cursor.py` with a
+  `ComposerMode(str, Enum)`. Catches typos at definition time.
+- **Doc-link comments on state-machine transitions.** One-line
+  pointers above each `focus_mode`/sub-mode transition in
+  `asat/settings_editor.py` and `asat/output_cursor.py` linking
+  to the relevant section of
+  [`ARCHITECTURE.md`](ARCHITECTURE.md) or
+  [`USER_MANUAL.md`](USER_MANUAL.md). Helps a future reader
+  orient in under a minute.
+- **Regression-guard the `-1` search sentinel.** In
+  `SettingsEditor._recompute_matches(jump_to_first=False)` the
+  `_search_position = -1` sentinel can persist and make
+  `prev_search_match()` wrap to the last match unexpectedly.
+  Tiny fix; add a regression test that names F49 in the failure
+  message so future regressions are self-describing.
+
+**Documentation touch points.** Each bullet updates at most one
+docstring in the touched module; no user-manual changes; the
+`HANDOFF.md` test count moves forward by whatever new regression
+tests the bullet adds.
+
+---
+
 ## How to add an entry
 
 Append a section using the template:

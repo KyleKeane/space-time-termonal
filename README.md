@@ -76,6 +76,9 @@ Full keystroke cheat sheet: [docs/USER_MANUAL.md](docs/USER_MANUAL.md).
 
 ## Documentation map
 
+* [docs/DEVELOPER_GUIDE.md](docs/DEVELOPER_GUIDE.md) — guiding
+  principles, simplicity checklist, and the PR recipe every
+  contribution follows. Read this before your first PR.
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — layered module map,
   focus model, execution path. Read this first.
 * [docs/USER_MANUAL.md](docs/USER_MANUAL.md) — keystroke cheat sheet,
