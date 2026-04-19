@@ -115,6 +115,7 @@ def default_bindings() -> BindingMap:
         Escape ascends or (at the top level) closes.
     """
     menu_open = Key.combo(".", Modifier.CTRL)
+    repeat_narration = Key.combo("r", Modifier.CTRL)
     return {
         FocusMode.NOTEBOOK: {
             kc.UP: "move_up",
@@ -131,6 +132,7 @@ def default_bindings() -> BindingMap:
             Key.special("down", Modifier.ALT): "move_cell_down",
             kc.F2: "open_action_menu",
             menu_open: "open_action_menu",
+            repeat_narration: "repeat_last_narration",
         },
         FocusMode.INPUT: {
             kc.BACKSPACE: "backspace",
@@ -148,6 +150,7 @@ def default_bindings() -> BindingMap:
             kc.ESCAPE: "exit_input",
             kc.F2: "open_action_menu",
             menu_open: "open_action_menu",
+            repeat_narration: "repeat_last_narration",
         },
         FocusMode.OUTPUT: {
             kc.UP: "output_line_up",
@@ -199,6 +202,7 @@ META_COMMANDS: tuple[str, ...] = (
     "commands",
     "reset",
     "welcome",
+    "repeat",
 )
 
 # "Ambient" meta-commands do their job without taking focus away from
@@ -209,7 +213,7 @@ META_COMMANDS: tuple[str, ...] = (
 # mode. Commands NOT in this set (today: `:settings`, `:quit`)
 # inherently require a mode change and go through `abandon_input_mode`.
 AMBIENT_META_COMMANDS: frozenset[str] = frozenset(
-    {"help", "save", "pwd", "commands", "welcome"}
+    {"help", "save", "pwd", "commands", "welcome", "repeat"}
 )
 
 # `:name optional-argument` — case-insensitive in the name, everything
@@ -234,9 +238,10 @@ HELP_LINES: tuple[str, ...] = (
     "           Ctrl+Z undo, Ctrl+Y redo edits in the order you made them.",
     "           Ctrl+R resets to defaults at cursor scope (Enter confirms, Escape cancels).",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
-    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :commands, :reset, :welcome.",
+    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :commands, :reset, :welcome, :repeat.",
     "           `:help topics` lists focused tours; `:help <topic>` narrates one (navigation, cells, settings, audio, search, meta).",
-    "           `:welcome` replays the first-run tour. Meta-commands are case-insensitive and accept a trailing argument.",
+    "           `:welcome` replays the first-run tour; `:repeat` (or Ctrl+R in notebook/input) re-speaks the last narration.",
+    "           Meta-commands are case-insensitive and accept a trailing argument.",
     "Exit:      :quit, or EOF (Ctrl+D on POSIX, Ctrl+Z Enter on Windows).",
     "Docs:      docs/USER_MANUAL.md for the full keystroke reference.",
 )
@@ -546,6 +551,9 @@ class InputRouter:
             self._publish_commands()
         elif command == "reset":
             self._handle_meta_reset(argument)
+        # `repeat`, `save`, `quit`, `welcome` are handled by the
+        # Application via the ACTION_INVOKED payload's `meta_command`
+        # key — no router-side dispatch needed here.
 
     def _handle_meta_reset(self, argument: str) -> None:
         """Open settings mode and begin a reset confirmation.
@@ -975,6 +983,7 @@ class InputRouter:
             "output_composer_backspace": self._output_composer_backspace,
             "output_composer_commit": self._output_composer_commit,
             "output_composer_cancel": self._output_composer_cancel,
+            "repeat_last_narration": lambda: None,
         }
         if action not in handlers:
             raise KeyError(f"Unknown action: {action}")

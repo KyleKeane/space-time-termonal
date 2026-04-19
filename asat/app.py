@@ -34,9 +34,11 @@ from asat.actions import (
 from asat.audio_sink import AudioSink, MemorySink
 from asat.default_bank import default_sound_bank
 from asat.error_tail import StderrTailAnnouncer
+from asat.completion_alert import CompletionFocusWatcher
 from asat.event_bus import EventBus, publish_event
 from asat.events import Event, EventType
 from asat.input_router import InputRouter, default_bindings
+from asat.jsonl_logger import JsonlEventLogger
 from asat.kernel import ExecutionKernel
 from asat.keys import Key
 from asat.notebook import FocusMode, NotebookCursor
@@ -77,7 +79,9 @@ class Application:
     action_menu: ActionMenu
     prompt_context: PromptContext
     error_tail: StderrTailAnnouncer
+    completion_watcher: CompletionFocusWatcher
     onboarding: Optional[OnboardingCoordinator] = None
+    event_logger: Optional[JsonlEventLogger] = None
     session_path: Optional[Path] = None
     running: bool = True
 
@@ -101,6 +105,9 @@ class Application:
         ] = None,
         onboarding_factory: Optional[
             "Callable[[EventBus], OnboardingCoordinator]"
+        ] = None,
+        log_factory: Optional[
+            "Callable[[EventBus], JsonlEventLogger]"
         ] = None,
     ) -> "Application":
         """Wire every collaborator with sensible defaults.
@@ -135,8 +142,16 @@ class Application:
         lands after the newcomer knows the session is alive. Tests
         and `--quiet` mode leave this unset, which skips onboarding
         entirely.
+
+        `log_factory` attaches a `JsonlEventLogger` (F22) before any
+        startup event fires so the diagnostic log captures the full
+        session including `SESSION_CREATED` and the initial
+        `FOCUS_CHANGED`. Tests and default invocations leave it unset.
         """
         bus = EventBus()
+        # Attach the diagnostic logger FIRST so SESSION_CREATED and the
+        # very first FOCUS_CHANGED land in the jsonl file.
+        event_logger = log_factory(bus) if log_factory is not None else None
         seeded = session is None
         resolved_session = session if session is not None else Session.new()
         cursor = NotebookCursor(resolved_session, bus)
@@ -182,6 +197,10 @@ class Application:
         # failure chord + narration play first; the stderr-tail
         # announcement arrives a beat later.
         error_tail = StderrTailAnnouncer(bus, recorder)
+        # completion_watcher subscribes to FOCUS_CHANGED before the
+        # first focus event fires (via cursor.new_cell below) so the
+        # shadow focus is never empty when a command completes (F34).
+        completion_watcher = CompletionFocusWatcher(bus)
         if text_trace is not None:
             TerminalRenderer(bus, stream=text_trace)
         onboarding = onboarding_factory(bus) if onboarding_factory is not None else None
@@ -201,7 +220,9 @@ class Application:
             action_menu=action_menu,
             prompt_context=prompt_context,
             error_tail=error_tail,
+            completion_watcher=completion_watcher,
             onboarding=onboarding,
+            event_logger=event_logger,
             session_path=Path(session_path) if session_path is not None else None,
         )
         # Everything below fires AFTER sound_engine and (if requested)
@@ -262,11 +283,16 @@ class Application:
                 source="app",
             )
         self.sink.close()
+        if self.event_logger is not None:
+            self.event_logger.close()
 
     def _on_action_invoked(self, event: Event) -> None:
         """Capture cell submissions and meta-commands for the driver."""
         payload = event.payload
         action = payload.get("action")
+        if action == "repeat_last_narration":
+            self.sound_engine.replay_last_narration()
+            return
         if action == "submit":
             cell_id = payload.get("cell_id")
             command = payload.get("command", "")
@@ -280,6 +306,8 @@ class Application:
                 self._save_session()
             elif meta == "welcome":
                 self._replay_welcome()
+            elif meta == "repeat":
+                self.sound_engine.replay_last_narration()
 
     def _replay_welcome(self) -> None:
         """Re-invoke the onboarding tour on `:welcome` (F44).

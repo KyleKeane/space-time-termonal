@@ -32,29 +32,26 @@ lives in [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md).
 python -m unittest discover -s tests -t .
 ```
 
-Currently **786 passing**.
+Currently **816 passing**.
 
 ## Suggested next PR
 
-**F22** — `--log path.jsonl` diagnostic file. A single
-`JsonlEventLogger` subscriber that writes every `Event` it sees to a
-newline-delimited JSON file (one event per line), wired up through a
-new `--log PATH` CLI flag. The file rotates on every session so a
-long-running ASAT does not grow an unbounded log. Tests: fixture that
-pipes a scripted sequence of events through the logger and asserts
-the file round-trips. Doc: a short "Replaying a log" entry in the
-user manual plus a payload reference in `EVENTS.md`. Unlocks remote
-debugging of audio issues — the user can attach a log to an issue and
-a maintainer can replay it locally into a test harness.
+**F4** — command history. A ring buffer keyed on the session that
+remembers every submitted command; Up/Down in INPUT mode walks
+backwards and forwards through it; the narrator reads the surfaced
+command so the user can pick and edit. Pairs naturally with F23 (tab
+completion) but stands alone as the single biggest absence for a
+shell-native user. Tests: router cases for Up/Down history
+traversal, a persistence case for the `Session`-attached buffer, and
+a sound-engine case for the scroll cue.
 
-Lighter alternatives if F22 feels heavy: **F4** command history
-(ring buffer + Up/Down in INPUT mode); **F23** Tab completion of
-executables + paths; **F34** completion alert when focus has moved;
-**F3** bank reload (a `:reload-bank` meta-command plus a file-mtime
-watcher so hand-edits to the saved JSON reload live without
-quitting); **F39a** read-only event log viewer (first slice of the
-trigger → jump → edit loop described in F39); **F41** first-run
-silent-sink guard (small CLI UX polish); **F48** discoverability
+Lighter alternatives if F4 feels heavy: **F23** Tab completion of
+executables + paths; **F3** bank reload (a `:reload-bank` meta-command
+plus a file-mtime watcher so hand-edits to the saved JSON reload live
+without quitting); **F30b** Ctrl+Shift+R history overlay (F30a shipped
+the single-entry replay; the browse mode is the unfinished half);
+**F39a** read-only event log viewer (first slice of the
+trigger → jump → edit loop described in F39); **F48** discoverability
 (`:reset` row + SETTINGS HELP_LINES). Hygiene palate cleanser: **F49**
 pick any one bullet.
 

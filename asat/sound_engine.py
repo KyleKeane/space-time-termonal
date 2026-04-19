@@ -32,8 +32,9 @@ about key absence (the speech will simply drop the missing fragment).
 from __future__ import annotations
 
 import ast
+from collections import deque
 from dataclasses import replace
-from typing import Any, Optional, Protocol
+from typing import Any, Deque, NamedTuple, Optional, Protocol
 
 from asat.audio import (
     DEFAULT_SAMPLE_RATE,
@@ -52,6 +53,23 @@ from asat.tts import TTSEngine, ToneTTSEngine
 
 
 SOURCE_NAME = "sound_engine"
+
+NARRATION_HISTORY_CAPACITY = 20
+
+
+class NarrationHistoryEntry(NamedTuple):
+    """One line of spoken narration, preserved for `repeat_last_narration`.
+
+    `voice_id` plus `text` are the minimum to re-synthesise through the
+    same TTS path; `event_type` and `binding_id` are carried for
+    observers (the F39 event log viewer, future overlays) and for the
+    NARRATION_REPLAYED payload.
+    """
+
+    voice_id: str
+    text: str
+    event_type: str
+    binding_id: str
 
 
 class PredicateEvaluator(Protocol):
@@ -106,6 +124,7 @@ class SoundEngine:
         generators: Optional[SoundGeneratorRegistry] = None,
         predicate: Optional[PredicateEvaluator] = None,
         sample_rate: int = DEFAULT_SAMPLE_RATE,
+        history_capacity: int = NARRATION_HISTORY_CAPACITY,
     ) -> None:
         """Wire the engine to the bus and load the initial bank."""
         self._bus = bus
@@ -115,6 +134,9 @@ class SoundEngine:
         self._generators = generators or SoundGeneratorRegistry.default()
         self._predicate = predicate or DefaultPredicateEvaluator()
         self._sample_rate = sample_rate
+        self._history: Deque[NarrationHistoryEntry] = deque(
+            maxlen=history_capacity
+        )
         self._bank: SoundBank = SoundBank()
         self._subscribed_types: set[EventType] = set()
         self.set_bank(bank)
@@ -123,6 +145,41 @@ class SoundEngine:
     def bank(self) -> SoundBank:
         """Return the currently loaded SoundBank."""
         return self._bank
+
+    @property
+    def narration_history(self) -> tuple[NarrationHistoryEntry, ...]:
+        """Return the ring buffer of recently-spoken phrases (oldest first)."""
+        return tuple(self._history)
+
+    def replay_last_narration(self) -> Optional[NarrationHistoryEntry]:
+        """Re-speak the most recent narration through the same voice.
+
+        Returns the replayed entry, or ``None`` when no narration has
+        been spoken yet (nothing to repeat). Re-rendering bypasses the
+        bank so the replay does not recursively add itself to history,
+        and publishes ``NARRATION_REPLAYED`` so observers (renderer,
+        tests, future audio history overlay) can trace the action.
+        """
+        if not self._history:
+            return None
+        entry = self._history[-1]
+        voice = self._bank.voice_for(entry.voice_id)
+        if voice is None:
+            return None
+        buffer = self._synthesise_speech(voice, entry.text)
+        self._sink.play(buffer)
+        publish_event(
+            self._bus,
+            EventType.NARRATION_REPLAYED,
+            {
+                "event_type": entry.event_type,
+                "binding_id": entry.binding_id,
+                "text": entry.text,
+                "voice_id": entry.voice_id,
+            },
+            source=SOURCE_NAME,
+        )
+        return entry
 
     def set_bank(self, bank: SoundBank) -> None:
         """Replace the active bank and re-subscribe to the bus.
@@ -187,6 +244,15 @@ class SoundEngine:
         if mixed is None:
             return
         self._sink.play(mixed)
+        if speech_buffer is not None and text and binding.voice_id:
+            self._history.append(
+                NarrationHistoryEntry(
+                    voice_id=binding.voice_id,
+                    text=text,
+                    event_type=event.event_type.value,
+                    binding_id=binding.id,
+                )
+            )
         publish_event(
             self._bus,
             EventType.AUDIO_SPOKEN,

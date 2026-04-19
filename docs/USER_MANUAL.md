@@ -22,6 +22,7 @@ python -m asat --wav-dir /tmp/asat  # also write every rendered buffer to WAV
 python -m asat --quiet              # suppress the text trace, audio only
 python -m asat --bank mybank.json   # start from a saved SoundBank
 python -m asat --session s.json     # resume an existing session; saved on exit
+python -m asat --log events.jsonl   # write one JSON line per event to disk
 python -m asat --check              # build, print a diagnostic summary, exit
 python -m asat --version            # print the version string and exit
 ```
@@ -42,6 +43,11 @@ Every flag is optional and they compose. The common launch recipes:
   narration; if it does not exist a fresh session starts and the file
   is created on exit. Either way the same path is rewritten on exit
   with whatever cells you ran. `:save` (INPUT mode) persists mid-run.
+- **Record a diagnostic log:** `python -m asat --log /tmp/events.jsonl`.
+  Every bus event lands as a single JSON line (`event_type`, `payload`,
+  `source`, `timestamp`), starting with `session.created`. The file is
+  truncated on each launch so logs never grow unboundedly. Useful for
+  post-mortems, bug reports, or feeding events to an external replayer.
 - **Sanity-check your install:** `python -m asat --check`. Builds the
   Application, prints the picked sink, bank, session, and TTY state,
   and exits without starting the read loop. Useful when you launched
@@ -172,6 +178,7 @@ NOTEBOOK, SETTINGS → close), and the narrator confirms the new mode.
 | Enter      | Enter INPUT mode on the focused cell.             |
 | Ctrl+N     | Create a new empty cell below.                    |
 | Ctrl+O     | Enter OUTPUT mode on the focused cell's output.   |
+| Ctrl+R     | Repeat the most recent narration.                 |
 | Ctrl+,     | Open the settings editor.                         |
 | `d`        | Delete the focused cell.                          |
 | `y`        | Duplicate the focused cell (inserts a copy below).|
@@ -200,6 +207,7 @@ or when you press Enter from NOTEBOOK mode.
 | Ctrl+W    | Delete the word immediately before the caret.     |
 | Ctrl+U    | Delete from the start of the line up to the caret. |
 | Ctrl+K    | Delete from the caret to the end of the line.    |
+| Ctrl+R    | Repeat the most recent narration.                 |
 | Enter     | Submits the command to the execution kernel.      |
 | Escape    | Commits the buffer into the cell and returns to NOTEBOOK (does not run). |
 
@@ -215,6 +223,7 @@ discarded and the cell is not modified.
 | `:help topics` | List every focused `:help <topic>` micro-tour.     |
 | `:help <topic>` | Narrate one tour: `navigation`, `cells`, `settings`, `audio`, `search`, `meta`. |
 | `:welcome`   | Replay the first-run welcome tour (F44).             |
+| `:repeat`    | Re-hear the most recent narration (same as Ctrl+R).  |
 | `:settings`  | Open the settings editor (same as Ctrl+,).           |
 | `:save`      | Save the current session to `--session` path (no-op without one). |
 | `:quit`      | Exit ASAT.                                           |
