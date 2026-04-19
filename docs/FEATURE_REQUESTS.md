@@ -459,6 +459,8 @@ deterministic.
 
 ## F20 — First-run onboarding
 
+**Status.** Done.
+
 **Gap.** The very first launch of ASAT on a fresh machine is
 indistinguishable from the 100th. The session banner is identical;
 nothing walks a newcomer through `--live` vs `--wav-dir` vs
@@ -473,6 +475,25 @@ hears a chime, sees `[input #…]`, and stalls. The existing
 tour: "Welcome. Press colon, h, e, l, p, Enter for the keystroke
 cheat sheet. Press Escape any time to return to notebook mode."
 Skip on subsequent launches and on any run with `--quiet`.
+
+**Sketch (shipped).** A new `FIRST_RUN_DETECTED` event carries
+the welcome `lines` and the resolved `sentinel_path`. `OnboardingCoordinator`
+(`asat/onboarding.py`) owns the sentinel — by default
+`~/.asat/first-run-done`. Its `.run()` method is idempotent: when
+the sentinel is missing it publishes the event, creates any
+missing parent directories, and writes the sentinel; when the
+sentinel already exists it returns `False` without touching the
+bus. `Application.build` takes an optional `onboarding_factory`
+kwarg and invokes `.run()` *after* `SESSION_CREATED` publishes, so
+the greeting lands just after the newcomer knows the session is
+alive. The CLI (`python -m asat`) wires the factory automatically,
+and gates it on `--quiet` / `--check`. The default SoundBank binds
+the event to the narrator voice with a high priority and a short
+spoken greeting (the TerminalRenderer prints the full spelled-out
+tour). The spelled form (`"h, e, l, p"`) makes TTS pronounce each
+character so the user learns the keystroke cadence, not just the
+word. A tiny `.reset()` method deletes the sentinel for tests or
+re-onboarding scenarios.
 
 ---
 

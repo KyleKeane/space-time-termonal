@@ -57,6 +57,7 @@ class TerminalRenderer:
         bus.subscribe(EventType.COMMAND_COMPLETED, self._on_command_completed)
         bus.subscribe(EventType.COMMAND_FAILED, self._on_command_failed)
         bus.subscribe(EventType.PROMPT_REFRESH, self._on_prompt_refresh)
+        bus.subscribe(EventType.FIRST_RUN_DETECTED, self._on_first_run)
 
     def _write_line(self, text: str) -> None:
         """Print a full line, ending any in-flight keystroke echo first."""
@@ -140,3 +141,8 @@ class TerminalRenderer:
         exit_code = payload.get("last_exit_code", "?")
         cwd = payload.get("cwd", "?")
         self._write_line(f"[prompt exit={exit_code} cwd={cwd}]")
+
+    def _on_first_run(self, event: Event) -> None:
+        lines = event.payload.get("lines", [])
+        for line in lines:
+            self._write_line(str(line))

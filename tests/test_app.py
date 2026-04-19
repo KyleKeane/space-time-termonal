@@ -96,6 +96,39 @@ class ApplicationBuildTests(unittest.TestCase):
         self.assertIs(seen_bus[0], app.bus)
         self.assertIsInstance(app.clipboard, _StubClipboard)
 
+    def test_default_onboarding_is_none(self) -> None:
+        app = Application.build()
+        self.assertIsNone(app.onboarding)
+
+    def test_onboarding_factory_runs_after_session_created(self) -> None:
+        """F20: when a coordinator is installed, `.run()` must fire
+        during `Application.build` so the welcome event reaches any
+        subscribed renderers before the user sees the first prompt."""
+        import tempfile
+        from pathlib import Path
+
+        from asat.event_bus import EventBus
+        from asat.onboarding import OnboardingCoordinator
+
+        with tempfile.TemporaryDirectory() as td:
+            sentinel = Path(td) / "first-run-done"
+            seen: list[EventType] = []
+
+            def _factory(bus: EventBus) -> OnboardingCoordinator:
+                bus.subscribe("*", lambda e: seen.append(e.event_type))
+                return OnboardingCoordinator(bus, sentinel)
+
+            app = Application.build(onboarding_factory=_factory)
+
+            self.assertIsInstance(app.onboarding, OnboardingCoordinator)
+            self.assertIn(EventType.FIRST_RUN_DETECTED, seen)
+            # FIRST_RUN_DETECTED must follow SESSION_CREATED so the user
+            # hears the greeting after the session announces itself.
+            session_idx = seen.index(EventType.SESSION_CREATED)
+            welcome_idx = seen.index(EventType.FIRST_RUN_DETECTED)
+            self.assertLess(session_idx, welcome_idx)
+            self.assertTrue(sentinel.exists())
+
 
 class ApplicationSubmissionTests(unittest.TestCase):
     def test_typing_and_submit_executes_a_cell(self) -> None:

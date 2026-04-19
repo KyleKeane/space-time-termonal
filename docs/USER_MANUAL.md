@@ -78,6 +78,21 @@ If neither the chime nor the banner appear, the session did not
 start cleanly — see the troubleshooting table at the end of this
 file.
 
+### First-run onboarding
+
+The **very first** time ASAT starts on a given machine you will
+also hear a short spoken welcome ("Welcome to ASAT. Type colon
+help to hear the keystroke cheat sheet.") and the text trace prints
+a four-line tour explaining the key meta-commands (`:help`,
+`:commands`, Escape, `:quit`). The tour plays from the narrator
+voice, on the left, and is spelled letter-by-letter
+(`"h, e, l, p"`) so the TTS pronounces each character.
+
+A sentinel file at `~/.asat/first-run-done` records that you've
+seen the tour; subsequent launches skip it. `--quiet` and
+`--check` also skip the tour. Delete the sentinel file and re-launch
+if you ever want to hear the welcome again.
+
 ---
 
 ## The five-minute tour

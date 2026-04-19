@@ -99,6 +99,10 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "last_timed_out": False,
         "cwd": "/tmp",
     },
+    EventType.FIRST_RUN_DETECTED: {
+        "lines": ["Welcome."],
+        "sentinel_path": "/tmp/first-run-done",
+    },
 }
 
 
