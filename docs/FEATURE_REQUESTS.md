@@ -345,6 +345,8 @@ they don't silently dismiss the overlay.
 
 ## F17 — Richer meta-commands
 
+**Status.** Done (first pass).
+
 **Gap.** Meta-commands are case-sensitive, take no arguments, and
 the set is small. `:Help`, `:HELP`, `:help settings`, `:save-as
 foo.json`, `:cd /tmp`, `:new`, `:load`, `:pwd`, `:clear` are all
@@ -363,6 +365,20 @@ a `:xxx` doesn't match any known command ("`:setings` — did you
 mean `:settings`? Line ignored."). Add `:pwd`, `:commands`,
 `:clear` (reset session), `:new` (start a fresh session without
 touching disk).
+
+**Sketch (shipped).** `_parse_meta_command` now returns a
+`(canonical, argument, raw_name)` triple and matches the name
+case-insensitively via a regex (`:([A-Za-z][A-Za-z0-9_-]*)\s*(.*)$`).
+The submit path intercepts every `:xxx` line — known commands
+dispatch as before (with the trailing `argument` surfaced on the
+ACTION_INVOKED payload), and unknown commands trigger a
+HELP_REQUESTED hint with a `difflib.get_close_matches` suggestion
+("did you mean `:settings`?"). Two new ambient meta-commands are
+now recognised: `:pwd` (announces `os.getcwd()`) and `:commands`
+(lists every known meta-command). Session-mutating candidates
+(`:cd`, `:load`, `:save-as`, `:clear`, `:new`) are deferred to a
+follow-up pass because they need new session-cursor primitives and
+cross-cutting file-system handling.
 
 ---
 

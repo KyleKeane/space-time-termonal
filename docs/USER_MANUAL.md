@@ -189,10 +189,18 @@ discarded and the cell is not modified.
 | `:quit`      | Exit ASAT.                                           |
 | `:delete`    | Delete the focused cell (same as `d` in NOTEBOOK).   |
 | `:duplicate` | Duplicate the focused cell (same as `y` in NOTEBOOK).|
+| `:pwd`       | Announce the current working directory.              |
+| `:commands`  | List every available meta-command.                   |
 
-Type the meta-command exactly as shown, then press Enter. If you
-mistype (e.g. `:setings`), the line is treated as a normal command
-and handed to the shell — you'll hear the failure chord back.
+Meta-command names are **case-insensitive** — `:HELP`, `:Help`, and
+`:help` all do the same thing. A single trailing argument is
+allowed (`:help settings`) and is surfaced on the submit event for
+observers that care.
+
+If you mistype (e.g. `:setings`), the router keeps the line out of
+the shell, clears the buffer, and narrates a hint like *"unknown
+meta-command `:setings` — did you mean `:settings`?"*. Type
+`:commands` any time to hear the full list.
 
 ### Running a command
 
@@ -375,6 +383,8 @@ Every key you need, one table.
 | INPUT      | `:quit`⏎          | Exit ASAT                             |
 | INPUT      | `:delete`⏎        | Delete focused cell                   |
 | INPUT      | `:duplicate`⏎     | Duplicate focused cell                |
+| INPUT      | `:pwd`⏎           | Announce working directory            |
+| INPUT      | `:commands`⏎      | List every meta-command               |
 | OUTPUT     | Up / Down         | Prev / next line                      |
 | OUTPUT     | PageUp / PageDown | Jump a page                           |
 | OUTPUT     | Home / End        | First / last line                     |
