@@ -235,6 +235,134 @@ class KernelConfigurationTests(unittest.TestCase):
         self.assertEqual(runner.last_request.mode, ExecutionMode.SHELL)
 
 
+class KernelCancelTests(unittest.TestCase):
+    """F1: ExecutionKernel.cancel(cell_id) + COMMAND_CANCELLED publishing."""
+
+    def test_active_cell_id_is_none_when_idle(self) -> None:
+        bus = EventBus()
+        kernel = ExecutionKernel(bus, runner=StubRunner())
+        self.assertIsNone(kernel.active_cell_id)
+
+    def test_cancel_returns_false_when_nothing_is_running(self) -> None:
+        bus = EventBus()
+        kernel = ExecutionKernel(bus, runner=StubRunner())
+        self.assertFalse(kernel.cancel("does-not-exist"))
+
+    def test_cancel_during_run_publishes_command_cancelled(self) -> None:
+        # Drive the cancel from inside the stub runner so the test
+        # stays single-threaded and deterministic. The runner triggers
+        # `kernel.cancel` mid-run, returns its (partial) result, and
+        # the kernel must convert the outcome into COMMAND_CANCELLED
+        # rather than COMMAND_COMPLETED.
+        bus = EventBus()
+        recorder = _Recorder(bus)
+        cell = Cell.new("sleep 60")
+
+        class _CancellingRunner:
+            def __init__(self) -> None:
+                self.cancel_called = False
+                self.kernel: Optional[ExecutionKernel] = None
+
+            def run(self, request, stdout_handler=None, stderr_handler=None):
+                if stdout_handler is not None:
+                    stdout_handler("partial\n")
+                # While the runner is "executing", the user presses Ctrl+C.
+                assert self.kernel is not None
+                self.kernel.cancel(cell.cell_id)
+                return ExecutionResult(
+                    stdout="partial\n", stderr="", exit_code=-15, timed_out=False
+                )
+
+            def cancel(self) -> bool:
+                self.cancel_called = True
+                return True
+
+        runner = _CancellingRunner()
+        kernel = ExecutionKernel(bus, runner=runner)
+        runner.kernel = kernel
+        result = kernel.execute(cell)
+        self.assertEqual(cell.status, CellStatus.CANCELLED)
+        self.assertEqual(cell.stdout, "partial\n")
+        self.assertEqual(result.stdout, "partial\n")
+        self.assertTrue(runner.cancel_called)
+        types = recorder.types()
+        self.assertIn(EventType.COMMAND_CANCELLED, types)
+        self.assertNotIn(EventType.COMMAND_COMPLETED, types)
+        self.assertNotIn(EventType.COMMAND_FAILED, types)
+        cancelled = next(
+            e for e in recorder.events if e.event_type == EventType.COMMAND_CANCELLED
+        )
+        self.assertEqual(cancelled.payload["cell_id"], cell.cell_id)
+        self.assertEqual(cancelled.payload["exit_code"], -15)
+
+    def test_cancel_for_wrong_cell_is_a_noop(self) -> None:
+        # If the user managed to send a cancel for some other cell id
+        # while a different cell is in flight, the active cell must
+        # still complete normally.
+        bus = EventBus()
+        recorder = _Recorder(bus)
+        cell = Cell.new("echo hi")
+
+        class _RunnerThatTriesWrongCancel:
+            def __init__(self) -> None:
+                self.kernel: Optional[ExecutionKernel] = None
+                self.spurious_cancel_returned: Optional[bool] = None
+
+            def run(self, request, stdout_handler=None, stderr_handler=None):
+                assert self.kernel is not None
+                self.spurious_cancel_returned = self.kernel.cancel("other-cell-id")
+                return ExecutionResult(
+                    stdout="", stderr="", exit_code=0, timed_out=False
+                )
+
+            def cancel(self) -> bool:  # pragma: no cover — must not be called
+                raise AssertionError("runner.cancel must not be invoked for stale id")
+
+        runner = _RunnerThatTriesWrongCancel()
+        kernel = ExecutionKernel(bus, runner=runner)
+        runner.kernel = kernel
+        kernel.execute(cell)
+        self.assertEqual(runner.spurious_cancel_returned, False)
+        self.assertEqual(cell.status, CellStatus.COMPLETED)
+        self.assertNotIn(EventType.COMMAND_CANCELLED, recorder.types())
+
+    def test_active_cell_id_clears_after_execute(self) -> None:
+        bus = EventBus()
+        runner = StubRunner(
+            result=ExecutionResult(stdout="", stderr="", exit_code=0),
+        )
+        kernel = ExecutionKernel(bus, runner=runner)
+        kernel.execute(Cell.new("noop"))
+        self.assertIsNone(kernel.active_cell_id)
+
+    def test_runner_without_cancel_method_still_publishes_cancelled(self) -> None:
+        # Some embedding may pass a runner that doesn't expose cancel.
+        # The kernel must record the intent and convert the eventual
+        # result into COMMAND_CANCELLED anyway, so the user's keystroke
+        # is never silently dropped.
+        bus = EventBus()
+        recorder = _Recorder(bus)
+        cell = Cell.new("noop")
+
+        class _RunnerWithoutCancel:
+            def __init__(self) -> None:
+                self.kernel: Optional[ExecutionKernel] = None
+
+            def run(self, request, stdout_handler=None, stderr_handler=None):
+                assert self.kernel is not None
+                self.kernel.cancel(cell.cell_id)
+                return ExecutionResult(
+                    stdout="", stderr="", exit_code=0, timed_out=False
+                )
+
+        runner = _RunnerWithoutCancel()
+        kernel = ExecutionKernel(bus, runner=runner)
+        runner.kernel = kernel
+        kernel.execute(cell)
+        self.assertEqual(cell.status, CellStatus.CANCELLED)
+        self.assertIn(EventType.COMMAND_CANCELLED, recorder.types())
+
+
 class KernelEndToEndTests(unittest.TestCase):
 
     def test_real_subprocess_pipeline(self) -> None:

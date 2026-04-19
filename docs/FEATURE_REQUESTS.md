@@ -11,6 +11,20 @@ live in the PR queue.
 
 ## F1 — Cancel a running command
 
+**Status.** Shipped. **Ctrl+C** in INPUT mode cancels the running
+cell via a new `cancel_command` action; `ExecutionKernel.cancel(cell_id)`
+signals the active runner (`ProcessRunner.terminate()` →
+SIGTERM/TerminateProcess; `ShellBackend.cancel()` → SIGINT via killpg
+to the shell's foreground child while the shell itself stays alive
+through its `trap : INT` handler). The kernel's post-run path detects
+the cancel via per-cell-id tracking and publishes `COMMAND_CANCELLED`
+(payload: `cell_id`, `exit_code`) instead of `COMMAND_COMPLETED` /
+`COMMAND_FAILED`, with partial output preserved on the cell. Ctrl+C
+with nothing running surfaces a `HELP_REQUESTED` hint rather than
+silently swallowing the keystroke. Needs the F62 async-execution
+worker so the keystroke can reach the router while a command is in
+flight; the CLI turns the worker on by default.
+
 **Gap.** There is no INPUT-mode keybinding to cancel a command that
 is currently running. The `COMMAND_CANCELLED` event type exists and
 the default bank binds a cue to it, but nothing publishes it today.

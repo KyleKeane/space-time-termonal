@@ -411,6 +411,9 @@ class Application:
         if action == "repeat_last_narration":
             self.sound_engine.replay_last_narration()
             return
+        if action == "cancel_command":
+            self._cancel_running_command()
+            return
         if action == "submit":
             cell_id = payload.get("cell_id")
             command = payload.get("command", "")
@@ -432,6 +435,27 @@ class Application:
                 self._announce_notebook_list()
             elif meta == "new-notebook":
                 self._create_notebook(str(payload.get("meta_argument", "")))
+
+    def _cancel_running_command(self) -> None:
+        """`cancel_command` (Ctrl+C in INPUT mode) — F1.
+
+        Routes through `kernel.cancel(active_cell_id)`, which signals
+        the runner and ensures the post-run path emits
+        `COMMAND_CANCELLED` instead of `COMMAND_FAILED`. When no cell
+        is currently running, surfaces a `HELP_REQUESTED` hint so the
+        user hears why nothing happened — silently no-oping would
+        leave them wondering whether the keystroke registered.
+        """
+        cell_id = self.kernel.active_cell_id
+        if cell_id is None:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": ["No command is currently running."]},
+                source="app",
+            )
+            return
+        self.kernel.cancel(cell_id)
 
     def _replay_welcome(self) -> None:
         """Re-invoke the onboarding tour on `:welcome` (F44).
