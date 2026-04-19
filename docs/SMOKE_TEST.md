@@ -34,25 +34,26 @@ something you type or a code identifier.
 python -m asat --check
 ```
 
-**Expected stdout.** Four lines, in order:
+**Expected stdout.** A short diagnostic block, space-aligned:
 
-1. `[asat] sink=` followed by the name of the audio backend
-   that will be used (`WinMMSink` on Windows `--live`,
-   `WavDirSink` on `--wav-dir`, `MemorySink` for the default
-   in-memory path).
-2. `[asat] bank=` naming the loaded sound bank (empty string for
-   the built-in default).
-3. `[asat] session=` naming the session path (empty string for
-   a transient session).
-4. `[asat] tty=` either `yes` or `no`.
+```
+asat <version>
+platform       <linux|darwin|win32>
+stdin tty      <True|False>
+sink           <MemorySink|WinMMSink|WavDirSink>
+bank path      <path or "(built-in default)">
+session path   <path or "(fresh)">
+session id     <id>
+bindings       <count>
+```
 
-**If `sink=MemorySink`**. You'll hear nothing on the speaker
-when you launch for real. Add `--live` (Windows) or
+**If `sink` reads `MemorySink`**. You'll hear nothing on the
+speaker when you launch for real. Add `--live` (Windows) or
 `--wav-dir /tmp/asat` (POSIX) for the rest of the test.
 
-**If `tty=no`**. You are running inside a sandbox or piped
-stdin. Launch from a real terminal — ASAT will refuse to start
-the read loop otherwise.
+**If `stdin tty` reads `False`**. You are running inside a
+sandbox or piped stdin. Launch from a real terminal — ASAT will
+refuse to start the read loop otherwise.
 
 ---
 
@@ -76,12 +77,11 @@ python -m asat --wav-dir /tmp/asat
 2. **`focus_shift`** — a centre cue as the cursor drops into
    INPUT mode on the first empty cell.
 
-**Expected narration.** Two system-voice lines, overhead:
+**Expected narration.** Two short system-voice lines, overhead:
 
-1. *"session <short-id> ready. Type colon help for the keystroke
-   cheat sheet, colon quit to exit."*
-2. *"input cell one"* (or similar — a terse "you're in INPUT"
-   confirmation).
+1. *"new session"* (SESSION_CREATED `say_template`).
+2. *"input"* (FOCUS_CHANGED `say_template` fills in the new
+   mode name).
 
 **Expected text trace (unless `--quiet`).**
 
@@ -142,9 +142,9 @@ Press **Enter**.
 5. **`focus_shift`** — centre, as the cursor auto-advances to a
    fresh INPUT cell.
 
-**Expected text trace.** `[ok] echo hello world` (or similar
-"exit 0" framing), then the output line, then a new
-`[input #…]` banner.
+**Expected text trace.** `$ echo hello world` (submit echo),
+then the captured output (`hello world`), then `[done exit=0]`,
+then a fresh `[input #…]` banner for the auto-advanced cell.
 
 **If the chord plays on the right instead of the left.** The
 command actually failed. Check what was typed — trailing
@@ -179,7 +179,11 @@ Press **Enter**.
 **Expected cues.** `submit` + `start` on the left as before;
 then **`failure_chord`** on the **right** (alert spatial
 region — this is the "wants your attention" side). Stderr text
-is read by the alert voice, also right-biased.
+is read by the alert voice, also right-biased. The narration
+finishes with *"failed with exit code <n>"*.
+
+**Expected text trace.** `$ this-command-does-not-exist`, any
+stderr lines prefixed with `!`, then `[failed exit=<n>]`.
 
 **If you hear the success chord instead.** Your shell silently
 created an alias or your PATH has something that matches —
@@ -317,9 +321,10 @@ anything is missing from the list, `META_COMMANDS` in
 
 Type `:setings` + Enter. (Deliberate typo.)
 
-**Expected.** Narration *"unknown meta-command `:setings` — did
-you mean `:settings`?"*. You stay in INPUT mode; the buffer
-clears so you can retype cleanly.
+**Expected.** Narration *"Unknown meta-command `:setings` — did
+you mean `:settings`?"* followed by *"Line ignored. Type
+`:commands` to list every meta-command."* You stay in INPUT
+mode; the buffer clears so you can retype cleanly.
 
 ### 6.3 Replay
 
@@ -337,9 +342,9 @@ event fires faster than you could parse it.
 
 Press **Escape** to return to NOTEBOOK. Press **Ctrl+,** (comma).
 
-**Expected.** `focus_shift` + narration *"settings. voices, 3
-items."* You're at the top of the editor on the `voices`
-section.
+**Expected.** `focus_shift` + narration *"settings: voices"*
+(SETTINGS_OPENED `say_template` fills in the starting section).
+You're at the top of the editor on the `voices` section.
 
 Press **Down**.
 
@@ -426,26 +431,28 @@ Press **Escape** instead of Enter to close without invoking.
 If you launched with `--session work.json`: type `:save` +
 Enter.
 
-**Expected.** `settings_save` (overhead) + narration
-*"session saved to work.json"*. If you did **not** launch with
-`--session`, `:save` is a silent no-op.
+**Expected.** A `session_chime` overhead + narration
+*"session saved"* (SESSION_SAVED `say_template`). If you did
+**not** launch with `--session`, `:save` is a silent no-op.
 
 ### 9.2 Quit
 
 Type `:quit` + Enter (or press the binding configured for
 quit).
 
-**Expected.** Narration *"goodbye"* (or equivalent closing
-line), then the process exits. If you launched with
-`--session`, the file is re-written on exit.
+**Expected.** The process exits cleanly; no additional
+narration is guaranteed (no SESSION_ENDED binding ships today).
+If you launched with `--session`, the file is re-written on
+exit.
 
 ### 9.3 Resume
 
 Re-launch with the same `--session work.json`.
 
-**Expected.** In addition to the normal session-start
-narration, a *"session loaded from work.json"* line and all
-your cells are present. Press Up from NOTEBOOK to walk them.
+**Expected.** Instead of *"new session"* you hear
+*"session loaded"* (SESSION_LOADED `say_template`) and all
+your previous cells are present. Press Escape then Up from
+NOTEBOOK to walk them.
 
 ---
 

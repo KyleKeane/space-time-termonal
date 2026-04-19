@@ -143,6 +143,7 @@ Case-insensitive. A trailing argument is allowed
 | `:delete`         | Delete the focused cell (same as `d` in NOTEBOOK).     |
 | `:duplicate`      | Duplicate the focused cell (same as `y` in NOTEBOOK).  |
 | `:pwd`            | Announce the current working directory.                |
+| `:state`          | Narrate focus mode, cell position, session id, and cwd. |
 | `:commands`       | List every available meta-command.                     |
 | `:reset bank`     | Reset the entire sound bank to defaults (alias `:reset all`). |
 | `:welcome`        | Replay the first-run welcome tour.                     |
