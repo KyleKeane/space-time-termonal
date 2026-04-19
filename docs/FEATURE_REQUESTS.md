@@ -1343,6 +1343,15 @@ Tests: three new cases in `tests/test_onboarding.py`
 
 ## F42 — Full `--check` diagnostic self-test
 
+**Status: Shipped.** `asat/self_check.py` implements the four-step
+routine (`bank_validates`, `voices_speak`, `event_cues`,
+`live_playback`); `python -m asat --check` prints the diagnostic
+header, runs the self-test, publishes one `SELF_CHECK_STEP` event
+per step, and returns exit code 0 on full pass / 1 on any failure.
+Reference payloads live in `asat/sample_payloads.py` so the same
+canonical data drives both `tests/test_default_bank.py` and the
+self-check. See "Diagnosing audio issues" in `docs/USER_MANUAL.md`.
+
 **Gap.** `python -m asat --check` exists
 (`asat/__main__.py:79`) but is currently a short-circuit that
 prints a version line and exits. It is not a real self-test: it

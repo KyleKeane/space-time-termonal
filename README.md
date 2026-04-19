@@ -81,7 +81,7 @@ python -m asat --live               # play audio on the speaker (Windows today)
 python -m asat --wav-dir /tmp/asat  # write each rendered buffer to WAV (any platform)
 python -m asat --live --wav-dir DIR # Windows: speaker + capture in one run
 python -m asat --quiet              # suppress the text trace, audio only
-python -m asat --check              # build, print a diagnostic summary, exit
+python -m asat --check              # run the four-step diagnostic self-test, exit
 python -m asat --version            # print the version string and exit
 ```
 

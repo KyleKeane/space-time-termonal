@@ -98,6 +98,13 @@ class EventType(str, Enum):
         underlying cell is removed and the registry prunes the dangling
         entry. Each payload carries the bookmark ``name`` and (when
         applicable) the resolved ``cell_id``.
+
+    Self-check (F42):
+        SELF_CHECK_STEP fires once per step of the ``--check``
+        diagnostic self-test. Payload carries ``step`` (slug),
+        ``status`` (``"pass"`` / ``"fail"`` / ``"skip"``), ``index``
+        / ``total`` (1-based step counter), and ``detail`` (a short
+        free-text summary so the JSONL log is human-skimmable).
     """
 
     SESSION_CREATED = "session.created"
@@ -177,6 +184,8 @@ class EventType(str, Enum):
     ANSI_LINE_ERASED = "ansi.line.erased"
     ANSI_OSC_RECEIVED = "ansi.osc.received"
     ANSI_BELL = "ansi.bell"
+
+    SELF_CHECK_STEP = "self_check.step"
 
 
 @dataclass(frozen=True)

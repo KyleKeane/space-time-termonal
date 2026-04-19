@@ -193,6 +193,34 @@ class SoundEngine:
         )
         return entry
 
+    def speak(self, voice_id: str, text: str) -> Optional[AudioBuffer]:
+        """Synthesise ``text`` through ``voice_id`` and play it on the sink.
+
+        Returns the rendered ``AudioBuffer``, or ``None`` if the voice
+        is not in the current bank or the text is empty. Bypasses the
+        binding pipeline entirely so callers can drive ad-hoc speech
+        (the F42 ``--check`` self-test, the F44 ``:welcome`` replay,
+        future spoken help) without wiring a fake event. Records the
+        utterance in narration history (matching binding-driven speech)
+        so ``Ctrl+R`` can repeat it.
+        """
+        if not text:
+            return None
+        voice = self._bank.voice_for(voice_id)
+        if voice is None:
+            return None
+        buffer = self._synthesise_speech(voice, text)
+        self._sink.play(buffer)
+        self._history.append(
+            NarrationHistoryEntry(
+                voice_id=voice_id,
+                text=text,
+                event_type="audio.spoken",
+                binding_id="speak",
+            )
+        )
+        return buffer
+
     def set_bank(self, bank: SoundBank) -> None:
         """Replace the active bank and re-subscribe to the bus.
 
