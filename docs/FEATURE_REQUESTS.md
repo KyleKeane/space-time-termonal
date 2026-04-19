@@ -1020,6 +1020,22 @@ asserts the away event fires when focus has moved.
 
 ## F35 — Cell bookmarks
 
+**Status.** Shipped (`:bookmark` / `:jump` / `:bookmarks` /
+`:unbookmark`). The session now owns a `bookmarks: dict[str, str]`
+field (round-tripped in `to_dict`/`from_dict`) plus
+`add_bookmark` / `remove_bookmark` / `get_bookmark` /
+`list_bookmarks` helpers. `Session.remove_cell` automatically prunes
+any bookmark whose target was removed so `:jump` can never resolve
+to a stale id. Three new event types — `BOOKMARK_CREATED`,
+`BOOKMARK_JUMPED`, `BOOKMARK_REMOVED` — fire from the router so
+narration / audio cues can hook in without monkey-patching session
+state. The router's INPUT-mode meta-command set gained the four new
+verbs (the first three ambient — they leave the user typing; `:jump`
+is non-ambient because focus moves). Names are single tokens with
+surrounding whitespace stripped; reusing a name rebinds it. Future
+work: tab-completion when F23 lands and a per-bookmark spatial cue
+in the default bank.
+
 **Gap.** In a long session the user wants to mark significant cells
 ("the one where I set up the venv", "the broken test run") and jump
 back by name. There's no positional shortcut — a sighted user would

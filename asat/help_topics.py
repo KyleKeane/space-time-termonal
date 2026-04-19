@@ -30,6 +30,7 @@ HELP_TOPICS: dict[str, tuple[str, ...]] = {
         "Each cell is one command plus the output it produced. New cells are appended with Ctrl+N; `d` in NOTEBOOK deletes the focused cell, `y` duplicates it.",
         "Alt+Up and Alt+Down reorder the focused cell within the session.",
         "From INPUT mode the meta-commands `:delete` and `:duplicate` do the same things for hands-that-prefer-typing.",
+        "`:bookmark <name>` captures the focused cell; `:jump <name>` returns to it later; `:bookmarks` lists every bookmark; `:unbookmark <name>` removes one. Bookmarks are persisted with the session.",
     ),
     "settings": (
         "Settings topic.",
@@ -52,7 +53,7 @@ HELP_TOPICS: dict[str, tuple[str, ...]] = {
     "meta": (
         "Meta-commands topic.",
         "Any INPUT line that starts with `:` is a meta-command. Names are case-insensitive; a single trailing argument is passed through to commands that use it.",
-        "Handy ones: `:help`, `:help topics`, `:settings`, `:save`, `:quit`, `:delete`, `:duplicate`, `:pwd`, `:commands`, `:reset bank`, `:welcome`.",
+        "Handy ones: `:help`, `:help topics`, `:settings`, `:save`, `:quit`, `:delete`, `:duplicate`, `:pwd`, `:commands`, `:reset bank`, `:welcome`, `:bookmark <name>`, `:jump <name>`.",
         "`:commands` lists every meta-command. `:welcome` replays the first-run tour. `:help <topic>` narrates one of the topics you are listening to now.",
     ),
 }

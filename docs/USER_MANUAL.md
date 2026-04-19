@@ -290,6 +290,10 @@ discarded and the cell is not modified.
 | `:list-notebooks` | Narrate every notebook in the workspace by name. |
 | `:new-notebook <name>` | Create a fresh notebook on disk; restart ASAT with `asat <root> <name>` to open it. |
 | `:bindings`  | List every active keybinding grouped by mode (F64). Add a `<mode>` or `<key>` argument to filter (`:bindings notebook`, `:bindings up`, or both). |
+| `:bookmark <name>` | Capture the focused cell under `<name>` for later recall (F35). Names are single tokens; reusing a name rebinds it. |
+| `:unbookmark <name>` | Remove a previously registered bookmark (F35). |
+| `:bookmarks` | Narrate every bookmark and the cell index it points at (F35). |
+| `:jump <name>` | Move focus to the cell registered under `<name>` (F35). Leaves you in NOTEBOOK mode at the target cell. |
 
 Meta-command names are **case-insensitive** — `:HELP`, `:Help`, and
 `:help` all do the same thing. A single trailing argument is

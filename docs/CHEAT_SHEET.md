@@ -148,6 +148,10 @@ Case-insensitive. A trailing argument is allowed
 | `:reset bank`     | Reset the entire sound bank to defaults (alias `:reset all`). |
 | `:welcome`        | Replay the first-run welcome tour.                     |
 | `:repeat`         | Re-hear the most recent narration (same as Ctrl+R).    |
+| `:bookmark <name>`| Capture the focused cell under `<name>` (F35).         |
+| `:jump <name>`    | Move focus to the bookmarked cell (F35).               |
+| `:bookmarks`      | List every bookmark with its cell index (F35).         |
+| `:unbookmark <name>` | Remove a bookmark (F35).                            |
 
 A mistype like `:setings` clears the buffer, narrates a hint
 ("did you mean `:settings`?"), and stays in INPUT mode.

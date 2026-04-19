@@ -41,6 +41,7 @@ from asat.keys import Key, Modifier
 from asat.notebook import FocusMode, NotebookCursor
 from asat.output_buffer import OutputRecorder
 from asat.output_cursor import OutputCursor
+from asat.session import SessionError
 from asat.settings_controller import SettingsController
 from asat.settings_editor import ResetScope, SettingsEditorError
 
@@ -253,6 +254,10 @@ META_COMMANDS: tuple[str, ...] = (
     "list-notebooks",
     "new-notebook",
     "bindings",
+    "bookmark",
+    "unbookmark",
+    "bookmarks",
+    "jump",
 )
 
 # "Ambient" meta-commands do their job without taking focus away from
@@ -276,6 +281,9 @@ AMBIENT_META_COMMANDS: frozenset[str] = frozenset(
         "list-notebooks",
         "new-notebook",
         "bindings",
+        "bookmark",
+        "unbookmark",
+        "bookmarks",
     }
 )
 
@@ -304,7 +312,7 @@ HELP_LINES: tuple[str, ...] = (
     "           Ctrl+Z undo, Ctrl+Y redo edits in the order you made them.",
     "           Ctrl+R resets to defaults at cursor scope (Enter confirms, Escape cancels).",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
-    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :state, :commands, :reset, :welcome, :repeat, :heading, :toc, :workspace, :list-notebooks, :new-notebook, :bindings.",
+    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :state, :commands, :reset, :welcome, :repeat, :heading, :toc, :workspace, :list-notebooks, :new-notebook, :bindings, :bookmark, :unbookmark, :bookmarks, :jump.",
     "           `:help topics` lists focused tours; `:help <topic>` narrates one (navigation, cells, settings, audio, search, meta).",
     "           `:welcome` replays the first-run tour; `:repeat` (or Ctrl+R in notebook/input) re-speaks the last narration.",
     "           Meta-commands are case-insensitive and accept a trailing argument.",
@@ -634,6 +642,14 @@ class InputRouter:
             self._publish_toc()
         elif command == "bindings":
             self._publish_bindings(argument)
+        elif command == "bookmark":
+            self._handle_meta_bookmark(argument)
+        elif command == "unbookmark":
+            self._handle_meta_unbookmark(argument)
+        elif command == "bookmarks":
+            self._publish_bookmarks()
+        elif command == "jump":
+            self._handle_meta_jump(argument)
         # `repeat`, `save`, `quit`, `welcome` are handled by the
         # Application via the ACTION_INVOKED payload's `meta_command`
         # key — no router-side dispatch needed here.
@@ -733,6 +749,127 @@ class InputRouter:
             self._bus,
             EventType.HELP_REQUESTED,
             {"lines": lines},
+            source=self.SOURCE,
+        )
+
+    def _handle_meta_bookmark(self, argument: str) -> None:
+        """Capture the focused cell under ``:bookmark <name>`` (F35).
+
+        The argument must be a single non-empty token (no whitespace) so
+        ``:jump`` can later disambiguate. The currently focused cell is
+        the bookmark target; without one (e.g. an empty notebook) the
+        router emits a HELP_REQUESTED hint and bails.
+        """
+        name = argument.strip()
+        if not name or any(ch.isspace() for ch in name):
+            self._publish_help_lines(
+                [
+                    "`:bookmark <name>` — name is one token (no spaces).",
+                    "Example: `:bookmark setup`.",
+                ]
+            )
+            return
+        focused_id = self._cursor.focus.cell_id
+        if focused_id is None:
+            self._publish_help_lines(
+                ["No cell focused; cannot bookmark — open or create a cell first."]
+            )
+            return
+        try:
+            self._cursor.session.add_bookmark(name, focused_id)
+        except SessionError as exc:
+            self._publish_help_lines([str(exc)])
+            return
+        publish_event(
+            self._bus,
+            EventType.BOOKMARK_CREATED,
+            {"name": name, "cell_id": focused_id},
+            source=self.SOURCE,
+        )
+
+    def _handle_meta_unbookmark(self, argument: str) -> None:
+        """Remove ``:unbookmark <name>`` from the registry (F35)."""
+        name = argument.strip()
+        if not name:
+            self._publish_help_lines(
+                ["`:unbookmark <name>` — name is required."]
+            )
+            return
+        try:
+            cell_id = self._cursor.session.remove_bookmark(name)
+        except SessionError:
+            self._publish_help_lines(
+                [f"No bookmark named `{name}`. Type `:bookmarks` to list them."]
+            )
+            return
+        publish_event(
+            self._bus,
+            EventType.BOOKMARK_REMOVED,
+            {"name": name, "cell_id": cell_id},
+            source=self.SOURCE,
+        )
+
+    def _publish_bookmarks(self) -> None:
+        """Narrate every registered bookmark via HELP_REQUESTED (F35)."""
+        entries = self._cursor.session.list_bookmarks()
+        if not entries:
+            lines = [
+                "No bookmarks yet.",
+                "Capture one with `:bookmark <name>` while a cell is focused.",
+            ]
+        else:
+            session = self._cursor.session
+            lines = ["Bookmarks:"]
+            for name, cell_id in entries:
+                try:
+                    index = session.index_of(cell_id)
+                    lines.append(f"  {name} → cell {index + 1}")
+                except SessionError:
+                    lines.append(f"  {name} → (cell missing)")
+        publish_event(
+            self._bus,
+            EventType.HELP_REQUESTED,
+            {"lines": lines},
+            source=self.SOURCE,
+        )
+
+    def _handle_meta_jump(self, argument: str) -> None:
+        """Move focus to the cell registered under ``:jump <name>`` (F35)."""
+        name = argument.strip()
+        if not name:
+            self._publish_help_lines(
+                ["`:jump <name>` — name is required. List with `:bookmarks`."]
+            )
+            return
+        cell_id = self._cursor.session.get_bookmark(name)
+        if cell_id is None:
+            self._publish_help_lines(
+                [f"No bookmark named `{name}`. Type `:bookmarks` to list them."]
+            )
+            return
+        try:
+            self._cursor.focus_cell(cell_id)
+        except SessionError:
+            # Should not happen — remove_cell prunes dangling entries —
+            # but guard so a stale registry never crashes the router.
+            self._cursor.session.remove_bookmark(name)
+            self._publish_help_lines(
+                [f"Bookmark `{name}` pointed at a missing cell; removed."]
+            )
+            return
+        publish_event(
+            self._bus,
+            EventType.BOOKMARK_JUMPED,
+            {"name": name, "cell_id": cell_id},
+            source=self.SOURCE,
+        )
+
+    def _publish_help_lines(self, lines: list[str]) -> None:
+        """Convenience wrapper to publish HELP_REQUESTED with given lines."""
+        publish_event(
+            self._bus,
+            EventType.HELP_REQUESTED,
+            {"lines": list(lines)},
             source=self.SOURCE,
         )
 

@@ -89,6 +89,15 @@ class EventType(str, Enum):
         COMMAND_COMPLETED_AWAY (fires alongside COMMAND_COMPLETED /
         COMMAND_FAILED when the user's focus has moved to a different
         cell between submission and completion; F34).
+
+    Cell bookmarks (F35):
+        BOOKMARK_CREATED fires when ``:bookmark <name>`` captures the
+        focused cell. BOOKMARK_JUMPED fires when ``:jump <name>`` moves
+        focus to a previously bookmarked cell. BOOKMARK_REMOVED fires
+        when ``:unbookmark <name>`` deletes a bookmark, or when the
+        underlying cell is removed and the registry prunes the dangling
+        entry. Each payload carries the bookmark ``name`` and (when
+        applicable) the resolved ``cell_id``.
     """
 
     SESSION_CREATED = "session.created"
@@ -146,6 +155,10 @@ class EventType(str, Enum):
     NOTEBOOK_OPENED = "workspace.notebook.opened"
     NOTEBOOK_CREATED = "workspace.notebook.created"
     NOTEBOOK_LISTED = "workspace.notebook.listed"
+
+    BOOKMARK_CREATED = "bookmark.created"
+    BOOKMARK_JUMPED = "bookmark.jumped"
+    BOOKMARK_REMOVED = "bookmark.removed"
 
     SETTINGS_OPENED = "settings.opened"
     SETTINGS_CLOSED = "settings.closed"

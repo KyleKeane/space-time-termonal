@@ -93,6 +93,9 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.NOTEBOOK_OPENED,
     EventType.NOTEBOOK_CREATED,
     EventType.NOTEBOOK_LISTED,
+    EventType.BOOKMARK_CREATED,
+    EventType.BOOKMARK_JUMPED,
+    EventType.BOOKMARK_REMOVED,
 })
 
 
@@ -319,6 +322,32 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             voice_id="narrator",
             say_template="{summary}",
             priority=140,
+        ),
+
+        # Cell bookmarks (F35).
+        EventBinding(
+            id="bookmark_created",
+            event_type=EventType.BOOKMARK_CREATED.value,
+            voice_id="system",
+            sound_id="soft_tick",
+            say_template="bookmarked {name}",
+            priority=170,
+        ),
+        EventBinding(
+            id="bookmark_jumped",
+            event_type=EventType.BOOKMARK_JUMPED.value,
+            voice_id="system",
+            sound_id="nav_blip",
+            say_template="jumped to {name}",
+            priority=175,
+        ),
+        EventBinding(
+            id="bookmark_removed",
+            event_type=EventType.BOOKMARK_REMOVED.value,
+            voice_id="system",
+            sound_id="cancel",
+            say_template="removed bookmark {name}",
+            priority=160,
         ),
 
         # Cell lifecycle: small blips, no speech to stay quiet.
