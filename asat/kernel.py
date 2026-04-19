@@ -16,6 +16,10 @@ Event sequence for a normal run:
     COMMAND_FAILED     (payload: cell_id, error, error_type) when the
         kernel could not launch the process at all (missing executable,
         unparseable command string).
+    or
+    COMMAND_CANCELLED  (payload: cell_id, exit_code) when `cancel()`
+        was called from another thread (F1 — Ctrl+C in INPUT mode)
+        while the runner was waiting on the subprocess.
 
 Command exit codes that are non-zero are reported as COMMAND_FAILED
 rather than COMMAND_COMPLETED so the audio engine can easily route
@@ -24,6 +28,7 @@ them to the error voice.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -64,6 +69,21 @@ class ExecutionKernel:
         self._bus = event_bus
         self._runner = runner if runner is not None else ProcessRunner()
         self._default_mode = default_mode
+        # F1 cancel-coordination state. `_active_cell_id` is non-None
+        # only while a cell is mid-`execute`, so `cancel(cell_id)`
+        # can verify the request matches what's actually running.
+        # `_cancelled_cells` records ids the user asked to cancel
+        # before the runner returned; the post-run check consumes the
+        # marker and converts the result into COMMAND_CANCELLED.
+        self._cancel_lock = threading.Lock()
+        self._active_cell_id: Optional[str] = None
+        self._cancelled_cells: set[str] = set()
+
+    @property
+    def active_cell_id(self) -> Optional[str]:
+        """Return the id of the cell currently executing, or None."""
+        with self._cancel_lock:
+            return self._active_cell_id
 
     def execute(
         self,
@@ -87,45 +107,96 @@ class ExecutionKernel:
             env=env,
             timeout_seconds=timeout_seconds,
         )
-        self._publish(
-            EventType.COMMAND_SUBMITTED,
-            cell_id=cell.cell_id,
-            command=cell.command,
-        )
-        cell.mark_running()
-        self._publish(EventType.COMMAND_STARTED, cell_id=cell.cell_id)
+        with self._cancel_lock:
+            self._active_cell_id = cell.cell_id
+            # A cancel request that arrived before this execute() call
+            # is consumed by the post-run check; clearing leftovers
+            # keeps a stale id from short-circuiting a fresh run.
+            self._cancelled_cells.discard(cell.cell_id)
         try:
-            result = self._runner.run(
-                request,
-                stdout_handler=self._make_line_forwarder(cell.cell_id, EventType.OUTPUT_CHUNK),
-                stderr_handler=self._make_line_forwarder(cell.cell_id, EventType.ERROR_CHUNK),
+            self._publish(
+                EventType.COMMAND_SUBMITTED,
+                cell_id=cell.cell_id,
+                command=cell.command,
             )
-        except FileNotFoundError as exc:
-            return self._fail_before_launch(cell, exc, EXIT_CODE_NOT_FOUND)
-        except ValueError as exc:
-            return self._fail_before_launch(cell, exc, EXIT_CODE_PARSE_ERROR)
-        except ShellBackendError as exc:
-            # The persistent shell crashed mid-command (or was already
-            # dead). Surface as a launch-time failure so the user gets
-            # the same audio cue and stderr-tail narration they'd get
-            # for any other failed command. Restart of the backend is
-            # the caller's job; the kernel just records what happened.
-            return self._fail_before_launch(cell, exc, EXIT_CODE_BACKEND_ERROR)
+            cell.mark_running()
+            self._publish(EventType.COMMAND_STARTED, cell_id=cell.cell_id)
+            try:
+                result = self._runner.run(
+                    request,
+                    stdout_handler=self._make_line_forwarder(cell.cell_id, EventType.OUTPUT_CHUNK),
+                    stderr_handler=self._make_line_forwarder(cell.cell_id, EventType.ERROR_CHUNK),
+                )
+            except FileNotFoundError as exc:
+                return self._fail_before_launch(cell, exc, EXIT_CODE_NOT_FOUND)
+            except ValueError as exc:
+                return self._fail_before_launch(cell, exc, EXIT_CODE_PARSE_ERROR)
+            except ShellBackendError as exc:
+                # The persistent shell crashed mid-command (or was already
+                # dead). Surface as a launch-time failure so the user gets
+                # the same audio cue and stderr-tail narration they'd get
+                # for any other failed command. Restart of the backend is
+                # the caller's job; the kernel just records what happened.
+                return self._fail_before_launch(cell, exc, EXIT_CODE_BACKEND_ERROR)
 
-        cell.mark_completed(
-            stdout=result.stdout,
-            stderr=result.stderr,
-            exit_code=result.exit_code,
-        )
-        succeeded = result.exit_code == 0 and not result.timed_out
-        final_type = EventType.COMMAND_COMPLETED if succeeded else EventType.COMMAND_FAILED
-        self._publish(
-            final_type,
-            cell_id=cell.cell_id,
-            exit_code=result.exit_code,
-            timed_out=result.timed_out,
-        )
-        return result
+            with self._cancel_lock:
+                was_cancelled = cell.cell_id in self._cancelled_cells
+                self._cancelled_cells.discard(cell.cell_id)
+            if was_cancelled:
+                # Record on the cell as cancelled, but persist the partial
+                # output the runner already collected so the user can review
+                # what landed before they hit Ctrl+C.
+                cell.stdout = result.stdout
+                cell.stderr = result.stderr
+                cell.exit_code = result.exit_code
+                cell.mark_cancelled()
+                self._publish(
+                    EventType.COMMAND_CANCELLED,
+                    cell_id=cell.cell_id,
+                    exit_code=result.exit_code,
+                )
+                return result
+
+            cell.mark_completed(
+                stdout=result.stdout,
+                stderr=result.stderr,
+                exit_code=result.exit_code,
+            )
+            succeeded = result.exit_code == 0 and not result.timed_out
+            final_type = EventType.COMMAND_COMPLETED if succeeded else EventType.COMMAND_FAILED
+            self._publish(
+                final_type,
+                cell_id=cell.cell_id,
+                exit_code=result.exit_code,
+                timed_out=result.timed_out,
+            )
+            return result
+        finally:
+            with self._cancel_lock:
+                if self._active_cell_id == cell.cell_id:
+                    self._active_cell_id = None
+
+    def cancel(self, cell_id: str) -> bool:
+        """Cancel the cell currently running, if its id matches `cell_id`.
+
+        Returns True when a cancel signal was actually delivered to the
+        runner and the post-run path will publish `COMMAND_CANCELLED`;
+        False when no matching cell is running (nothing in flight, or a
+        different cell). The kernel relays the signal via the runner's
+        `cancel()` method (`ProcessRunner` SIGTERMs the subprocess;
+        `ShellBackend` SIGINTs the foreground child via killpg). When
+        the runner exposes no `cancel`, the call still records the
+        intent so a long-running request returning naturally still
+        narrates as a cancellation rather than a generic failure.
+        """
+        with self._cancel_lock:
+            if self._active_cell_id != cell_id:
+                return False
+            self._cancelled_cells.add(cell_id)
+            runner_cancel = getattr(self._runner, "cancel", None)
+        if runner_cancel is not None:
+            runner_cancel()
+        return True
 
     def _make_line_forwarder(self, cell_id: str, event_type: EventType):
         """Build a line handler that republishes each line as an event."""

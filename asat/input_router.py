@@ -113,6 +113,9 @@ def default_bindings() -> BindingMap:
         Ctrl+W kills the word before the caret,
         Ctrl+U kills from the start of the buffer to the caret,
         Ctrl+K kills from the caret to the end of the buffer,
+        Ctrl+C cancels the running command (F1; needs the F62
+          async-execution worker so the keystroke can reach the router
+          while a command is in flight),
         Enter submits the current command,
         Escape commits and returns to notebook mode.
         Lines beginning with `:` are treated as meta-commands
@@ -185,6 +188,7 @@ def default_bindings() -> BindingMap:
             Key.combo("w", Modifier.CTRL): "delete_word_left",
             Key.combo("u", Modifier.CTRL): "delete_to_start",
             Key.combo("k", Modifier.CTRL): "delete_to_end",
+            Key.combo("c", Modifier.CTRL): "cancel_command",
             kc.ENTER: "submit",
             kc.ESCAPE: "exit_input",
             kc.F2: "open_action_menu",
@@ -292,6 +296,7 @@ HELP_LINES: tuple[str, ...] = (
     "           Backspace/Delete cut, Left/Right walk, Home/End jump (or Ctrl+A/E).",
     "           Up/Down walk command history (Down past newest restores your draft).",
     "           Ctrl+W kills word, Ctrl+U kills to start, Ctrl+K kills to end.",
+    "           Ctrl+C cancels the running command (publishes COMMAND_CANCELLED).",
     "OUTPUT:    Up/Down step lines, PageUp/PageDown page, Escape leaves.",
     "           / search (type query, Enter commits), n / N next / prev hit, g jump-to-line.",
     "SETTINGS:  Up/Down walk, Right/Enter descend, Left/Escape ascend, e edit, Ctrl+S save, Ctrl+Q close.",
@@ -1211,6 +1216,7 @@ class InputRouter:
             "output_composer_commit": self._output_composer_commit,
             "output_composer_cancel": self._output_composer_cancel,
             "repeat_last_narration": lambda: None,
+            "cancel_command": lambda: None,
         }
         if action not in handlers:
             raise KeyError(f"Unknown action: {action}")

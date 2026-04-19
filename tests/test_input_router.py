@@ -1073,6 +1073,35 @@ class MetaCommandTests(unittest.TestCase):
         action = router.handle_key(Key.combo("r", Modifier.CTRL))
         self.assertEqual(action, "repeat_last_narration")
 
+    def test_ctrl_c_in_input_dispatches_cancel_command(self) -> None:
+        """F1: Ctrl+C in INPUT mode fires `cancel_command` so the
+        Application can ask the kernel to terminate the running cell.
+        The keystroke does NOT submit, exit INPUT, or eat the buffer
+        — partial typing must survive a misfired cancel."""
+        bus, cursor, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in "echo":
+            router.handle_key(Key.printable(ch))
+        action = router.handle_key(Key.combo("c", Modifier.CTRL))
+        self.assertEqual(action, "cancel_command")
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(cursor.focus.input_buffer, "echo")
+        actions = [
+            e.payload for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "cancel_command"
+        ]
+        self.assertEqual(len(actions), 1)
+
+    def test_ctrl_c_is_not_bound_outside_input_mode(self) -> None:
+        """Ctrl+C is INPUT-mode only; it has no binding in NOTEBOOK,
+        OUTPUT, or SETTINGS so the existing "leave INPUT before
+        cancelling" workflow remains valid for other contexts."""
+        bindings = default_bindings()
+        ctrl_c = Key.combo("c", Modifier.CTRL)
+        for mode in (FocusMode.NOTEBOOK, FocusMode.OUTPUT, FocusMode.SETTINGS):
+            self.assertNotIn(ctrl_c, bindings[mode])
+
     def test_colon_quit_still_ejects_to_notebook(self) -> None:
         """Non-ambient meta-commands (`:quit`, `:settings`) keep the
         existing behaviour: leave INPUT mode."""

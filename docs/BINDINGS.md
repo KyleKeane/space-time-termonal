@@ -39,6 +39,7 @@ Each row is one binding. The `Action` column is the handler name `InputRouter._a
 | `Backspace` | `backspace` |
 | `Ctrl+.` | `open_action_menu` |
 | `Ctrl+A` | `cursor_home` |
+| `Ctrl+C` | `cancel_command` |
 | `Ctrl+E` | `cursor_end` |
 | `Ctrl+K` | `delete_to_end` |
 | `Ctrl+R` | `repeat_last_narration` |

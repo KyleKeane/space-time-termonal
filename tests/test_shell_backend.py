@@ -142,6 +142,49 @@ class ShellBackendTimeoutTests(unittest.TestCase):
 
 
 @_REQUIRES_BASH
+class ShellBackendCancelTests(unittest.TestCase):
+    """F1: cancel() interrupts the running command without killing the shell."""
+
+    def setUp(self) -> None:
+        self.backend = ShellBackend()
+        self.addCleanup(self.backend.close)
+
+    def test_cancel_when_idle_returns_true_or_false_safely(self) -> None:
+        # The shell is alive but no command is running. `cancel`
+        # currently signals the process group regardless; we just
+        # require the shell stays alive afterwards so a stray cancel
+        # doesn't tear the session down.
+        self.backend.cancel()
+        self.assertTrue(self.backend.is_alive())
+
+    def test_cancel_after_close_returns_false(self) -> None:
+        backend = ShellBackend()
+        backend.close()
+        self.assertFalse(backend.cancel())
+
+    def test_cancel_interrupts_running_command_without_killing_shell(self) -> None:
+        import threading
+        signal_sent = threading.Event()
+
+        def cancel_after_start() -> None:
+            # Give the shell a moment to start the sleep, then signal.
+            threading.Event().wait(0.2)
+            self.backend.cancel()
+            signal_sent.set()
+
+        threading.Thread(target=cancel_after_start, daemon=True).start()
+        result = self.backend.run(ExecutionRequest(command="sleep 5"))
+        self.assertTrue(signal_sent.wait(timeout=5.0))
+        # SIGINT-killed bash command exits 130; the shell itself stays
+        # up because of the `trap : INT` handler set on construction.
+        self.assertEqual(result.exit_code, 130)
+        self.assertTrue(self.backend.is_alive())
+        followup = self.backend.run(ExecutionRequest(command="echo after"))
+        self.assertEqual(followup.stdout.strip(), "after")
+        self.assertEqual(followup.exit_code, 0)
+
+
+@_REQUIRES_BASH
 class ShellBackendLifecycleTests(unittest.TestCase):
     """Start-up, shutdown, and crash detection."""
 

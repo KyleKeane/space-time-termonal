@@ -92,6 +92,39 @@ class RunnerTimeoutTests(unittest.TestCase):
         self.assertNotEqual(result.exit_code, 0)
 
 
+class RunnerCancelTests(unittest.TestCase):
+    """F1: ProcessRunner.cancel() terminates the in-flight subprocess."""
+
+    def test_cancel_with_no_active_process_returns_false(self) -> None:
+        self.assertFalse(ProcessRunner().cancel())
+
+    def test_cancel_terminates_running_subprocess(self) -> None:
+        request = ExecutionRequest(
+            command=f'{sys.executable} -c "import time; time.sleep(10)"',
+        )
+        runner = ProcessRunner()
+        signalled = threading.Event()
+
+        def cancel_after_start() -> None:
+            # Wait until the run loop has stored the active process.
+            for _ in range(200):  # up to ~2s
+                if runner._active_process is not None:
+                    break
+                threading.Event().wait(0.01)
+            self.assertTrue(runner.cancel())
+            signalled.set()
+
+        threading.Thread(target=cancel_after_start, daemon=True).start()
+        result = runner.run(request)
+        self.assertTrue(signalled.wait(timeout=5.0))
+        # Cancelled processes exit non-zero (SIGTERM on POSIX, terminate
+        # on Windows). The exact code is OS-dependent so we only assert
+        # the run returned and the process is no longer "active".
+        self.assertNotEqual(result.exit_code, 0)
+        self.assertFalse(result.timed_out)
+        self.assertIsNone(runner._active_process)
+
+
 class RunnerErrorTests(unittest.TestCase):
 
     def test_missing_executable_raises(self) -> None:

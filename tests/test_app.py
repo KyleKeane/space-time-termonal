@@ -446,6 +446,70 @@ class ApplicationRepeatNarrationTests(unittest.TestCase):
         self.assertTrue(app.running)
 
 
+class ApplicationCancelCommandTests(unittest.TestCase):
+    """F1: Ctrl+C in INPUT mode routes through the kernel's cancel path."""
+
+    def test_ctrl_c_with_no_running_command_publishes_help_hint(self) -> None:
+        # The kernel is idle (no active cell). Ctrl+C must surface a
+        # HELP_REQUESTED line so the user hears why nothing happened
+        # instead of being left wondering if the keystroke landed.
+        app = Application.build()
+        helps: list[dict] = []
+        app.bus.subscribe(
+            EventType.HELP_REQUESTED,
+            lambda e: helps.append(dict(e.payload)),
+        )
+        app.handle_key(Key.combo("c", Modifier.CTRL))
+        self.assertEqual(len(helps), 1)
+        self.assertIn("No command", helps[0]["lines"][0])
+
+    def test_ctrl_c_calls_kernel_cancel_with_active_cell_id(self) -> None:
+        # Inject a kernel stub so we can observe the call without
+        # racing a real subprocess. The action dispatch must look up
+        # `kernel.active_cell_id` and forward it to `kernel.cancel`.
+        app = Application.build()
+        seen: list[str] = []
+
+        class _StubKernel:
+            active_cell_id = "cell-42"
+
+            def cancel(self, cell_id: str) -> bool:
+                seen.append(cell_id)
+                return True
+
+        app.kernel = _StubKernel()  # type: ignore[assignment]
+        app.handle_key(Key.combo("c", Modifier.CTRL))
+        self.assertEqual(seen, ["cell-42"])
+
+    def test_command_cancelled_event_includes_cell_id(self) -> None:
+        # End-to-end: the kernel's mid-run cancel publishes
+        # COMMAND_CANCELLED with the cell id the user was asking about.
+        app = Application.build()
+        cancelled: list[dict] = []
+        app.bus.subscribe(
+            EventType.COMMAND_CANCELLED,
+            lambda e: cancelled.append(dict(e.payload)),
+        )
+        from asat.cell import Cell
+        from asat.execution import ExecutionResult
+
+        cell = Cell.new("noop")
+        app.session.add_cell(cell)
+
+        class _SelfCancellingRunner:
+            def run(self, request, stdout_handler=None, stderr_handler=None):
+                app.kernel.cancel(cell.cell_id)
+                return ExecutionResult(
+                    stdout="", stderr="", exit_code=-15, timed_out=False
+                )
+
+        app.kernel._runner = _SelfCancellingRunner()  # type: ignore[attr-defined]
+        app.kernel.execute(cell)
+        self.assertEqual(len(cancelled), 1)
+        self.assertEqual(cancelled[0]["cell_id"], cell.cell_id)
+        self.assertEqual(cell.status, CellStatus.CANCELLED)
+
+
 class ApplicationEventLoggerTests(unittest.TestCase):
     """F22: `log_factory` attaches a JsonlEventLogger before build events."""
 

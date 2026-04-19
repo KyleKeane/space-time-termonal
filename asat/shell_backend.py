@@ -197,6 +197,24 @@ class ShellBackend:
         with self._lock:
             return self._run_locked(request, stdout_handler, stderr_handler)
 
+    def cancel(self) -> bool:
+        """Send SIGINT to the foreground command without killing the shell.
+
+        F1: gives the user a Ctrl+C-equivalent for the running cell.
+        Reuses the same `killpg` plumbing the timeout path uses — the
+        shell's `trap : INT` handler keeps the long-lived shell alive
+        while the foreground child takes the default disposition and
+        exits with 130. Returns True when a signal was delivered,
+        False when the shell is no longer running.
+        """
+        if not self.is_alive():
+            return False
+        try:
+            os.killpg(self._proc.pid, signal.SIGINT)
+        except (ProcessLookupError, OSError):
+            return False
+        return True
+
     def close(self) -> None:
         """Exit the shell cleanly; force-terminate after a short grace."""
         if self._proc.poll() is None:
@@ -251,9 +269,7 @@ class ShellBackend:
         timed_out = False
         deadline_thread: Optional[threading.Thread] = None
         if request.timeout_seconds is not None:
-            timer = threading.Timer(
-                request.timeout_seconds, self._interrupt_running_command
-            )
+            timer = threading.Timer(request.timeout_seconds, self.cancel)
             timer.daemon = True
             timer.start()
             deadline_thread = timer
@@ -322,23 +338,6 @@ class ShellBackend:
             buffer.write(line)
             if handler is not None:
                 handler(line)
-
-    def _interrupt_running_command(self) -> None:
-        """Send SIGINT to the shell's process group so the foreground child gets Ctrl+C.
-
-        The shell was started with `start_new_session=True`, so its
-        pid is the leader of its own process group. `killpg` reaches
-        the shell *and* its current foreground child. The shell has
-        `trap '' INT` set, so it ignores the signal; the child runs
-        with the default disposition and exits with 130. The shell
-        survives, ready for the next command.
-        """
-        if not self.is_alive():
-            return
-        try:
-            os.killpg(self._proc.pid, signal.SIGINT)
-        except (ProcessLookupError, OSError):
-            pass
 
     @staticmethod
     def _pump(

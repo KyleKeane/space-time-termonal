@@ -318,8 +318,15 @@ On Enter:
    `StderrTailAnnouncer`); disable the `command_failed_stderr_tail`
    binding in the settings editor if you prefer the minimal cue.
 
-Cancelling a running command is a future keyboard binding; for now
-let commands finish or send `:quit` to bail out of the whole session.
+Press **Ctrl+C** in INPUT mode to cancel the cell that is currently
+running. The keystroke needs the F62 async-execution worker (the CLI
+turns it on by default), because a synchronous run would freeze the
+keyboard read while the command is in flight. Cancellation publishes
+`COMMAND_CANCELLED` instead of `COMMAND_FAILED` so the audio bank
+plays the dedicated `cancel` cue and any partial output the cell
+already collected is preserved on the cell record. With nothing
+running, Ctrl+C surfaces a `HELP_REQUESTED` hint ("No command is
+currently running.") so the keystroke is never silently dropped.
 
 ### Prompt context on re-entry
 
@@ -561,6 +568,7 @@ Every key you need, one table.
 | INPUT      | Ctrl+W            | Delete word before caret              |
 | INPUT      | Ctrl+U            | Delete from start of line to caret    |
 | INPUT      | Ctrl+K            | Delete from caret to end of line      |
+| INPUT      | Ctrl+C            | Cancel the running command (F1)       |
 | INPUT      | Escape            | Leave INPUT without running           |
 | INPUT      | Ctrl+R            | Repeat the most recent narration      |
 | INPUT      | F2 / Ctrl+.       | Open actions menu                     |
