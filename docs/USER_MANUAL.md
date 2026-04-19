@@ -50,8 +50,11 @@ Every flag is optional and they compose. The common launch recipes:
   post-mortems, bug reports, or feeding events to an external replayer.
 - **Sanity-check your install:** `python -m asat --check`. Builds the
   Application, prints the picked sink, bank, session, and TTY state,
-  and exits without starting the read loop. Useful when you launched
-  once and heard nothing — `--check` tells you which sink you got.
+  then runs the four-step diagnostic self-test (bank validates, every
+  voice speaks, one cue lands per covered event, live playback
+  reachable) and exits with code 0 when every step passes. See
+  [Diagnosing audio issues](#diagnosing-audio-issues) for what each
+  step verifies.
 
 If you run `python -m asat` with no `--live` / `--wav-dir` flag the
 CLI prints a one-line stderr hint: `[asat] audio is going to the in-
@@ -658,9 +661,45 @@ Something is piping your stdin into ASAT — maybe `echo :quit | python
 from a real terminal instead. Exit code 2.
 
 **I launched and heard nothing.**
-Run `python -m asat --check`. It prints the sink class that was picked,
-the bank path, and whether stdin is a TTY. If the sink is `MemorySink`,
-you forgot `--live` (Windows) or `--wav-dir DIR` (any platform).
+Run `python -m asat --check`. The header prints the sink class, bank,
+session, and TTY state; then the four-step self-test runs. If step 4
+reports `MemorySink active`, you forgot `--live` (Windows) or
+`--wav-dir DIR` (any platform). If you passed `--live` and step 4
+still reports `MemorySink`, the live backend is unavailable on this
+host (POSIX today; tracked as F6) and `--check` exits non-zero.
+
+### Diagnosing audio issues
+
+`python -m asat --check` is the single command that answers "does
+this install actually work?". It builds the Application like a real
+launch — same bank, same sink resolution, same TTS backend — then
+runs four steps and prints a `PASS / FAIL / SKIP` line per step.
+Exit code 0 means every step passed; non-zero means at least one
+step needs your attention. The steps are:
+
+1. **`bank_validates`** — `default_sound_bank().validate()`. Catches
+   structural issues (duplicate ids, bindings pointing at missing
+   voices or sounds). Almost always passes for the built-in bank;
+   fails on a hand-edited `--bank` JSON file with a typo.
+2. **`voices_speak`** — every voice in the bank synthesises a short
+   "voice <id> check" through the real TTS engine onto the active
+   sink. Fails when a TTS backend is missing, a voice profile is
+   broken, or the bank defines no voices. Skipped if step 1 failed.
+3. **`event_cues`** — every covered event type is published with the
+   representative payload from `asat/sample_payloads.py`; the step
+   confirms at least one buffer lands on the sink for each. Fails
+   when a binding's predicate has drifted from the payload shape
+   (so the event arrives but no audio comes out). Skipped if step 1
+   failed.
+4. **`live_playback`** — reports the resolved sink. Passes
+   informationally when `MemorySink` is active without `--live`
+   (you asked for the silent default and got it); fails when
+   `--live` was requested but the host fell back to `MemorySink`
+   (no live backend available on this platform).
+
+`SELF_CHECK_STEP` events are published on the bus as the run
+progresses, so combining `--check` with `--log /tmp/asat.jsonl`
+captures the full diagnostic for sharing in a bug report.
 
 **I pressed a key and nothing happened.**
 Check your mode. Most keys are mode-scoped; Ctrl+O in INPUT mode

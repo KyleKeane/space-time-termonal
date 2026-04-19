@@ -378,6 +378,21 @@ prune; the router publishes the event when the user invoked
 | `BOOKMARK_JUMPED`   | `name`, `cell_id`                                |
 | `BOOKMARK_REMOVED`  | `name`, `cell_id`                                |
 
+## Self-check
+
+Producer: `asat.self_check.run_self_check` (`source="self_check"`),
+fired once per step of the `python -m asat --check` diagnostic
+self-test (F42). The four steps publish in order so a JSONL log
+captures the full run for sharing in a bug report. `step` is the
+stable slug (one of `bank_validates`, `voices_speak`, `event_cues`,
+`live_playback`); `status` is `pass`, `fail`, or `skip`; `index` and
+`total` are 1-based counters; `detail` is a short human-readable
+summary.
+
+| EventType           | Payload keys                                     |
+|---------------------|--------------------------------------------------|
+| `SELF_CHECK_STEP`   | `step`, `status`, `index`, `total`, `detail`     |
+
 ---
 
 ## Adding a new event

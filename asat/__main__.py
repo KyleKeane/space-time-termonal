@@ -41,6 +41,7 @@ from asat.jsonl_logger import JsonlEventLogger
 from asat.keyboard import KeyboardNotAvailable, KeyboardReader, pick_default
 from asat.onboarding import OnboardingCoordinator
 from asat.runner import ProcessRunner
+from asat.self_check import run_self_check
 from asat.session import Session
 from asat.shell_backend import shell_backend_or_none
 from asat.sound_bank import SoundBank
@@ -130,9 +131,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         workspace=workspace,
     )
     if args.check:
-        _print_check_report(app, args)
+        exit_code = _print_check_report(app, args)
         app.close()
-        return 0
+        return exit_code
     try:
         keyboard: KeyboardReader = pick_default()
     except KeyboardNotAvailable as exc:
@@ -151,8 +152,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     return 0
 
 
-def _print_check_report(app: Application, args: argparse.Namespace) -> None:
-    """Write a diagnostic summary and return without starting the loop."""
+def _print_check_report(app: Application, args: argparse.Namespace) -> int:
+    """Write a diagnostic summary and run the F42 self-test.
+
+    Returns the exit code: ``0`` when every step of ``run_self_check``
+    passes, ``1`` when at least one step fails (or, in the fall-back
+    case where the user passed ``--live`` but the host had no live
+    backend, when ``MemorySink`` ends up active despite the request).
+    """
     lines = [
         f"asat {__version__}",
         f"platform       {sys.platform}",
@@ -166,6 +173,14 @@ def _print_check_report(app: Application, args: argparse.Namespace) -> None:
     ]
     for line in lines:
         print(line)
+    print()
+    return run_self_check(
+        app.sound_engine.bank,
+        app.sink,
+        bus=app.bus,
+        stdout=sys.stdout,
+        live_requested=bool(args.live),
+    )
 
 
 def _run(app: Application, keyboard: KeyboardReader) -> None:
