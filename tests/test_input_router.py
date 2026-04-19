@@ -1676,5 +1676,183 @@ class ParseResetScopeTests(unittest.TestCase):
         self.assertIsNone(_parse_reset_scope("everything"))
 
 
+class HeadingNavigationBindingTests(unittest.TestCase):
+    """F61: `]` / `[` and `1`..`6` walk headings from NOTEBOOK mode."""
+
+    def _build_with_headings(self):
+        bus = EventBus()
+        session = Session.new()
+        session.add_cell(Cell.new_heading(1, "Intro"))
+        session.add_cell(Cell.new("ls"))
+        session.add_cell(Cell.new_heading(2, "Setup"))
+        session.add_cell(Cell.new("install"))
+        session.add_cell(Cell.new_heading(1, "Runs"))
+        cursor = NotebookCursor(session, bus)
+        cursor.focus_cell(session.cells[0].cell_id)
+        router = InputRouter(cursor, bus)
+        return bus, session, cursor, router
+
+    def test_right_bracket_jumps_to_next_heading_any_level(self) -> None:
+        _bus, session, cursor, router = self._build_with_headings()
+        action = router.handle_key(Key.printable("]"))
+        self.assertEqual(action, "next_heading")
+        self.assertEqual(cursor.focus.cell_id, session.cells[2].cell_id)
+
+    def test_left_bracket_jumps_to_previous_heading_any_level(self) -> None:
+        _bus, session, cursor, router = self._build_with_headings()
+        cursor.focus_cell(session.cells[-1].cell_id)
+        action = router.handle_key(Key.printable("["))
+        self.assertEqual(action, "prev_heading")
+        self.assertEqual(cursor.focus.cell_id, session.cells[2].cell_id)
+
+    def test_digit_one_jumps_to_next_h1(self) -> None:
+        _bus, session, cursor, router = self._build_with_headings()
+        action = router.handle_key(Key.printable("1"))
+        self.assertEqual(action, "next_heading_1")
+        self.assertEqual(cursor.focus.cell_id, session.cells[4].cell_id)
+
+    def test_digit_two_jumps_to_next_h2(self) -> None:
+        _bus, session, cursor, router = self._build_with_headings()
+        action = router.handle_key(Key.printable("2"))
+        self.assertEqual(action, "next_heading_2")
+        self.assertEqual(cursor.focus.cell_id, session.cells[2].cell_id)
+
+    def test_digit_no_match_is_reported_via_action_payload(self) -> None:
+        bus, session, cursor, router = self._build_with_headings()
+        rec = _Recorder(bus)
+        router.handle_key(Key.printable("6"))  # no H6 in this session
+        invoked = rec.types_of(EventType.ACTION_INVOKED)
+        self.assertEqual(invoked[-1].payload["action"], "next_heading_6")
+        self.assertFalse(invoked[-1].payload["matched"])
+        # Cursor stays put.
+        self.assertEqual(cursor.focus.cell_id, session.cells[0].cell_id)
+
+    def test_heading_nav_ignored_in_input_mode(self) -> None:
+        _bus, _session, cursor, router = self._build_with_headings()
+        cursor.focus_cell(cursor.session.cells[1].cell_id)  # command cell
+        cursor.enter_input_mode()
+        # `]` is printable in INPUT mode — it falls through as a
+        # text insertion. That's the correct behaviour.
+        router.handle_key(Key.printable("]"))
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(cursor.focus.input_buffer, "ls]")
+
+    def test_heading_nav_payload_reports_level_when_filtered(self) -> None:
+        bus, _session, _cursor, router = self._build_with_headings()
+        rec = _Recorder(bus)
+        router.handle_key(Key.printable("1"))
+        invoked = [e for e in rec.types_of(EventType.ACTION_INVOKED) if e.payload["action"] == "next_heading_1"]
+        self.assertEqual(invoked[-1].payload["level"], 1)
+
+
+class HeadingMetaCommandTests(unittest.TestCase):
+    """F61: `:heading <level> <title>` and `:toc`."""
+
+    def _type_meta(self, router, cursor, text: str) -> None:
+        cursor.enter_input_mode()
+        # Clear any pre-existing command text first so the meta-line
+        # is submitted cleanly.
+        router.handle_key(Key.combo("u", Modifier.CTRL))
+        for ch in text:
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+
+    def test_heading_meta_creates_heading_cell(self) -> None:
+        bus, session, cursor, router, _ = _build(["ls"])
+        self._type_meta(router, cursor, ":heading 2 Setup")
+        # New heading appended at end.
+        last = session.cells[-1]
+        self.assertEqual(last.heading_level, 2)
+        self.assertEqual(last.heading_title, "Setup")
+        self.assertEqual(cursor.focus.cell_id, last.cell_id)
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+
+    def test_heading_meta_rejects_bad_level(self) -> None:
+        bus, session, cursor, router, _ = _build(["ls"])
+        rec = _Recorder(bus)
+        initial_count = len(session.cells)
+        self._type_meta(router, cursor, ":heading 9 Bad")
+        # `:heading` is non-ambient — it abandons INPUT and does not
+        # auto-advance, so cell count stays put.
+        self.assertEqual(len(session.cells), initial_count)
+        for cell in session.cells:
+            self.assertFalse(cell.is_heading)
+        help_events = rec.types_of(EventType.HELP_REQUESTED)
+        self.assertTrue(help_events)
+        self.assertIn(":heading", "\n".join(help_events[-1].payload["lines"]))
+
+    def test_heading_meta_rejects_missing_title(self) -> None:
+        bus, session, cursor, router, _ = _build(["ls"])
+        rec = _Recorder(bus)
+        self._type_meta(router, cursor, ":heading 2")
+        for cell in session.cells:
+            self.assertFalse(cell.is_heading)
+        self.assertTrue(rec.types_of(EventType.HELP_REQUESTED))
+
+    def test_toc_meta_publishes_outline(self) -> None:
+        bus = EventBus()
+        session = Session.new()
+        session.add_cell(Cell.new_heading(1, "Intro"))
+        session.add_cell(Cell.new("ls"))
+        session.add_cell(Cell.new_heading(2, "Setup"))
+        cursor = NotebookCursor(session, bus)
+        cursor.focus_cell(session.cells[1].cell_id)
+        router = InputRouter(cursor, bus)
+        rec = _Recorder(bus)
+        self._type_meta(router, cursor, ":toc")
+        help_events = rec.types_of(EventType.HELP_REQUESTED)
+        self.assertTrue(help_events)
+        lines = help_events[-1].payload["lines"]
+        text = "\n".join(lines)
+        self.assertIn("Intro", text)
+        self.assertIn("Setup", text)
+        self.assertIn("H1", text)
+        self.assertIn("H2", text)
+
+    def test_toc_meta_empty_notebook_hint(self) -> None:
+        bus, _session, cursor, router, _ = _build(["ls"])
+        rec = _Recorder(bus)
+        self._type_meta(router, cursor, ":toc")
+        help_events = rec.types_of(EventType.HELP_REQUESTED)
+        self.assertTrue(help_events)
+        text = "\n".join(help_events[-1].payload["lines"])
+        self.assertIn("No headings", text)
+
+    def test_toc_meta_is_ambient(self) -> None:
+        """`:toc` keeps the user in INPUT mode so they can keep typing."""
+        from asat.input_router import AMBIENT_META_COMMANDS
+        self.assertIn("toc", AMBIENT_META_COMMANDS)
+
+
+class ParseHeadingArgumentTests(unittest.TestCase):
+    """F61: `:heading <level> <title>` argument parser."""
+
+    def test_valid_level_and_title(self) -> None:
+        from asat.input_router import _parse_heading_argument
+        self.assertEqual(_parse_heading_argument("2 Setup"), (2, "Setup"))
+        self.assertEqual(
+            _parse_heading_argument("  1  A longer title "),
+            (1, "A longer title"),
+        )
+
+    def test_missing_title_returns_none(self) -> None:
+        from asat.input_router import _parse_heading_argument
+        self.assertEqual(_parse_heading_argument("2"), (None, None))
+        self.assertEqual(_parse_heading_argument("2   "), (None, None))
+
+    def test_empty_returns_none(self) -> None:
+        from asat.input_router import _parse_heading_argument
+        self.assertEqual(_parse_heading_argument(""), (None, None))
+
+    def test_out_of_range_level_returns_none(self) -> None:
+        from asat.input_router import _parse_heading_argument
+        self.assertEqual(_parse_heading_argument("0 zero"), (None, None))
+        self.assertEqual(_parse_heading_argument("7 seven"), (None, None))
+
+    def test_non_numeric_level_returns_none(self) -> None:
+        from asat.input_router import _parse_heading_argument
+        self.assertEqual(_parse_heading_argument("H1 Intro"), (None, None))
+
+
 if __name__ == "__main__":
     unittest.main()

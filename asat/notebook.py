@@ -673,9 +673,16 @@ class NotebookCursor:
             transition = "buffer"
         self._state = new_state
         command = ""
+        kind_value = CellKind.COMMAND.value
+        heading_level: Optional[int] = None
+        heading_title: Optional[str] = None
         if new_state.cell_id is not None:
             try:
-                command = self._session.get_cell(new_state.cell_id).command
+                focused = self._session.get_cell(new_state.cell_id)
+                command = focused.command
+                kind_value = focused.kind.value
+                heading_level = focused.heading_level
+                heading_title = focused.heading_title
             except SessionError:
                 command = ""
         publish_event(
@@ -689,6 +696,9 @@ class NotebookCursor:
                 "input_buffer": new_state.input_buffer,
                 "transition": transition,
                 "command": command,
+                "kind": kind_value,
+                "heading_level": heading_level,
+                "heading_title": heading_title,
             },
             source=self.SOURCE,
         )

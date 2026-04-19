@@ -283,6 +283,8 @@ discarded and the cell is not modified.
 | `:state`     | Narrate focus mode, cell position, session id, and cwd. |
 | `:commands`  | List every available meta-command.                   |
 | `:reset bank` | Reset the whole sound bank to the built-in defaults (also `:reset all`). |
+| `:heading <level> <title>` | Append a heading landmark at level 1..6 for NVDA-style navigation (F61). |
+| `:toc`       | Narrate the notebook's heading outline.              |
 
 Meta-command names are **case-insensitive** — `:HELP`, `:Help`, and
 `:help` all do the same thing. A single trailing argument is
@@ -542,6 +544,8 @@ Every key you need, one table.
 | NOTEBOOK   | Alt+Up / Alt+Down | Move focused cell up / down           |
 | NOTEBOOK   | Ctrl+R            | Repeat the most recent narration      |
 | NOTEBOOK   | F2 / Ctrl+.       | Open actions menu                     |
+| NOTEBOOK   | `]` / `[`         | Next / previous heading (any level)   |
+| NOTEBOOK   | `1`..`6`          | Next heading of that level (F61)      |
 | INPUT      | Enter             | Submit command                        |
 | INPUT      | Backspace         | Delete char before caret              |
 | INPUT      | Delete            | Delete char under caret               |
@@ -566,6 +570,8 @@ Every key you need, one table.
 | INPUT      | `:state`⏎         | Announce focus, cell position, cwd    |
 | INPUT      | `:commands`⏎      | List every meta-command               |
 | INPUT      | `:reset bank`⏎    | Reset the whole bank to defaults      |
+| INPUT      | `:heading <N> <title>`⏎ | Append a level-N heading landmark |
+| INPUT      | `:toc`⏎           | Narrate the heading outline           |
 | OUTPUT     | Up / Down         | Prev / next line                      |
 | OUTPUT     | PageUp / PageDown | Jump a page                           |
 | OUTPUT     | Home / End        | First / last line                     |

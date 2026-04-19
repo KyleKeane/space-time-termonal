@@ -97,6 +97,10 @@ def default_bindings() -> BindingMap:
         `d` deletes the focused cell, `y` duplicates it,
         Alt+Up / Alt+Down move the focused cell within the session,
         F2 (or Ctrl+.) opens the contextual actions menu.
+        NVDA-style heading navigation (F61):
+          `]` / `[` jump forward / backward to the next heading
+            of any level,
+          `1`..`6` jump forward to the next heading of that level.
 
     INPUT mode:
         Backspace deletes the character before the caret,
@@ -152,6 +156,14 @@ def default_bindings() -> BindingMap:
             Key.printable("y"): "duplicate_cell",
             Key.special("up", Modifier.ALT): "move_cell_up",
             Key.special("down", Modifier.ALT): "move_cell_down",
+            Key.printable("]"): "next_heading",
+            Key.printable("["): "prev_heading",
+            Key.printable("1"): "next_heading_1",
+            Key.printable("2"): "next_heading_2",
+            Key.printable("3"): "next_heading_3",
+            Key.printable("4"): "next_heading_4",
+            Key.printable("5"): "next_heading_5",
+            Key.printable("6"): "next_heading_6",
             kc.F2: "open_action_menu",
             menu_open: "open_action_menu",
             repeat_narration: "repeat_last_narration",
@@ -226,6 +238,8 @@ META_COMMANDS: tuple[str, ...] = (
     "welcome",
     "repeat",
     "state",
+    "heading",
+    "toc",
 )
 
 # "Ambient" meta-commands do their job without taking focus away from
@@ -236,7 +250,7 @@ META_COMMANDS: tuple[str, ...] = (
 # mode. Commands NOT in this set (today: `:settings`, `:quit`)
 # inherently require a mode change and go through `abandon_input_mode`.
 AMBIENT_META_COMMANDS: frozenset[str] = frozenset(
-    {"help", "save", "pwd", "commands", "welcome", "repeat", "state"}
+    {"help", "save", "pwd", "commands", "welcome", "repeat", "state", "toc"}
 )
 
 # `:name optional-argument` — case-insensitive in the name, everything
@@ -251,6 +265,7 @@ HELP_LINES: tuple[str, ...] = (
     "ASAT quick reference.",
     "NOTEBOOK:  Up/Down walk cells, Enter type, Ctrl+N new, Ctrl+O output, Ctrl+, settings.",
     "           d delete, y duplicate, Alt+Up/Down reorder.",
+    "           ] / [ next / prev heading; 1..6 next heading of that level.",
     "INPUT:     Enter submits, Escape leaves without running.",
     "           Backspace/Delete cut, Left/Right walk, Home/End jump (or Ctrl+A/E).",
     "           Ctrl+W kills word, Ctrl+U kills to start, Ctrl+K kills to end.",
@@ -261,7 +276,7 @@ HELP_LINES: tuple[str, ...] = (
     "           Ctrl+Z undo, Ctrl+Y redo edits in the order you made them.",
     "           Ctrl+R resets to defaults at cursor scope (Enter confirms, Escape cancels).",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
-    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :state, :commands, :reset, :welcome, :repeat.",
+    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :state, :commands, :reset, :welcome, :repeat, :heading, :toc.",
     "           `:help topics` lists focused tours; `:help <topic>` narrates one (navigation, cells, settings, audio, search, meta).",
     "           `:welcome` replays the first-run tour; `:repeat` (or Ctrl+R in notebook/input) re-speaks the last narration.",
     "           Meta-commands are case-insensitive and accept a trailing argument.",
@@ -585,9 +600,56 @@ class InputRouter:
             self._publish_commands()
         elif command == "reset":
             self._handle_meta_reset(argument)
+        elif command == "heading":
+            self._handle_meta_heading(argument)
+        elif command == "toc":
+            self._publish_toc()
         # `repeat`, `save`, `quit`, `welcome` are handled by the
         # Application via the ACTION_INVOKED payload's `meta_command`
         # key — no router-side dispatch needed here.
+
+    def _handle_meta_heading(self, argument: str) -> None:
+        """Append a heading cell from `:heading <level> <title>`.
+
+        Expects `<level>` as a single digit 1..6 followed by a
+        non-empty title. Malformed arguments surface a HELP_REQUESTED
+        hint instead of silently creating a wrong-level heading.
+        """
+        level, title = _parse_heading_argument(argument)
+        if level is None or title is None:
+            publish_event(
+                self._bus,
+                EventType.HELP_REQUESTED,
+                {
+                    "lines": [
+                        "`:heading <level> <title>` — level is 1..6, "
+                        "title is the remainder of the line.",
+                        "Example: `:heading 2 Setup`.",
+                    ],
+                },
+                source=self.SOURCE,
+            )
+            return
+        self._cursor.new_heading_cell(level, title)
+
+    def _publish_toc(self) -> None:
+        """Announce the notebook's heading outline via HELP_REQUESTED."""
+        toc = self._cursor.list_headings()
+        if not toc:
+            lines = [
+                "No headings in this notebook yet.",
+                "Add one with `:heading <level> <title>` (level 1..6).",
+            ]
+        else:
+            lines = ["Table of contents:"]
+            for index, level, title, _ in toc:
+                lines.append(f"  cell {index + 1}: H{level} — {title}")
+        publish_event(
+            self._bus,
+            EventType.HELP_REQUESTED,
+            {"lines": lines},
+            source=self.SOURCE,
+        )
 
     def _handle_meta_reset(self, argument: str) -> None:
         """Open settings mode and begin a reset confirmation.
@@ -1050,6 +1112,14 @@ class InputRouter:
             "duplicate_cell": _void(self._cursor.duplicate_focused_cell),
             "move_cell_up": _void(lambda: self._cursor.move_focused_cell(-1)),
             "move_cell_down": _void(lambda: self._cursor.move_focused_cell(+1)),
+            "next_heading": self._next_heading_action(None),
+            "prev_heading": self._prev_heading_action(None),
+            "next_heading_1": self._next_heading_action(1),
+            "next_heading_2": self._next_heading_action(2),
+            "next_heading_3": self._next_heading_action(3),
+            "next_heading_4": self._next_heading_action(4),
+            "next_heading_5": self._next_heading_action(5),
+            "next_heading_6": self._next_heading_action(6),
             "output_search_begin": self._output_search_begin,
             "output_goto_begin": self._output_goto_begin,
             "output_search_next": self._output_search_next,
@@ -1072,6 +1142,30 @@ class InputRouter:
         if self._output_cursor is None:
             return
         operation(self._output_cursor)
+
+    def _next_heading_action(self, level: Optional[int]) -> ActionHandler:
+        """Handler that reports whether a forward heading jump landed."""
+        def handler() -> Optional[dict[str, object]]:
+            cell = self._cursor.move_to_next_heading(level=level)
+            payload: dict[str, object] = {"matched": cell is not None}
+            if level is not None:
+                payload["level"] = level
+            if cell is not None:
+                payload["cell_id"] = cell.cell_id
+            return payload
+        return handler
+
+    def _prev_heading_action(self, level: Optional[int]) -> ActionHandler:
+        """Handler that reports whether a backward heading jump landed."""
+        def handler() -> Optional[dict[str, object]]:
+            cell = self._cursor.move_to_previous_heading(level=level)
+            payload: dict[str, object] = {"matched": cell is not None}
+            if level is not None:
+                payload["level"] = level
+            if cell is not None:
+                payload["cell_id"] = cell.cell_id
+            return payload
+        return handler
 
     def _output_search_begin(self) -> Optional[dict[str, object]]:
         """Open the `/` search composer on the attached output cursor."""
@@ -1198,6 +1292,31 @@ def _suggest_meta_command(name: str) -> Optional[str]:
         name.lower(), META_COMMANDS, n=1, cutoff=0.6
     )
     return matches[0] if matches else None
+
+
+def _parse_heading_argument(argument: str) -> tuple[Optional[int], Optional[str]]:
+    """Parse `<level> <title>` from a `:heading` meta-command argument.
+
+    Returns `(level, title)` on success or `(None, None)` for any
+    malformed input. `level` must be a single digit 1..6; `title`
+    must be non-empty after stripping whitespace.
+    """
+    stripped = argument.strip()
+    if not stripped:
+        return None, None
+    parts = stripped.split(maxsplit=1)
+    if len(parts) != 2:
+        return None, None
+    level_text, title = parts
+    if not level_text.isdigit():
+        return None, None
+    level = int(level_text)
+    if not (1 <= level <= 6):
+        return None, None
+    title = title.strip()
+    if not title:
+        return None, None
+    return level, title
 
 
 def _parse_reset_scope(argument: str) -> Optional[ResetScope]:

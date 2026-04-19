@@ -23,6 +23,7 @@ turning the bank into a programming language:
     key == <literal>        equality (literal parsed via ast.literal_eval)
     key != <literal>        inequality
     key in [<literals>]     membership in a list
+    <clause> and <clause>   conjunction (all clauses must match)
 
 Templates use `str.format_map` with a default-to-empty-string missing
 lookup so a binding can reference any payload key without worrying
@@ -99,6 +100,10 @@ class DefaultPredicateEvaluator:
         text = expression.strip()
         if not text:
             return True
+        if " and " in text:
+            return all(
+                self.matches(clause, payload) for clause in text.split(" and ")
+            )
         for operator, comparer in (
             (" != ", _not_equal),
             (" == ", _equal),

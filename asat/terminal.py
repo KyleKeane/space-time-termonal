@@ -98,6 +98,14 @@ class TerminalRenderer:
         mode = event.payload.get("new_mode", "?")
         cell_id = event.payload.get("new_cell_id")
         suffix = f" #{cell_id[:6]}" if isinstance(cell_id, str) else ""
+        kind = event.payload.get("kind")
+        heading_level = event.payload.get("heading_level")
+        heading_title = event.payload.get("heading_title")
+        if kind == "heading" and heading_level is not None and heading_title:
+            self._write_line(
+                f"[{mode}{suffix} H{heading_level} {heading_title}]"
+            )
+            return
         self._write_line(f"[{mode}{suffix}]")
 
     def _on_action_invoked(self, event: Event) -> None:
