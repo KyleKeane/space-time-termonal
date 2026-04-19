@@ -54,6 +54,9 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "input_buffer": "",
         "transition": "mode",
         "command": "",
+        "kind": "command",
+        "heading_level": None,
+        "heading_title": None,
     },
     EventType.OUTPUT_LINE_FOCUSED: {
         "cell_id": "c1",
@@ -284,6 +287,61 @@ class DefaultBankSmokeTests(unittest.TestCase):
                 "command_failed_timeout",
                 "command_failed_generic",
             ],
+        )
+
+    def test_focus_changed_cell_branches_by_kind(self) -> None:
+        """F61: heading landings narrate the heading; command landings
+        narrate the command. The two branches are mutually exclusive so
+        the user never hears both."""
+        bus = EventBus()
+        sink = MemorySink()
+        engine = SoundEngine(bus, default_sound_bank(), sink, sample_rate=8000)
+        self.addCleanup(engine.close)
+
+        spoken_labels: list[str] = []
+        bus.subscribe(
+            EventType.AUDIO_SPOKEN,
+            lambda event: spoken_labels.append(event.payload["binding_id"]),
+        )
+
+        publish_event(
+            bus,
+            EventType.FOCUS_CHANGED,
+            {
+                "old_mode": "notebook",
+                "new_mode": "notebook",
+                "old_cell_id": "c0",
+                "new_cell_id": "c1",
+                "input_buffer": "",
+                "transition": "cell",
+                "command": "",
+                "kind": "heading",
+                "heading_level": 2,
+                "heading_title": "Setup",
+            },
+            source="notebook",
+        )
+        publish_event(
+            bus,
+            EventType.FOCUS_CHANGED,
+            {
+                "old_mode": "notebook",
+                "new_mode": "notebook",
+                "old_cell_id": "c1",
+                "new_cell_id": "c2",
+                "input_buffer": "",
+                "transition": "cell",
+                "command": "ls",
+                "kind": "command",
+                "heading_level": None,
+                "heading_title": None,
+            },
+            source="notebook",
+        )
+
+        self.assertEqual(
+            spoken_labels,
+            ["focus_changed_heading", "focus_changed_cell"],
         )
 
     def test_settings_reset_outcome_branches_each_pick_a_binding(self) -> None:

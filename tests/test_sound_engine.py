@@ -80,6 +80,26 @@ class PredicateTests(unittest.TestCase):
         with self.assertRaises(SoundEngineError):
             self.evaluator.matches("stream ~= 'weird'", {"stream": "x"})
 
+    def test_conjunction_requires_all_clauses_to_match(self) -> None:
+        payload = {"transition": "cell", "kind": "heading"}
+        self.assertTrue(
+            self.evaluator.matches(
+                "transition == 'cell' and kind == 'heading'", payload
+            )
+        )
+        self.assertFalse(
+            self.evaluator.matches(
+                "transition == 'cell' and kind == 'heading'",
+                {"transition": "cell", "kind": "command"},
+            )
+        )
+        self.assertFalse(
+            self.evaluator.matches(
+                "transition == 'cell' and kind == 'heading'",
+                {"transition": "mode", "kind": "heading"},
+            )
+        )
+
 
 class SoundEngineDispatchTests(unittest.TestCase):
 

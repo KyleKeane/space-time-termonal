@@ -3300,43 +3300,43 @@ killing-the-shell, sentinel-prefix-mid-line) and
 
 ## F61 — Cell hierarchy: sections, folds, and grouping
 
-**Gap.** `Session.cells` is a flat ordered list. There is no
-parent/child relationship, no section header that groups several
-cells together, no fold/collapse, no "this cell depends on that
-cell". The only navigation primitive is "previous / next cell
-linearly" (`asat/notebook.py:546-559`).
+**Sketch (partially shipped).** The flat `Session.cells` list now
+has a polymorphic `Cell.kind: CellKind` discriminator with two
+values: `COMMAND` (the existing executable cell) and `HEADING`
+(an announce-only section header carrying `heading_level` 1-6 and
+`heading_title`). Heading cells cannot be executed (`mark_running`
+/ `update_command` guard on `is_executable`); `Application.execute`
+short-circuits if the target cell is a heading. Session JSON
+gained `kind` / `heading_level` / `heading_title` fields with
+backward compatibility — a missing `kind` defaults to `COMMAND` so
+pre-F61 sessions keep loading.
 
-**Where it surfaces.** A long session — say twenty exploratory
-shell commands followed by ten cells of a Python data pull —
-walks as a single flat list. A user who wants to "jump back to
-the data-pull section" has to remember roughly where it started
-and Up-arrow there. There is no "collapse the chunk I'm not
-working on", no folding for navigation by section, and no parent
-context narrated when entering a cell.
+NOTEBOOK mode gained NVDA-style keystrokes for outline jumping:
+`]` / `[` step to the next / previous heading of any level, and
+`1`-`6` jump to the next heading of that specific level. INPUT
+mode grew two meta-commands: `:heading <level> <title>` inserts a
+heading cell before the next prompt, and `:toc` narrates the
+outline (ambient — the buffer survives so the user can resume
+typing). `FOCUS_CHANGED` now carries `kind` / `heading_level` /
+`heading_title`; the default sound bank branches on
+`transition == cell and kind == 'heading'` to voice "heading level
+N: title" instead of the usual `{command}` readout.
 
-**Sketch.** Two layered changes, either one shippable on its
-own.
-
-1. **Section headers (lightweight).** Add a new `CellKind`
-   discriminator on `Cell` (`SECTION` vs the existing
-   `COMMAND`). A section cell carries a title string, no
-   command, no output. NOTEBOOK navigation gains
-   "previous / next section" (Ctrl+Up / Ctrl+Down) and the
-   `:state` meta-command additionally narrates "section: <title>"
-   when the cursor is inside one. Sections do not nest in the
-   first cut.
-2. **Folding (deeper).** Each section can be collapsed; while
-   collapsed, Up/Down skips its children and the narrator says
-   "section <title>, <N> cells, collapsed". A `z` keystroke at
-   a section header toggles the fold, mirroring vim.
+**Remaining.** Parent-scope navigation (`{` / `}` jump to the
+enclosing heading), fold / collapse (`z` toggles), and scope-
+based selection (`select_heading_scope()` picks the focused
+heading plus its children through the next same-level heading)
+are still open. Those layer on top of the current flat
+implementation without rewriting it.
 
 **Forward-looking notes.**
 
 - **Nested sections.** Real-world workflows want subsections
   (a top-level "data" section with "load" and "clean"
-  subsections). Defer to a v2 once the flat case settles —
-  nesting adds focus-restoration complexity (where does the
-  cursor land after collapsing the parent of where you were?).
+  subsections). The `heading_level` field already models nesting;
+  what's missing is a `scope_range(cells, heading_index)` helper
+  and focus-restoration rules when collapsing a parent of the
+  current cursor.
 - **Cross-cell dependencies.** Once F60 ships a persistent
   backend, sections become natural dependency boundaries (a
   "setup" section everyone re-runs, a "scratch" section nobody
@@ -3344,8 +3344,10 @@ own.
 - **Macro interaction.** F56's `expect`/`capture` steps will
   want a way to address "every cell in section X" — give
   sections stable ids, not just titles.
-- **Persistence.** Bump the `Session` JSON schema_version when
-  sections land so loaders can detect old files cleanly.
+- **Persistence.** The current loader accepts missing `kind` as
+  `COMMAND`; when folding / scope data lands, bump
+  `Session.schema_version` so old loaders reject files they
+  cannot render faithfully.
 
 ---
 

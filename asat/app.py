@@ -311,11 +311,18 @@ class Application:
         the caller never blocks waiting for the command to finish.
         Otherwise the call runs synchronously on the caller's thread,
         matching pre-F62 behaviour.
+
+        Non-executable cells (F61 heading landmarks, future read-only
+        kinds) are silently skipped so an accidental stray id cannot
+        crash the driver — the router paths already guard against
+        routing headings here, this is belt-and-braces.
         """
+        cell = self.session.get_cell(cell_id)
+        if not cell.is_executable:
+            return
         if self.execution_worker is not None:
             self.execution_worker.enqueue(cell_id)
             return
-        cell = self.session.get_cell(cell_id)
         self.kernel.execute(cell)
 
     def close(self) -> None:

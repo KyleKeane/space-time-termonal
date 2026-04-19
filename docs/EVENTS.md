@@ -134,7 +134,7 @@ and `asat.notebook.NotebookCursor` (`source="notebook"`).
 
 | EventType        | Payload keys                                                                   | Source          |
 |------------------|--------------------------------------------------------------------------------|-----------------|
-| `FOCUS_CHANGED`  | `old_mode`, `new_mode`, `old_cell_id`, `new_cell_id`, `input_buffer`, `transition`, `command` | `notebook`      |
+| `FOCUS_CHANGED`  | `old_mode`, `new_mode`, `old_cell_id`, `new_cell_id`, `input_buffer`, `transition`, `command`, `kind`, `heading_level`, `heading_title` | `notebook`      |
 | `KEY_PRESSED`    | `name`, `char`, `modifiers`                                                    | `input_router`  |
 | `ACTION_INVOKED` | `action`, `focus_mode`, `cell_id`, `key_name`, plus action-specific extras     | `input_router`  |
 
@@ -148,6 +148,13 @@ and `asat.notebook.NotebookCursor` (`source="notebook"`).
 * `command` is the focused cell's current command text at transition
   time, or `""` when no cell is focused. Bindings can narrate it with
   a `{command}` template.
+* `kind` is the focused cell's `CellKind` value (`"command"` or
+  `"heading"`) at transition time; defaults to `"command"` when no
+  cell is focused. `heading_level` / `heading_title` are populated
+  only for heading cells (1-6 and the title string respectively);
+  otherwise `None`. Bindings can branch on `transition == cell and
+  kind == 'heading'` to narrate headings distinctly — see the
+  `focus_changed_heading` binding in the default bank.
 
 `ACTION_INVOKED` extras:
 
