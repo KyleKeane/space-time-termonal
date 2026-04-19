@@ -34,6 +34,10 @@ stdout that mirrors what the audio is saying.
   real prompt — `cd src` in cell 1, `ls` in cell 2 lists `src/`.
   Pass `--no-shared-shell` to opt out (each cell back to a fresh
   subprocess); Windows still uses per-cell subprocesses today.
+- **An asynchronous submission queue.** Submit a cell while an
+  earlier one is still running and it lands in a serial background
+  queue; the keyboard and action menu stay responsive, and a soft
+  tick confirms the submission the instant you hit Enter.
 - **Four focus modes** — NOTEBOOK (walk cells), INPUT (type a
   command), OUTPUT (step line-by-line through one cell's captured
   output, with `/` search and `g` goto), SETTINGS (live editor for
@@ -141,6 +145,7 @@ engine voices it.
 | `kernel.py`                | `ExecutionKernel`: routes a cell to the runner and publishes lifecycle.   |
 | `runner.py`                | Thin `subprocess.Popen` wrapper with line-streamed stdout/stderr.         |
 | `shell_backend.py`         | F60 persistent shell: one long-lived bash per session via sentinel-framed I/O. |
+| `execution_worker.py`      | F62 background queue: serial daemon thread feeding the kernel.            |
 | `execution.py`             | `ExecutionRequest` / `ExecutionResult` value types.                       |
 | `output_buffer.py`         | `OutputRecorder` + `OutputBuffer`: per-cell line capture from events.     |
 | `output_cursor.py`         | OUTPUT-mode line cursor: navigation, search, goto.                        |

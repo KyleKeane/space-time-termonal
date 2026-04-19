@@ -89,6 +89,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     )
     log_factory = _log_factory(args.log)
     runner = _pick_runner(no_shared_shell=args.no_shared_shell, quiet=args.quiet)
+    # The `--check` path builds the Application only to read its
+    # state; running the async worker there would pointlessly spawn a
+    # thread. Every other CLI invocation flips the F62 queue on so a
+    # slow command never freezes the keyboard read.
+    async_execution = not args.check
     app = Application.build(
         sink=sink,
         bank=bank,
@@ -100,6 +105,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         onboarding_factory=onboarding_factory,
         log_factory=log_factory,
         runner=runner,
+        async_execution=async_execution,
     )
     if args.check:
         _print_check_report(app, args)

@@ -35,6 +35,12 @@ class EventType(str, Enum):
         COMMAND_SUBMITTED, COMMAND_STARTED, COMMAND_COMPLETED,
         COMMAND_FAILED, COMMAND_CANCELLED
 
+    Execution queue (F62):
+        COMMAND_QUEUED fires the instant a submission is accepted by
+        the `ExecutionWorker`, carrying `queue_depth` so an audio cue
+        can narrate "queued, <N> ahead". QUEUE_DRAINED fires when the
+        worker has no pending work left.
+
     Output streaming:
         OUTPUT_CHUNK, ERROR_CHUNK
 
@@ -91,6 +97,8 @@ class EventType(str, Enum):
     COMMAND_FAILED = "command.failed"
     COMMAND_FAILED_STDERR_TAIL = "command.failed.stderr_tail"
     COMMAND_CANCELLED = "command.cancelled"
+    COMMAND_QUEUED = "command.queued"
+    QUEUE_DRAINED = "queue.drained"
 
     OUTPUT_CHUNK = "output.chunk"
     ERROR_CHUNK = "error.chunk"

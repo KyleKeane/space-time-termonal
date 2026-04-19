@@ -198,6 +198,63 @@ class ApplicationSharedShellTests(unittest.TestCase):
         self.assertEqual(second_cell.exit_code, 0)
 
 
+class ApplicationAsyncExecutionTests(unittest.TestCase):
+    """F62: `async_execution=True` routes submissions through a worker.
+
+    The worker thread runs cells serially and publishes queue lifecycle
+    events. `Application.close()` must stop the worker cleanly, so the
+    assertion that the thread is no longer alive doubles as a leak test.
+    """
+
+    def test_submission_enqueues_and_runs_to_completion(self) -> None:
+        app = Application.build(async_execution=True)
+        self.addCleanup(app.close)
+        app.kernel._runner = StubRunner(stdout="hi\n", exit_code=0)
+
+        _type(app, "echo hi")
+        app.handle_key(kc.ENTER)
+        pending = app.drain_pending()
+        self.assertEqual(len(pending), 1)
+        app.execute(pending[0])
+
+        # The worker is a background thread, so we wait for it rather
+        # than asserting immediately.
+        assert app.execution_worker is not None
+        self.assertTrue(app.execution_worker.wait_until_drained(timeout=2.0))
+
+        cell = app.session.get_cell(pending[0])
+        self.assertEqual(cell.status, CellStatus.COMPLETED)
+        self.assertEqual(cell.exit_code, 0)
+
+    def test_command_queued_and_queue_drained_fire(self) -> None:
+        app = Application.build(async_execution=True)
+        self.addCleanup(app.close)
+        app.kernel._runner = StubRunner(stdout="", exit_code=0)
+
+        seen: list[EventType] = []
+        app.bus.subscribe(EventType.COMMAND_QUEUED, lambda e: seen.append(e.event_type))
+        app.bus.subscribe(EventType.QUEUE_DRAINED, lambda e: seen.append(e.event_type))
+
+        _type(app, "true")
+        app.handle_key(kc.ENTER)
+        for cid in app.drain_pending():
+            app.execute(cid)
+
+        assert app.execution_worker is not None
+        self.assertTrue(app.execution_worker.wait_until_drained(timeout=2.0))
+        self.assertIn(EventType.COMMAND_QUEUED, seen)
+        self.assertIn(EventType.QUEUE_DRAINED, seen)
+
+    def test_close_stops_the_worker_thread(self) -> None:
+        app = Application.build(async_execution=True)
+        worker = app.execution_worker
+        assert worker is not None
+        self.assertIsNotNone(worker._thread)
+        app.close()
+        # After close the worker has no active thread reference.
+        self.assertIsNone(worker._thread)
+
+
 class ApplicationSubmissionTests(unittest.TestCase):
     def test_typing_and_submit_executes_a_cell(self) -> None:
         sink = MemorySink()

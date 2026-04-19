@@ -42,6 +42,8 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "line_count": 1,
     },
     EventType.COMMAND_CANCELLED: {"cell_id": "c1"},
+    EventType.COMMAND_QUEUED: {"cell_id": "c1", "queue_depth": 1},
+    EventType.QUEUE_DRAINED: {"last_cell_id": "c1", "queue_depth": 0},
     EventType.OUTPUT_CHUNK: {"cell_id": "c1", "line": "hello"},
     EventType.ERROR_CHUNK: {"cell_id": "c1", "line": "boom"},
     EventType.FOCUS_CHANGED: {
