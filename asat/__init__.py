@@ -83,6 +83,7 @@ from asat.keyboard import (
 )
 from asat.keys import Key, Modifier
 from asat.notebook import FocusMode, FocusState, NotebookCursor
+from asat.onboarding import DEFAULT_ONBOARDING_LINES, OnboardingCoordinator
 from asat.prompt_context import PromptContext
 from asat.output_buffer import OutputBuffer, OutputLine, OutputRecorder
 from asat.output_cursor import OutputCursor
@@ -114,6 +115,7 @@ __all__ = [
     "ChannelLayout",
     "Clipboard",
     "ControlToken",
+    "DEFAULT_ONBOARDING_LINES",
     "DEFAULT_SAMPLE_RATE",
     "EscapeToken",
     "Event",
@@ -140,6 +142,7 @@ __all__ = [
     "Modifier",
     "NotebookCursor",
     "OSCToken",
+    "OnboardingCoordinator",
     "OutputBuffer",
     "OutputCursor",
     "OutputLine",

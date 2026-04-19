@@ -39,6 +39,7 @@ from asat.input_router import InputRouter, default_bindings
 from asat.kernel import ExecutionKernel
 from asat.keys import Key
 from asat.notebook import FocusMode, NotebookCursor
+from asat.onboarding import OnboardingCoordinator
 from asat.output_buffer import OutputRecorder
 from asat.output_cursor import OutputCursor
 from asat.prompt_context import PromptContext
@@ -74,6 +75,7 @@ class Application:
     action_catalog: ActionCatalog
     action_menu: ActionMenu
     prompt_context: PromptContext
+    onboarding: Optional[OnboardingCoordinator] = None
     session_path: Optional[Path] = None
     running: bool = True
 
@@ -94,6 +96,9 @@ class Application:
         text_trace: Optional[TextIO] = None,
         clipboard_factory: Optional[
             "Callable[[EventBus], Clipboard]"
+        ] = None,
+        onboarding_factory: Optional[
+            "Callable[[EventBus], OnboardingCoordinator]"
         ] = None,
     ) -> "Application":
         """Wire every collaborator with sensible defaults.
@@ -119,6 +124,15 @@ class Application:
         clipboard) without forcing the in-process `MemoryClipboard`
         default on every test. The factory receives the freshly built
         `EventBus` so adapters can publish warnings.
+
+        `onboarding_factory` hooks in an `OnboardingCoordinator` that
+        fires a one-time welcome tour the first time ASAT runs on a
+        machine. The factory receives the bus and is expected to
+        return a configured coordinator; `Application.build` invokes
+        `.run()` after the session banner publishes, so the greeting
+        lands after the newcomer knows the session is alive. Tests
+        and `--quiet` mode leave this unset, which skips onboarding
+        entirely.
         """
         bus = EventBus()
         seeded = session is None
@@ -163,6 +177,7 @@ class Application:
         prompt_context = PromptContext(bus)
         if text_trace is not None:
             TerminalRenderer(bus, stream=text_trace)
+        onboarding = onboarding_factory(bus) if onboarding_factory is not None else None
         app = cls(
             bus=bus,
             session=resolved_session,
@@ -178,6 +193,7 @@ class Application:
             action_catalog=action_catalog,
             action_menu=action_menu,
             prompt_context=prompt_context,
+            onboarding=onboarding,
             session_path=Path(session_path) if session_path is not None else None,
         )
         # Everything below fires AFTER sound_engine and (if requested)
@@ -201,6 +217,8 @@ class Application:
             )
         if seeded:
             cursor.new_cell()
+        if onboarding is not None:
+            onboarding.run()
         return app
 
     def handle_key(self, key: Key) -> Optional[str]:

@@ -37,6 +37,7 @@ from asat.audio_sink import (
     pick_live_sink,
 )
 from asat.keyboard import KeyboardNotAvailable, KeyboardReader, pick_default
+from asat.onboarding import OnboardingCoordinator
 from asat.session import Session
 from asat.sound_bank import SoundBank
 
@@ -75,6 +76,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # `SESSION_CREATED`/`FOCUS_CHANGED`, so the launch banner and the
     # first `[input #…]` line reach the user.
     trace_stream = None if args.quiet or args.check else sys.stdout
+    onboarding_factory = _onboarding_factory(quiet=args.quiet, check=args.check)
     app = Application.build(
         sink=sink,
         bank=bank,
@@ -83,6 +85,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         session_path=args.session,
         text_trace=trace_stream,
         clipboard_factory=SystemClipboard,
+        onboarding_factory=onboarding_factory,
     )
     if args.check:
         _print_check_report(app, args)
@@ -212,6 +215,26 @@ def _load_bank(path: Optional[Path]) -> Optional[SoundBank]:
             "the flag to use the built-in default bank."
         )
     return SoundBank.load(path)
+
+
+def _onboarding_factory(
+    *, quiet: bool, check: bool
+):
+    """Return an onboarding factory or None.
+
+    `--quiet` opts out of the tour (the user has explicitly asked for
+    a silent run). `--check` also skips it so the diagnostic report
+    stays pure. Otherwise we hand `Application.build` a factory that
+    builds an `OnboardingCoordinator` pointing at `~/.asat/first-run-done`.
+    """
+    if quiet or check:
+        return None
+    sentinel = Path.home() / ".asat" / "first-run-done"
+
+    def _factory(bus) -> OnboardingCoordinator:
+        return OnboardingCoordinator(bus, sentinel)
+
+    return _factory
 
 
 def _load_session(path: Optional[Path]) -> Optional[Session]:

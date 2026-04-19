@@ -65,6 +65,9 @@ class EventType(str, Enum):
 
     Prompt context:
         PROMPT_REFRESH
+
+    Onboarding:
+        FIRST_RUN_DETECTED
     """
 
     SESSION_CREATED = "session.created"
@@ -110,6 +113,8 @@ class EventType(str, Enum):
     HELP_REQUESTED = "help.requested"
 
     PROMPT_REFRESH = "prompt.refresh"
+
+    FIRST_RUN_DETECTED = "onboarding.first_run"
 
     SETTINGS_OPENED = "settings.opened"
     SETTINGS_CLOSED = "settings.closed"

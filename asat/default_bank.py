@@ -79,6 +79,7 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.SETTINGS_SAVED,
     EventType.HELP_REQUESTED,
     EventType.PROMPT_REFRESH,
+    EventType.FIRST_RUN_DETECTED,
 })
 
 
@@ -512,6 +513,23 @@ def _default_bindings() -> tuple[EventBinding, ...]:
                 "settings. Type colon quit to exit."
             ),
             priority=220,
+        ),
+
+        # First-run onboarding: a returning user never hears this.
+        # The TerminalRenderer prints each welcome line; the narrator
+        # voice speaks a short greeting so the audio-only experience
+        # still acknowledges the tour. High priority so it wins over
+        # whatever else is queued during startup.
+        EventBinding(
+            id="first_run_welcome",
+            event_type=EventType.FIRST_RUN_DETECTED.value,
+            voice_id="narrator",
+            sound_id="settings_chime",
+            say_template=(
+                "Welcome to ASAT. Type colon help to hear the keystroke "
+                "cheat sheet."
+            ),
+            priority=250,
         ),
 
         # Prompt context: when the user lands in INPUT mode AFTER a
