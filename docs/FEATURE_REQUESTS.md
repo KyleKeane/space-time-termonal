@@ -764,6 +764,12 @@ and VS Code outline view — trimmed to the minimum a blind user
 needs, with zero visual chrome: no tree gutters, no collapse
 triangles, just spoken structure and keybindings.
 
+**See also.** F51 (notebook file format) must persist every
+cell kind this entry introduces. The schema already reserves
+`"heading"` and `"text"` kinds; implementing F27 is the trigger
+to populate them. Keep the loader's unknown-kind rejection in
+mind so a mismatched ASAT version fails loudly.
+
 ---
 
 ## F28 — Speech output console (programmatic + braille / screen-reader routing)
@@ -849,6 +855,14 @@ but strip the UI to: one line at the top announcing
 navigation, nothing for the screen reader to wade through. Every
 visual surface stays single-pane and minimal so navigation cost is
 purely in keystrokes, not in spoken chrome.
+
+**See also.** This entry is the in-memory foundation for the
+F50 – F55 workspace cluster. F53 (focus memory) and F55
+(persistent window state) both assume a `TabBar` with
+`list[NotebookTab]` and `focus_index`; implement that
+structure here even if the per-tab kernel half of F29 slips.
+F54's `:new-notebook` / `:close-tab` meta-commands drive this
+tab bar.
 
 ---
 
@@ -1561,6 +1575,740 @@ Pick any one when you want a short refactor loop.
 docstring in the touched module; no user-manual changes; the
 `HANDOFF.md` test count moves forward by whatever new regression
 tests the bullet adds.
+
+---
+
+## Cluster: multi-notebook workspaces (F50 – F55)
+
+F50 – F55 form one architectural proposal, not six independent
+features. Land them in order: each entry depends on the previous
+one, and implementing a later entry without its predecessors
+leaves the codebase in a worse state than it is today.
+
+Single-sentence vision: **one ASAT process manages one workspace
+directory, which holds multiple persistent notebooks opened as
+tabs in a single window, with focus and settings remembered per
+tab.**
+
+The cluster sits adjacent to two earlier entries — keep them
+cross-referenced as you work:
+
+- **F27** (heading and text cells) defines *what* a notebook
+  contains. F51's on-disk schema must cover every cell kind F27
+  introduces; implementing F51 first and F27 later is fine as
+  long as the schema is forward-compatible.
+- **F29** (tabs + per-tab backend kernel) defines *how* tabs
+  work at the `Application` layer. F53 (focus memory) and F55
+  (window state persistence) both assume F29's `TabBar`
+  scaffolding is in place. F29 may land before or alongside
+  F50, but no tab-level persistence work should start before F29
+  ships.
+
+The recommended landing order is:
+
+1. **F50** — directory layout, marker file, bootstrap.
+2. **F29** — in-memory tabs + per-tab kernels (if not shipped).
+3. **F51** — on-disk notebook format + save/load.
+4. **F54** — CLI + `:workspace` meta-commands.
+5. **F53** — per-tab focus memory.
+6. **F55** — persisted window state (which tabs are open).
+7. **F52** — settings cascade (can be started any time after F50).
+
+Each of F50 – F55 below contains a verbose, implementation-ready
+sketch: exact file layouts, JSON schemas, key bindings, event
+types, and test strategies. They are written to be picked up
+months from now by someone (possibly Claude) who no longer has
+the cluster in short-term context.
+
+---
+
+## F50 — Workspace directory model
+
+**Gap.** ASAT has no concept of a "workspace". State that should
+be persistent (the cells a user is building up, which tabs are
+open, workspace-scoped settings) is either in-memory only or
+stored at a single global path (`~/.asat/bank.json`). There is
+no way to keep two unrelated projects' notebooks and sounds
+separate, no way to share a folder full of ASAT work with a
+collaborator, and no way to "open" a previous session.
+
+**Where it surfaces.** A user with two long-running efforts
+(training runs + sysadmin scratch) has to manually export and
+re-import the bank if they want different audio cues per
+project. Closing ASAT loses every command cell typed. A teammate
+cannot hand over a directory and say "open this in ASAT" —
+there is no such concept.
+
+**Sketch.** Define a workspace as an absolute directory path
+whose layout is:
+
+```
+<workspace>/
+  .asat-workspace         # marker file, JSON: {"schema_version": 1, "created_at": ISO8601}
+  notebooks/              # one file per notebook (see F51)
+    <slug>.asatnb
+    <slug>.asatnb.state   # per-notebook sidecar (cursor, focus mode, last opened)
+  settings/
+    bank.json             # workspace-level sound-bank overrides (see F52)
+    window.json           # window state: open tabs, focus_index, timestamps (see F55)
+  logs/                   # optional, created on demand by F22 diagnostic log
+    events.jsonl
+```
+
+The `.asat-workspace` marker file is the single source of truth
+for "is this directory an ASAT workspace?". Its presence is both
+necessary and sufficient. The file itself carries a minimal
+JSON envelope: `{"schema_version": 1, "created_at": ISO8601}`;
+the rest of the workspace layout is implicit.
+
+Introduce `asat/workspace.py` with:
+
+- `@dataclass(frozen=True) class Workspace(root: Path)` — the
+  resolved, validated handle. Construction does *not* mutate the
+  filesystem; it only checks that `root` exists and (if it is
+  claimed to already be a workspace) that `.asat-workspace`
+  parses.
+- `Workspace.bootstrap(root: Path) -> Workspace` — class method
+  that creates `root` if missing, writes the marker file,
+  creates `notebooks/` and `settings/` subdirectories, and
+  returns the handle. Idempotent: re-bootstrapping an existing
+  workspace is a no-op that validates the marker.
+- `Workspace.is_workspace(root: Path) -> bool` — cheap check
+  used by F54 discovery logic.
+- `Workspace.notebooks_dir`, `Workspace.settings_dir`,
+  `Workspace.logs_dir` — `Path` properties. No I/O; just join.
+- `Workspace.notebook_paths() -> list[Path]` — sorted list of
+  `*.asatnb` files under `notebooks/`; used at window startup
+  to restore open tabs (F55).
+
+Events published on the bus:
+
+- `WORKSPACE_OPENED` — payload `{path, created_at}`; fired when
+  an `Application` binds to a workspace. Subscribers (the sound
+  bank, the logger, the tab bar) rehydrate state.
+- `WORKSPACE_CLOSED` — payload `{path}`; fired during shutdown
+  after all tabs flush.
+
+**Locking & concurrency.** Two ASAT processes must not write to
+the same workspace simultaneously. Implement advisory locking
+with a `.asat-workspace.lock` file holding `{pid, hostname,
+started_at}`. On `Workspace.bootstrap`/open, check for a stale
+lock (process no longer exists) and offer to steal it; on a
+live lock, refuse to open and narrate the conflict. File locking
+uses `fcntl.flock` on POSIX and `msvcrt.locking` on Windows,
+wrapped behind a small `asat/_filelock.py` helper. The helper
+must be kept tiny and OS-neutral; no third-party dependency.
+
+**Migration / backwards compat.** For users launching ASAT the
+old way (no path argument), F54 will pick a default workspace
+path; no existing on-disk data is rewritten. `~/.asat/bank.json`
+remains the user-level bank (see F52's cascade).
+
+**Tests.** `tests/test_workspace.py`:
+
+- `test_bootstrap_creates_layout` — fresh `tmp_path`, expect
+  `.asat-workspace`, `notebooks/`, `settings/` after bootstrap.
+- `test_bootstrap_idempotent` — second bootstrap does not
+  overwrite the marker's `created_at`.
+- `test_is_workspace_requires_marker` — directory without
+  marker returns False even if it has a `notebooks/` folder.
+- `test_stale_lock_is_steal_able` — seed a lock file with a PID
+  that definitely is not running; expect steal to succeed and
+  narrate.
+- `test_live_lock_refuses` — hold a real `flock`; expect open
+  to fail with a `WorkspaceBusy` error.
+
+**Docs touch points.**
+[`USER_MANUAL.md`](USER_MANUAL.md) gains a "Workspaces" section
+that explains the layout, the marker, and the lock file. A new
+[`docs/WORKSPACES.md`](WORKSPACES.md) owns the full reference
+(directory layout table, JSON schemas cross-linked to F51/F52/F55,
+concurrent-use semantics).
+
+---
+
+## F51 — Persistent notebook file format (`.asatnb`)
+
+**Gap.** Cells live exclusively in memory on the active
+`Session`. Closing ASAT discards every command, output, and
+timing datum. There is no file format, no save operation, no
+load operation, and nothing on disk that could represent a
+notebook to a future ASAT run or to a collaborator.
+
+**Where it surfaces.** A user who spent two hours walking
+through a deploy runbook cannot re-open it tomorrow to continue,
+share it with a teammate, attach it to a ticket, or diff today's
+run against last week's. Auditors cannot reconstruct "what
+commands did this user issue, when, and with what exit codes?".
+
+**Sketch.** Define a JSON-based file format, one notebook per
+file, stored under `<workspace>/notebooks/<slug>.asatnb`. JSON
+is the right choice: human-readable, git-diffable, stdlib only,
+zero ambiguity for screen readers that might inspect the file
+directly. Binary formats and SQLite are rejected on those
+grounds.
+
+**Top-level schema (schema_version 1).**
+
+```json
+{
+  "schema_version": 1,
+  "notebook_id": "nb-01HZS4VXTWkCieZ8LS5KyoBS",
+  "title": "deploy runbook",
+  "created_at": "2026-04-19T12:34:56Z",
+  "modified_at": "2026-04-19T15:02:11Z",
+  "cells": [ ... ],
+  "settings": { ... }
+}
+```
+
+Field rules:
+
+- `schema_version` (int, required): start at `1`; bump on any
+  breaking change. Loader refuses unknown versions with a
+  clear error pointing at `docs/WORKSPACES.md#migration`.
+- `notebook_id` (str, required): stable across renames; used by
+  F55 to identify tabs in `window.json` even if the file is
+  renamed on disk.
+- `title` (str, required): user-visible label shown in the tab
+  announcement (F29). Defaults to the file's slug at creation.
+- `created_at` / `modified_at` (ISO 8601, UTC, required): the
+  loader must refuse a file whose `modified_at < created_at`.
+- `settings` (object, optional): notebook-scoped overrides
+  consumed by F52's cascade. Missing = inherit everything.
+
+**Cell schema.** Every cell has `{id, kind, created_at}` plus
+kind-specific fields. The loader discriminates on `kind`:
+
+```json
+// kind: "input"  (F4/F19/F36 persistence lives here)
+{
+  "id": "cell-01HZS4W...",
+  "kind": "input",
+  "created_at": "2026-04-19T12:35:01Z",
+  "command": "pytest -q",
+  "output_lines": ["....", "8 passed in 1.2s"],
+  "exit_code": 0,
+  "started_at": "2026-04-19T12:35:01Z",
+  "finished_at": "2026-04-19T12:35:02.2Z",
+  "timed_out": false
+}
+
+// kind: "heading"  (introduced by F27)
+{
+  "id": "cell-01HZS4X...",
+  "kind": "heading",
+  "created_at": "2026-04-19T12:35:30Z",
+  "text": "Data preparation",
+  "level": 2
+}
+
+// kind: "text"  (introduced by F27)
+{
+  "id": "cell-01HZS4Y...",
+  "kind": "text",
+  "created_at": "2026-04-19T12:36:00Z",
+  "text": "Verify the fixture directory is clean before the run."
+}
+```
+
+Forward compatibility: the loader ignores unknown fields within
+a known cell kind (preserves them on re-save as opaque blobs),
+and refuses unknown `kind` values with a clear error. This lets
+a newer ASAT open an older file and an older ASAT fail loudly
+on a newer file instead of silently dropping cells.
+
+**What is *not* persisted.** Runtime state — subprocess handles,
+PTY buffers, live ANSI parser state, unflushed stderr — is
+deliberately dropped on save. On reload, every cell is marked
+"historical": re-executing requires the user to explicitly press
+Enter on the cell, which submits `command` afresh on the
+current kernel. This keeps the format purely declarative and
+avoids any attempt to "resume" a running process.
+
+**Module surface.** Introduce `asat/notebook_io.py`:
+
+- `save_notebook(notebook: Notebook, path: Path) -> None` —
+  atomic write via `path.with_suffix(".asatnb.tmp")` + rename.
+- `load_notebook(path: Path) -> Notebook` — returns a fresh
+  `Notebook` with every `Cell` reconstructed; raises
+  `NotebookFormatError` on schema mismatch with a diagnostic
+  message that names the offending field and offset.
+- `Notebook` mirrors today's `Session` but is purely in-memory
+  data (no kernel reference); the existing `Session` becomes
+  `Notebook + ExecutionKernel + NotebookCursor` composed at the
+  tab layer (F29). This refactor should be quietly prepared in
+  advance of F51 so the file-IO layer talks to a plain data
+  object.
+
+**Save triggers.** Three policies, selectable in workspace
+settings (default = "idle"):
+
+- `"manual"` — only `:save` / `Ctrl+S` persists.
+- `"idle"` — save 2 seconds after the last keystroke, capped at
+  one save per 10 seconds. Implemented with a small
+  `IdleSaver` that listens to `CELL_CREATED`,
+  `CELL_MODIFIED`, `COMMAND_COMPLETED`, etc.
+- `"every-change"` — save on every cell-mutating event. Useful
+  for paranoid audit contexts; hits disk often.
+
+Publish `NOTEBOOK_SAVED` / `NOTEBOOK_LOADED` events on the bus
+so the sound bank can play a confirmation cue and F22's log
+captures the lifecycle.
+
+**Tests.** `tests/test_notebook_io.py`:
+
+- `test_roundtrip_preserves_every_cell_kind` — build a
+  `Notebook` with one cell of each kind, save, load, assert
+  equality.
+- `test_unknown_schema_version_refuses_load` — file with
+  `schema_version: 999` raises `NotebookFormatError` naming the
+  version.
+- `test_unknown_cell_kind_refuses_load` — same, for cells.
+- `test_unknown_field_within_known_cell_survives_roundtrip` —
+  injected `{"future_field": 42}` comes back on re-save.
+- `test_atomic_write_leaves_no_partial_file_on_crash` —
+  monkeypatch the temp-rename step to raise mid-write; original
+  file must remain untouched.
+
+**Docs touch points.** `docs/WORKSPACES.md` grows a "Notebook
+file format" chapter with the full JSON schema, migration notes,
+and a worked example. `USER_MANUAL.md` gains `Ctrl+S` /
+`:save` / `:save as <name>` rows.
+
+---
+
+## F52 — Workspace & notebook settings cascade
+
+**Gap.** `SoundBank` is loaded from exactly one path (today
+`~/.asat/bank.json`, after F45 relocatable via `ASAT_HOME`).
+There is no mechanism to overlay a project-specific bank on top
+of the user bank, nor a notebook-specific bank on top of that.
+Two projects cannot have different audio cues without the user
+manually pointing `--bank` at the right file each launch.
+
+**Where it surfaces.** A user who prefers loud cues for long
+training runs but soft cues for ordinary sysadmin work has no
+way to express that per-workspace. A teammate who hands over
+a workspace expects their custom cues to travel with the
+directory; today they don't.
+
+**Sketch.** Introduce a four-layer settings cascade resolved
+at workspace-open time:
+
+```
+Layer 0 — DEFAULTS     (hard-coded in asat/default_bank.py)
+Layer 1 — USER         (~/.asat/bank.json; or $ASAT_HOME/bank.json)
+Layer 2 — WORKSPACE    (<workspace>/settings/bank.json)
+Layer 3 — NOTEBOOK     ((.asatnb).settings, see F51)
+```
+
+Each layer is optional; missing layers are skipped. Higher
+layers *override* matching keys in lower layers, identified by
+`(section, id)`. Sections are the three existing bank sections:
+`voices`, `sounds`, `bindings`.
+
+- **Voices**: override by `voice_id`. A workspace that redefines
+  `voice_id: "cue"` with a different speed fully replaces the
+  user voice's fields; fields not mentioned fall back to the
+  lower layer. This is a deep merge per record.
+- **Sounds**: same — override `recipe_id`, shallow-merge fields.
+- **Bindings**: override by `binding_id`; bindings are replaced
+  as a whole record (not merged) because their semantics depend
+  on the combination of predicate + sound, which a partial
+  override would scramble.
+
+Add keys at each layer can *add* new records that do not exist
+below; this is how a workspace introduces a workspace-specific
+cue. Removing a record requires an explicit tombstone entry:
+`{"id": "cue.old", "deleted": true}`, which suppresses a lower
+layer's record in the effective bank. Tombstones are rare and
+only necessary when a user wants to silence a built-in.
+
+Introduce `asat/settings_cascade.py`:
+
+- `resolve_bank(layers: list[SoundBank]) -> SoundBank` — pure
+  function; takes the ordered list `[defaults, user, workspace,
+  notebook]` (each optional), returns the merged bank. No I/O.
+- `load_layered_bank(workspace: Workspace | None, notebook:
+  Notebook | None) -> SoundBank` — orchestrator; handles
+  "workspace not open yet" and "no notebook focused yet".
+
+**Events.**
+- `BANK_RESOLVED` fires whenever the effective bank changes
+  (workspace open, notebook focus change, save of any layer).
+  Payload: `{sources: list[str], voice_count, sound_count,
+  binding_count}`.
+
+**Settings editor impact.** `SettingsEditor` today edits one
+bank. After F52 it must know which layer it is editing; the
+user picks the layer on entry (default: workspace if a
+workspace is open, else user). A mode indicator in the editor
+status line reads `editing: workspace bank` / `editing: user
+bank` so the user is never confused about what they are
+modifying. Saving writes the layer's file; other layers are
+untouched.
+
+**Tests.** `tests/test_settings_cascade.py`:
+
+- `test_missing_layers_skip_silently` — pass `[defaults, None,
+  None, None]`; result equals defaults.
+- `test_workspace_override_wins_over_user` — user sets
+  `voice.cue.rate=150`, workspace sets `rate=200`; resolved
+  rate is `200`.
+- `test_notebook_override_wins_over_workspace` — same shape,
+  one more layer.
+- `test_tombstone_suppresses_lower_layer` — defaults ship
+  `voice.robot`; user layer adds `{"id": "voice.robot",
+  "deleted": true}`; resolved bank has no `voice.robot`.
+- `test_add_only_layer_injects_new_record` — workspace adds a
+  brand-new cue `sound.deploy_success`; it appears in the
+  resolved bank even though no lower layer mentions it.
+- `test_resolve_is_pure` — resolver must not mutate any input
+  layer.
+
+**Docs touch points.** `docs/WORKSPACES.md` "Settings cascade"
+chapter with the four-layer diagram and worked examples.
+`USER_MANUAL.md` settings editor section gains a "which layer
+am I editing?" note. `docs/AUDIO.md` cross-links from its
+"bank loading" section to the cascade doc.
+
+---
+
+## F53 — Per-tab focus memory across tab and window switches
+
+**Gap.** Once tabs land (F29), switching between them with
+`Ctrl+Tab` will re-enter whichever tab the user focused — but
+there is no specification of *where inside* that tab the
+keyboard lands. The naive implementation resets focus to the
+last cell of the target tab (or to whatever field was focused
+globally before the switch), which means the user loses their
+editing spot every time they context-switch. Same issue applies
+when returning to ASAT after an OS-level Alt+Tab.
+
+**Where it surfaces.** A blind developer editing cell 4 in
+notebook A jumps to notebook B to check output, Ctrl+Tabs back,
+and expects to resume typing in cell 4 at the exact column they
+left. Without focus memory they land on cell 11 (the last cell)
+in NOTEBOOK mode with no cursor context and have to re-navigate.
+This is the concrete UX concern the user originally raised when
+sketching the workspace/tab model.
+
+**Sketch.** Every `NotebookTab` owns a `FocusSnapshot`:
+
+```python
+@dataclass
+class FocusSnapshot:
+    focus_mode: FocusMode              # NOTEBOOK / INPUT / OUTPUT / SETTINGS / MENU
+    cell_index: int | None             # which cell was focused
+    cursor_column: int | None          # INPUT mode: cursor position within buffer
+    output_line: int | None            # OUTPUT mode: output cursor line
+    output_column: int | None          # OUTPUT mode: output cursor column
+    updated_at: datetime               # for observability, not logic
+```
+
+Capture and restore rules:
+
+- **Capture** happens every time a focus-affecting event fires
+  (`FOCUS_MODE_CHANGED`, `CELL_FOCUS_CHANGED`,
+  `INPUT_CURSOR_MOVED`, `OUTPUT_CURSOR_MOVED`). A
+  `FocusMemoryWatcher` subscribes to these and updates the
+  active tab's `FocusSnapshot` in place.
+- **Restore** happens on `TAB_FOCUSED`. `FocusMemoryWatcher`
+  reads the target tab's snapshot and drives
+  `NotebookCursor.focus_cell(index)` +
+  `InputRouter.set_focus_mode(mode)` +
+  `InputRouter.set_cursor_column(col)` in that order. Each of
+  those setters already exists or is a small addition.
+- **Narration** on restore: "tab 2 of 3, notebook 'deploy', cell
+  4 of 9, input mode, column 12". The richness is configurable
+  via F31 verbosity presets; the minimum announcement is just
+  the tab label.
+
+**Edge cases to nail down in code and tests.**
+
+1. *Snapshot references a cell that has been deleted.* On
+   restore, clamp `cell_index` to the nearest valid index (or
+   the last cell if the notebook is empty after trimming). Fire
+   `FOCUS_SNAPSHOT_CLAMPED` so the user is told: "cell 4 no
+   longer exists; focused cell 3".
+2. *Snapshot's focus_mode was SETTINGS / MENU.* Modal surfaces
+   are not per-tab; always restore to NOTEBOOK mode on
+   tab switch, independent of the captured mode. Settings and
+   menu are window-level, not tab-level.
+3. *Tab was never focused before.* A freshly opened tab has
+   `FocusSnapshot(focus_mode=NOTEBOOK, cell_index=0, cursor_column=0,
+   output_line=None, output_column=None)` by default.
+4. *Return from OS-level Alt+Tab.* The ASAT process has no
+   reliable "window gained focus" signal on POSIX terminals.
+   Don't attempt to detect it; the internal snapshot is enough
+   because nothing changes focus inside ASAT while the terminal
+   is backgrounded. (If a terminal *does* deliver focus-in/out
+   via xterm's `?1004h` protocol, subscribe to it as a small
+   bonus, but don't make correctness depend on it.)
+
+**Module surface.** Introduce `asat/focus_memory.py`:
+
+- `FocusSnapshot` dataclass.
+- `FocusMemoryWatcher` — subscribes to the focus-affecting
+  event family; writes to `NotebookTab.focus_snapshot`; on
+  `TAB_FOCUSED`, reads and drives restoration. Follows the
+  SOURCE class-attribute convention (`SOURCE = "focus_memory"`).
+- A small `restore_focus(tab: NotebookTab, router:
+  InputRouter) -> RestoreOutcome` pure helper so restoration
+  logic is testable without a full Application wire-up.
+
+**Events.**
+- `TAB_FOCUSED` (payload: `tab_index`, `tab_id`) — published
+  by the TabBar from F29.
+- `FOCUS_SNAPSHOT_UPDATED` (debug-level) — for F22 diagnostic
+  log only; not used by any production subscriber.
+- `FOCUS_SNAPSHOT_CLAMPED` — payload `{requested_index,
+  actual_index}`; consumed by a narration binding.
+
+**Tests.** `tests/test_focus_memory.py`:
+
+- `test_snapshot_captures_input_cursor_column`
+- `test_tab_switch_restores_cell_and_column`
+- `test_deleted_cell_clamps_to_valid_index_and_narrates`
+- `test_settings_mode_does_not_contaminate_tab_snapshot`
+- `test_fresh_tab_defaults_to_notebook_mode_at_cell_zero`
+- `test_output_mode_snapshot_restores_output_cursor`
+
+**Docs touch points.** `docs/USER_MANUAL.md` gains a
+"Switching tabs" section describing the restoration guarantee.
+`docs/EVENTS.md` registers the three new event types.
+`docs/WORKSPACES.md` cross-links focus memory as part of the
+tab lifecycle.
+
+---
+
+## F54 — Workspace CLI discovery + `:workspace` meta-commands
+
+**Gap.** Once F50/F51 give workspaces and notebook files a shape
+on disk, ASAT still needs a way for a human to open one.
+Today's launcher is `python -m asat` with no positional
+argument; there is no `:workspace`, no "recent workspaces",
+and no concept of binding a launch to a specific directory.
+
+**Where it surfaces.** "How do I open last week's workspace?"
+has no answer. A user cannot script `asat ~/projects/deploy` to
+resume work, and there is no in-session way to switch to a
+different workspace without killing and relaunching the
+process.
+
+**Sketch.** Two layers: a CLI surface and a meta-command
+surface. Both route through the same `Application.open_workspace(path)`
+method so behaviour is identical regardless of entry point.
+
+**CLI forms.**
+
+```
+asat                                 # fall back to default workspace
+asat <directory>                     # bind to that directory as a workspace
+asat <directory>/file.asatnb         # bind to parent directory, focus this notebook
+asat --new-workspace <directory>     # bootstrap a fresh workspace at that path
+asat --list-workspaces               # print recent workspaces with last-opened timestamps
+```
+
+Resolution rules for `asat <path>`:
+
+1. If `path` is a file with `.asatnb` extension: the workspace
+   is `path.parent.parent` if that parent contains a
+   `.asat-workspace` marker, else `path.parent` bootstrapped as
+   a workspace. Open the file as the focused tab.
+2. If `path` is a directory with `.asat-workspace` marker: open
+   as workspace.
+3. If `path` is a directory *without* the marker: prompt (via
+   narration + Y/N key) "bootstrap as new ASAT workspace?"
+   unless `--new-workspace` is passed, which silently
+   bootstraps.
+4. If `path` does not exist: fail with a clear error; do not
+   auto-create deep directory trees.
+
+**Default workspace.** `asat` with no args opens
+`$ASAT_HOME/default-workspace/` (bootstrapping it on first
+launch). This preserves the current no-args-launches-something
+behaviour while making the on-disk shape explicit.
+
+**Recent workspaces.** `$ASAT_HOME/recent-workspaces.json` —
+top-level list, most-recent-first, capped at 25 entries, each
+entry `{path, opened_at, notebook_count}`. Updated on every
+`WORKSPACE_OPENED`. Used by `--list-workspaces` and by a
+future F54b "recent" picker (out of scope for F54 v1).
+
+**Meta-commands.** Add to F17's meta-command router:
+
+- `:workspace` — print the current workspace path.
+- `:workspace open <path>` — close current workspace (prompt to
+  save dirty notebooks) and open the given path. Equivalent to
+  quit + relaunch, but in-process.
+- `:workspace bootstrap <path>` — create a new workspace at
+  `<path>` without opening it.
+- `:workspace recent` — narrate the five most-recent
+  workspaces with their last-opened timestamps.
+- `:new-notebook [<slug>]` — create a fresh notebook in the
+  current workspace, open it in a new tab. Slug optional (auto
+  from timestamp if missing).
+- `:open-notebook <slug>` — open the named notebook in a new
+  tab; no-op if already open (focuses the existing tab instead).
+- `:close-tab [!]` — close the focused tab. `!` suffix skips
+  the dirty-save confirmation.
+- `:save` / `:save-as <slug>` — persist the focused notebook.
+- `:rename-notebook <new-slug>` — rename the focused notebook
+  on disk; `notebook_id` is stable across the rename so F55's
+  `window.json` still resolves the reference.
+
+Every meta-command above also gets a keybinding surface
+elsewhere (Ctrl+T for new tab, Ctrl+W for close tab, Ctrl+S for
+save, etc.) but the meta-commands are the discoverable,
+scriptable contract.
+
+**Error narration.** A bad `:workspace open` path must narrate
+the exact failure mode ("no .asat-workspace marker — pass
+--new-workspace or use :workspace bootstrap"), not just "error".
+
+**Tests.** `tests/test_workspace_cli.py`:
+
+- `test_no_args_opens_default_workspace_bootstrapping_on_first_run`
+- `test_directory_arg_with_marker_opens_as_workspace`
+- `test_directory_arg_without_marker_prompts_then_bootstraps`
+- `test_file_arg_walks_up_to_find_workspace`
+- `test_nonexistent_path_fails_cleanly`
+- `test_recent_workspaces_json_rotates_on_open`
+
+`tests/test_meta_commands_workspace.py`:
+
+- `test_workspace_open_saves_dirty_notebooks_first`
+- `test_new_notebook_appears_in_tab_bar`
+- `test_close_tab_with_bang_skips_save_prompt`
+- `test_rename_preserves_notebook_id`
+
+**Docs touch points.** `USER_MANUAL.md` gets a "Launching ASAT"
+rewrite: old paragraphs about the default bank path move into
+a "Default workspace" section. `docs/WORKSPACES.md`
+"Command-line surface" chapter lists every form. `docs/EVENTS.md`
+adds `WORKSPACE_OPENED` / `WORKSPACE_CLOSED` to the table.
+
+---
+
+## F55 — Persistent window state (`window.json`)
+
+**Gap.** Even after F50 (workspace), F51 (notebook files), and
+F29 (tabs in memory), relaunching ASAT on a workspace still
+opens a single empty tab. The set of "which notebooks were
+open, in what order, with which one focused, and at what
+snapshot inside each" is discarded on shutdown. The user has
+to reopen every tab by hand every time.
+
+**Where it surfaces.** A user who closes ASAT at end-of-day
+with three tabs open (deploy runbook, training scratch,
+postmortem draft) and reopens the workspace in the morning
+expects all three tabs restored in the same order, with the
+same tab focused. Today they get one blank tab.
+
+**Sketch.** A single JSON file,
+`<workspace>/settings/window.json`, holds the serialised window
+state:
+
+```json
+{
+  "schema_version": 1,
+  "saved_at": "2026-04-19T17:10:00Z",
+  "tabs": [
+    {
+      "notebook_id": "nb-01HZS4VXTW...",
+      "notebook_path": "notebooks/deploy.asatnb",
+      "focus_snapshot": {
+        "focus_mode": "INPUT",
+        "cell_index": 4,
+        "cursor_column": 12,
+        "output_line": null,
+        "output_column": null
+      },
+      "pinned": false
+    },
+    { "notebook_id": "nb-01HZS4W1AB...", ... }
+  ],
+  "focus_index": 1,
+  "settings_editor_layer": "workspace"
+}
+```
+
+Field rules:
+
+- `tabs[]` is ordered; the TabBar renders them in this order
+  on restore. Order is mutated by keyboard reorder gestures
+  (Ctrl+Shift+PageUp/Down in a future entry) and flushed on
+  change.
+- `tabs[].notebook_id` is the primary reference. `notebook_path`
+  is a hint for the fast path; if it no longer resolves, the
+  loader falls back to scanning `notebooks/` for a file whose
+  JSON `notebook_id` matches. If neither resolves, the tab is
+  dropped and a `TAB_RESTORE_FAILED` event names the missing
+  ID so the sound bank can cue a warning.
+- `focus_snapshot` is the F53 snapshot type, serialised
+  directly. Restore uses F53's `restore_focus` helper.
+- `pinned` is reserved for a future "pin tab" feature; persist
+  and restore as-is, don't act on it yet.
+- `focus_index` must point at a valid index after restoration;
+  if out of range (because a tab was dropped), clamp to the
+  last tab and narrate.
+- `settings_editor_layer` remembers which layer (F52) the user
+  was last editing, so reopening the editor lands them in the
+  same context.
+
+**Save triggers.** Window state must be debounced like F51's
+idle save policy — but with a *hard* flush on every tab-level
+event (`TAB_OPENED`, `TAB_CLOSED`, `TAB_FOCUSED`, `TAB_REORDERED`).
+Focus-snapshot updates inside a tab only need the debounced
+flush; losing a few cursor columns to a crash is acceptable,
+losing "which tab was open" is not. A small `WindowStatePersister`
+handles both paths.
+
+Atomic write: same pattern as F51 (temp file + rename).
+
+**Startup restoration order.**
+
+1. `Application` resolves the workspace (F50).
+2. Read `settings/window.json`; if missing or unparseable,
+   proceed with a fresh single-tab window on the last
+   modified notebook in `notebooks/` (or a new empty notebook
+   if the directory is empty). Log the failure path via F22.
+3. For each entry in `tabs[]`: load the notebook (F51), build
+   a `NotebookTab`, restore its `FocusSnapshot`.
+4. Apply `focus_index` clamp.
+5. Publish `WINDOW_RESTORED` (payload: tab count, focus index,
+   dropped tab ids).
+6. Narrate: "workspace 'deploy' opened, 3 tabs restored, tab 2
+   focused, notebook 'training', input mode, cell 4 column 12".
+
+**Migration.** Absent `window.json` = fresh window, no
+migration needed. `schema_version` bump triggers an explicit
+migration path; v1 → v2 would preserve the fields we have and
+fill new ones with defaults.
+
+**Interaction with F53.** F53 provides the in-memory focus
+snapshot. F55 serialises it. The two features must ship in
+that order (F53 first) because F55 has nothing to persist
+without F53 populating it.
+
+**Tests.** `tests/test_window_state.py`:
+
+- `test_roundtrip_preserves_all_tabs_in_order`
+- `test_focus_index_clamped_when_tabs_dropped`
+- `test_missing_notebook_file_narrates_and_drops_tab`
+- `test_corrupted_json_falls_back_to_fresh_window`
+- `test_debounced_save_not_more_than_once_per_window`
+- `test_tab_level_events_flush_immediately`
+- `test_atomic_write_survives_mid_save_crash`
+
+**Docs touch points.** `docs/WORKSPACES.md` "Window state"
+chapter with the JSON schema and startup restoration flow.
+`docs/EVENTS.md` gains `WINDOW_RESTORED`, `TAB_RESTORE_FAILED`,
+and the `TAB_*` family. `USER_MANUAL.md` updates the
+"Launching ASAT" section to note that open tabs persist across
+sessions.
 
 ---
 

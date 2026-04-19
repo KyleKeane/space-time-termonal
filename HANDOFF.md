@@ -55,6 +55,16 @@ trigger → jump → edit loop described in F39); **F48** discoverability
 (`:reset` row + SETTINGS HELP_LINES). Hygiene palate cleanser: **F49**
 pick any one bullet.
 
+Larger architectural direction: the **F50 – F55 cluster**
+(multi-notebook workspaces) scopes the "window = workspace
+directory, with tabs for each notebook, all sharing a
+computational backend" model. Read the cluster preamble in
+`docs/FEATURE_REQUESTS.md` before starting any of them — the
+six entries depend on each other and land in a specific order
+(F50 → F29 → F51 → F54 → F53 → F55 → F52). Each entry is
+deliberately verbose so a future session can implement it
+from the doc alone.
+
 Every open feature has a full entry in
 [`docs/FEATURE_REQUESTS.md`](docs/FEATURE_REQUESTS.md) with gap,
 sketch, and pointers to the code and docs the implementation will
