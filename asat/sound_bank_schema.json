@@ -25,6 +25,18 @@
       "type": "array",
       "items": { "$ref": "#/$defs/binding" },
       "default": []
+    },
+    "ducking_enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "F32: when true, the engine attenuates a concurrent non-speech buffer to `duck_level * gain` whenever a speech buffer is in the same mix cycle."
+    },
+    "duck_level": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "default": 0.4,
+      "description": "F32: gain multiplier applied to a concurrent non-speech buffer while speech is mixing. 0.0 silences cues entirely; 1.0 disables ducking even if `ducking_enabled` is true."
     }
   },
   "additionalProperties": false,

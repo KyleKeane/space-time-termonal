@@ -978,6 +978,14 @@ which profile they just entered. Pairs cleanly with F21c reset so
 
 ## F32 — Audio ducking under active narration
 
+**Status: Shipped.** `SoundBank` carries `ducking_enabled` (default
+`True`) and `duck_level` (default `0.4`); the engine multiplies any
+concurrent non-speech cue by `duck_level` whenever a speech buffer
+is in the same `_render` mix cycle. Both fields round-trip through
+JSON and the schema documents the bounds. Live-edit today is via
+the bank file plus `:reload`; an editor surfacing pass can land
+later if needed.
+
 **Gap.** When TTS narration plays while non-speech output cues fire
 (output-line chords, keystroke blips), the speech gets masked. There
 is no automatic gain management to keep voice intelligible.

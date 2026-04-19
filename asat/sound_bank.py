@@ -275,6 +275,13 @@ class SoundBank:
     sounds: tuple[SoundRecipe, ...] = ()
     bindings: tuple[EventBinding, ...] = ()
     version: int = SCHEMA_VERSION
+    # F32: when `ducking_enabled` is True, the engine attenuates a
+    # concurrent non-speech buffer to `duck_level * gain` whenever a
+    # speech buffer is in the same mix cycle, so narration stays
+    # intelligible over per-event cues. Both fields are scalar so
+    # they round-trip through JSON without any custom coercion.
+    ducking_enabled: bool = True
+    duck_level: float = 0.4
 
     def voice_for(self, voice_id: str) -> Optional[Voice]:
         """Return the voice with this id, or None if it is missing."""
@@ -334,6 +341,8 @@ class SoundBank:
             "voices": [voice.to_dict() for voice in self.voices],
             "sounds": [sound.to_dict() for sound in self.sounds],
             "bindings": [binding.to_dict() for binding in self.bindings],
+            "ducking_enabled": self.ducking_enabled,
+            "duck_level": self.duck_level,
         }
 
     @classmethod
@@ -350,7 +359,16 @@ class SoundBank:
         bindings = tuple(
             EventBinding.from_dict(item) for item in data.get("bindings", []) or ()
         )
-        bank = cls(voices=voices, sounds=sounds, bindings=bindings, version=version)
+        ducking_enabled = bool(data.get("ducking_enabled", True))
+        duck_level = _unit_float(data.get("duck_level", 0.4), "duck_level")
+        bank = cls(
+            voices=voices,
+            sounds=sounds,
+            bindings=bindings,
+            version=version,
+            ducking_enabled=ducking_enabled,
+            duck_level=duck_level,
+        )
         bank.validate()
         return bank
 
@@ -418,6 +436,14 @@ def _angle(value: Any, label: str, low: float, high: float) -> float:
     number = _as_float(value, label)
     if number < low or number > high:
         raise SoundBankError(f"{label} must be in [{low}, {high}], got {number}")
+    return number
+
+
+def _unit_float(value: Any, label: str) -> float:
+    """Parse value as a float in [0.0, 1.0]; rejects out-of-range numbers."""
+    number = _as_float(value, label)
+    if number < 0.0 or number > 1.0:
+        raise SoundBankError(f"{label} must be in [0.0, 1.0], got {number}")
     return number
 
 
