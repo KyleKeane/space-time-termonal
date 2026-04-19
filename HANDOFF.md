@@ -37,7 +37,9 @@ narrations — see [`docs/SMOKE_TEST.md`](docs/SMOKE_TEST.md).
 python -m unittest discover -s tests -t .
 ```
 
-Currently **816 passing**.
+All tests live under `tests/`; run the command above to see the
+current pass count. Every PR adds or touches whatever coverage
+the change warrants — don't hand-maintain a count here.
 
 ## Suggested next PR
 
