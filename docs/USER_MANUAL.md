@@ -637,6 +637,9 @@ like `reason == "absolute"` to only react to full jumps.
 
 * [CHEAT_SHEET.md](CHEAT_SHEET.md) — single-page reference: every
   binding, meta-command, and audio cue that ships today.
+* [SMOKE_TEST.md](SMOKE_TEST.md) — scripted hands-on walkthrough
+  with expected narrations. Run it after installing, or after
+  any non-trivial bank or settings change.
 * [ARCHITECTURE.md](ARCHITECTURE.md) — what lives in which module.
 * [EVENTS.md](EVENTS.md) — every event on the bus and its payload.
 * [AUDIO.md](AUDIO.md) — full reference for voices, recipes,
