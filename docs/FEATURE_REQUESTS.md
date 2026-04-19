@@ -2312,6 +2312,287 @@ sessions.
 
 ---
 
+## Cluster: macro record, replay, and scenario automation (F56 – F59)
+
+F56 – F59 form one proposal, not four independent features. They
+share a single file format, a single replay engine, and the same
+execution mode. Land them in order: each entry builds strictly
+on the previous one's data structures, and implementing a later
+entry first would force a rewrite.
+
+Single-sentence vision: **ASAT records any live workflow —
+keystrokes, kernel results, and bus events — into a JSONL file,
+then replays that file either as a deterministic regression
+scenario (for tests and the smoke suite) or as a user-facing
+macro with variable prompts and result-based branching (for
+everyday automation of workflows that are routine but not
+mechanical).**
+
+The cluster is deliberately split so the regression-test value
+ships in two PRs (F56 + F57) before the user-facing automation
+story (F58 + F59). The codebase gets its anti-drift guard early;
+end users get power tools once the engine is proven.
+
+**Cross-references** (keep linked as you work):
+
+- **F22** (diagnostic JSONL logger, shipped) already captures
+  every event in the format F56 adopts. The recorder reuses the
+  same encoder; only the event-type filter differs.
+- **F25** (user-remappable keybindings, open) must be respected
+  by the recorder — store `action` names, not raw keys, for
+  anything bound to a router action so macros survive rebinds.
+- **F50** (workspace directory, open) defines where macros live
+  on disk (`<workspace>/macros/*.asatmacro.jsonl`). Until F50
+  ships, macros land at `~/.asat/macros/`.
+- **F39** (event log viewer, open) gives a natural UI for
+  browsing recorded macros; the two features share a reader.
+- **SMOKE_TEST.md** and `tests/test_smoke_scenarios.py` are the
+  first customers of F57 — once F57 lands, the scenario file
+  gets replaced by a `tests/fixtures/macros/smoke.asatmacro.jsonl`
+  replayed through the scenario harness.
+
+**Recommended landing order.**
+
+1. **F56** — recorder + replayer + file format + MACRO_PLAYBACK
+   mode. Nothing user-visible beyond "you can record, you can
+   play back verbatim".
+2. **F57** — `expect` step type + scenario harness. Regression
+   tests can now be recorded instead of hand-written.
+3. **F58** — `{{var}}` templating + `prompt` steps. First
+   genuinely user-useful macros (e.g. "deploy to $env").
+4. **F59** — `if` step with condition evaluated against captured
+   state. Macros react to earlier computation results.
+
+Each entry below is implementation-ready: file layouts, JSON
+schemas, key bindings, events, tests. They are written to be
+picked up months from now by someone (possibly Claude) who no
+longer has the cluster in short-term context.
+
+---
+
+## F56 — Macro recorder, replayer, and file format
+
+**Gap.** ASAT has no way to capture a live workflow as a
+reusable artifact. The user can type commands, navigate, edit
+settings — and the only trace left behind is the diagnostic log
+(F22), which is a one-way stream with no replay semantics.
+`tests/test_smoke_scenarios.py` shows the shape of what would be
+valuable — scripted keystrokes + asserted event sequence — but
+every such scenario is hand-coded today. There is no artifact a
+user could produce during normal use and hand to a test, a
+collaborator, or a later self.
+
+**Where it surfaces.** Three distinct pain points share one
+root cause:
+
+1. **Regression drift.** SMOKE_TEST.md documents 9 acts of
+   expected behaviour; test_smoke_scenarios.py encodes 20
+   assertions against that behaviour. If a future PR quietly
+   changes the event order during a successful command, the
+   test fires — but only because someone had to write it. No
+   blind user can file "my workflow from yesterday broke today"
+   as a reproducible bug without screen recording.
+2. **Repetitive workflows.** A blind SRE who runs
+   `kubectl -n prod get pods | grep foo | ...` forty times a
+   week has no way to bind that sequence to one keystroke.
+   Shell aliases cover the single-command case but not the
+   multi-cell narration-paced ones.
+3. **Learning + onboarding.** A new user who wants to see
+   "what does a typical debugging session sound like?" cannot
+   replay a reference session — the existing `:welcome` tour is
+   a canned narration, not a real transcript.
+
+**Sketch.** Introduce `asat/macros/` as a new package with three
+modules: `recorder.py`, `replayer.py`, and `format.py`. Add one
+new `FocusMode` (MACRO_PLAYBACK), one meta-command family
+(`:record`, `:play`, `:macros`), and one settings section
+(`macros`).
+
+### File format (`format.py`)
+
+JSONL, one step per line, first line is an envelope:
+
+```
+{"schema_version": 1, "recorded_at": "2026-04-19T12:34:56Z", "asat_version": "0.x", "name": "deploy-to-staging", "description": "optional human text"}
+{"step": 1, "kind": "key", "key": {"name": "escape"}, "focus_mode": "input"}
+{"step": 2, "kind": "action", "action": "open_settings", "focus_mode": "notebook"}
+{"step": 3, "kind": "text", "text": "echo hello", "focus_mode": "input"}
+{"step": 4, "kind": "submit"}
+```
+
+Step kinds (F56 defines four; F57-F59 add more):
+
+- `key` — a single keystroke that maps to no router action
+  (e.g. arrow keys inside the settings composer). `key` is a
+  serialised `Key`: `{"name": "up", "modifiers": ["ctrl"]}`.
+- `action` — a router action name (`"open_settings"`,
+  `"move_up"`, …). Recorded in preference to `key` whenever the
+  router would dispatch the keystroke to a named action, so
+  remapping (F25) does not invalidate the macro.
+- `text` — a printable-character run typed into INPUT mode.
+  Stored as a string so it is visible and editable by hand.
+- `submit` — Enter in INPUT mode that enqueued a cell. Distinct
+  from a raw Enter `key` step so the replayer knows to call
+  `drain_pending` + `execute`.
+
+Every step also carries `focus_mode` (advisory — for diagnostics
+and to let the replayer refuse to run a macro started in the
+wrong mode).
+
+`format.py` exposes `read(path) -> Macro`, `write(path, macro)`,
+and `Macro` as a frozen dataclass holding `envelope: dict`,
+`steps: tuple[Step, ...]`. Unknown step kinds in a newer-schema
+file are passed through opaquely so a v1 replayer on a v2 file
+can refuse cleanly with "this macro was recorded by a newer
+ASAT".
+
+### Recorder (`recorder.py`)
+
+`Recorder(bus, session, cell_id_policy)` subscribes to the bus
+with `WILDCARD` (same mechanism as `JsonlEventLogger`) and keeps
+an in-memory list of steps. Triggers:
+
+- `KEY_PRESSED` → if the same dispatch cycle produced an
+  `ACTION_INVOKED`, collapse both into one `action` step. If
+  not, emit a `key` step.
+- Consecutive printable-key events in INPUT mode are collapsed
+  into a single `text` step so a 40-character command does not
+  produce 40 lines of JSON.
+- `COMMAND_SUBMITTED` → `submit` step (replacing the Enter
+  `key` step that preceded it, to keep the macro readable).
+
+`recorder.stop()` publishes `MACRO_RECORDING_STOPPED` and
+returns a `Macro` ready to serialise. Save path resolves through
+the workspace (or `~/.asat/macros/`) with a slug derived from
+the `:record <name>` argument.
+
+### Replayer (`replayer.py`)
+
+`Replayer(app, macro)` owns the replay state machine. Keys are
+injected into `app.handle_key` in order; `submit` steps also
+call `drain_pending` + `execute`. Between steps, the replayer:
+
+- publishes `MACRO_STEP_EXECUTED` with `{step_index, kind,
+  elapsed_ms}`;
+- yields control to the bus so narrations and audio land in
+  order before the next step;
+- observes `FOCUS_CHANGED` to confirm the advisory `focus_mode`
+  matches (mismatch → narrate warning, continue).
+
+Replayer runs on a timer (default 100 ms between steps,
+configurable per-macro) so narration has time to speak. During
+playback the app enters `FocusMode.MACRO_PLAYBACK`; Escape
+aborts (publishes `MACRO_ABORTED`), any other key is swallowed
+with a narrated "macro playing — press Escape to abort" hint.
+
+### User-facing meta-commands
+
+- `:record <name>` — start recording. Narrates "recording
+  `<name>`; type `:record stop` to finish". The record step
+  itself is *not* captured (metacommands with a `:record`
+  prefix are filtered).
+- `:record stop` — finish recording, save to disk, narrate
+  path. Opens a confirmation sub-mode before overwriting an
+  existing macro.
+- `:record abort` — finish recording, discard.
+- `:play <name>` — replay the macro. Runs a confirmation prompt
+  first (*"play `<name>`? 12 steps. Enter to confirm, Escape to
+  cancel"*) which can be disabled per-macro in settings.
+- `:macros` — list every saved macro with name, step count,
+  recorded-at date.
+
+### Focus mode: MACRO_PLAYBACK
+
+A peer of NOTEBOOK/INPUT/OUTPUT/SETTINGS, mutually exclusive
+with them (same rule the existing modes follow). Adds a row to
+the `FocusMode` enum, a branch to the `InputRouter` dispatch
+table (one binding: Escape → `macro_abort`), and a new settings
+section (see below).
+
+### Settings
+
+`macros` section with one record per saved macro, fields:
+
+- `enabled` (bool) — can `:play <name>` run it?
+- `confirm_before_replay` (bool, default true)
+- `announce_steps` (bool, default true) — read "step 3 of 12"
+  before each step? Off for tight loops that would talk over
+  themselves.
+- `step_interval_ms` (int, default 100)
+- `description` (str, round-tripped from the envelope)
+
+### Events
+
+- `MACRO_RECORDING_STARTED` — `{name}`
+- `MACRO_RECORDING_STOPPED` — `{name, step_count, path}`
+- `MACRO_SAVED` — `{name, path}` (distinct from stopped, so
+  save errors narrate separately)
+- `MACRO_STARTED` — `{name, step_count}`
+- `MACRO_STEP_EXECUTED` — `{step_index, kind, total, elapsed_ms}`
+- `MACRO_COMPLETED` — `{name, step_count, duration_ms}`
+- `MACRO_ABORTED` — `{name, reason, step_index}`
+
+All seven bind to default-bank narrations with terse templates
+so audio reaches the user through the existing SoundEngine
+pipeline. `say_template` values follow the conventions in
+`docs/DEVELOPER_GUIDE.md`.
+
+### Determinism guarantees
+
+- Recording captures *actions* in preference to *keys*, so a
+  macro recorded on one user's rebound keyboard replays
+  faithfully on another's default binding.
+- Printable text is captured as the character, not the
+  keycode, so locale-shifted punctuation replays identically.
+- Schema version in the envelope enables cross-version refusal
+  without silent breakage: a v1 replayer on a v2 file narrates
+  *"macro recorded by ASAT $ver; please update"* and stops.
+- Timestamps in steps are advisory only; replay paces by the
+  `step_interval_ms` setting, not by wall-clock recordings, so
+  macros recorded on a slow TTY replay cleanly on a fast one.
+
+### Safety
+
+- A macro cannot enter record sub-mode while a macro is
+  already playing.
+- A macro cannot `:play` itself (recursion guard — trap during
+  load).
+- Playback is gated behind a confirmation prompt unless the
+  user opted out per-macro.
+- `Ctrl+C` in the host terminal aborts playback; the replayer
+  handles `KeyboardInterrupt` by publishing `MACRO_ABORTED`
+  with `reason="interrupted"`.
+
+### Tests (`tests/test_macros.py`)
+
+- `test_format_roundtrip_preserves_all_step_kinds`
+- `test_recorder_collapses_printable_run_into_text_step`
+- `test_recorder_prefers_action_name_over_raw_key`
+- `test_replayer_injects_keys_in_recorded_order`
+- `test_replayer_publishes_step_events_in_order`
+- `test_replayer_refuses_newer_schema_version`
+- `test_replayer_escape_publishes_aborted`
+- `test_macro_cannot_play_itself_recursively`
+- `test_confirm_prompt_blocks_default_playback`
+- `test_recording_survives_rebound_keys_via_action_names` —
+  rebind Ctrl+O, record a macro, rebind it back, replay; the
+  action fires.
+- Drift guard: `test_events_docs_sync` picks up the seven new
+  event types automatically.
+
+### Docs touch points
+
+- `docs/USER_MANUAL.md` — new "Macros" chapter.
+- `docs/CHEAT_SHEET.md` — new rows in the meta-commands table
+  for `:record`, `:record stop`, `:record abort`, `:play`,
+  `:macros`. MACRO_PLAYBACK gets a mode row.
+- `docs/EVENTS.md` — seven new event rows.
+- `docs/DEVELOPER_GUIDE.md` — one paragraph on how to add a
+  new step kind (dispatch table in `replayer.py`).
+- `HANDOFF.md` — F56 moves from "suggested next PR" to shipped.
+
+---
+
 ## How to add an entry
 
 Append a section using the template:
