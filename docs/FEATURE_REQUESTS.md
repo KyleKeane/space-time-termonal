@@ -725,50 +725,55 @@ cells"). Cross-notebook paste falls out for free once F29 lands.
 
 ## F27 — Heading and text cells with hierarchy, navigation, and scope selection
 
+**Status.** Partially shipped as F61. Heading cells, flat outline
+navigation (`]` / `[`, `1`-`6`), `:toc`, `:heading <level>
+<title>`, and the default-bank heading voice are in (see F61).
+What is still pending from the original F27 sketch: text cells,
+parent-scope navigation (`{` / `}`), `select_heading_scope()`,
+fold / collapse, and the dedicated `asat/outline.py` scope
+helper.
+
 **Gap.** Every cell today is an input / output pair produced by
-`ExecutionKernel`. There is no heading cell, no markdown / text
-cell, and therefore no notebook outline. Users who want to document
-a long exploration have to pile all the narrative into a `#`-prefixed
-shell comment and hope it reads well.
+`ExecutionKernel` or an announce-only heading (F61). There is no
+*text* cell for prose, so users who want to document a long
+exploration still have to pile narrative into a `#`-prefixed
+shell comment or a heading title.
 
 **Where it surfaces.** A session that walks through "set up fixtures
-→ train a model → evaluate" has no auditory table of contents. A
-screen-reader user cannot jump to the next section without Up/Down
-through every intermediate cell. The roadmap items from F16 (output
-search) and F4 (command history) help navigate *within* content but
-not *across* it.
+→ train a model → evaluate" can now be announced by section (F61),
+but the prose inside each section — "we train for ten epochs
+because earlier runs overfit at twenty" — has no home. F51
+persists the heading fields added by F61; the same loader
+already accepts the reserved `"text"` kind, so adding the cell
+type is a narrow change.
 
-**Sketch.** Three linked pieces:
+**Sketch — remaining work after F61.**
 
-1. **New cell kinds.** `Cell.kind: Literal["input", "heading",
-   "text"]` with `heading_level: int` (1-6) on headings. Rendering
-   and TTS narration treat heading cells as announce-only ("heading
-   level 2: data preparation") and text cells as prose. Executing a
-   heading or text cell is a no-op.
-2. **Outline navigation.** NOTEBOOK mode gains `]` / `[` for
-   "next / previous heading at the current level or shallower" and
-   `}` / `{` for "jump to parent heading". `:outline` prints a full
-   tree to the output console for screen-reader review. Publish
-   `OUTLINE_NAVIGATED` so the sound bank can cue the level change.
-3. **Scope selection.** A heading's scope is every cell between it
-   and the next heading of the same level or shallower. A new
-   `select_heading_scope()` action selects the focused heading
-   and its whole scope — including nested H3/H4 children. Pairs
-   with F26's clipboard so "copy this whole section" is a single
-   gesture. Scope semantics live in a small `asat/outline.py` with
-   a pure function `scope_range(cells, heading_index) -> (start,
-   end)` that tests can hit directly.
+1. **Text cell kind.** Extend `CellKind` with `TEXT` and add a
+   `text: str` field on `Cell`; `is_executable` returns False so
+   `Application.execute` short-circuits (same guard F61 added for
+   headings). NOTEBOOK gains an `i` binding that inserts a text
+   cell below the focus; INPUT grows a `:text <prose>` meta-command
+   that writes a text cell before the next prompt. Reuses every
+   serialisation, renderer, and FOCUS_CHANGED hook the heading
+   work already proved out.
+2. **Parent-scope navigation.** `{` / `}` in NOTEBOOK jump to the
+   previous / next heading whose `heading_level` is *shallower*
+   than the current scope. Same module-level helper that F61 uses
+   for `]` / `[`, parameterised by "strictly less than" instead of
+   "any heading".
+3. **Scope selection + fold / collapse.** A new `asat/outline.py`
+   with a pure `scope_range(cells, heading_index) -> (start,
+   end)` function; `NotebookCursor.select_heading_scope()` wraps
+   it for F26's clipboard, and a `z` keystroke on a heading
+   toggles a `collapsed` flag so Up/Down skip the scope. Publish
+   `OUTLINE_FOLDED` / `OUTLINE_UNFOLDED` so the default bank can
+   narrate "section setup, four cells, collapsed".
 
-Inspiration from Wolfram notebook grouping, Jupyter markdown cells,
-and VS Code outline view — trimmed to the minimum a blind user
-needs, with zero visual chrome: no tree gutters, no collapse
-triangles, just spoken structure and keybindings.
-
-**See also.** F51 (notebook file format) must persist every
-cell kind this entry introduces. The schema already reserves
-`"heading"` and `"text"` kinds; implementing F27 is the trigger
-to populate them. Keep the loader's unknown-kind rejection in
-mind so a mismatched ASAT version fails loudly.
+**See also.** F51 (notebook file format) persists the heading
+fields F61 added; populating `"text"` piggy-backs on the same
+path. F61 already ships with `Cell.kind` defaulting to
+`COMMAND` on load, so adding `TEXT` is additive.
 
 ---
 
@@ -3408,6 +3413,145 @@ so their deterministic ordering holds.
   backend, each notebook needs its own worker. A per-backend
   worker is the clean model; the shared `EventBus` lock already
   handles multi-producer safety.
+
+---
+
+## F63 — Event log as an append-only text file grouped by user interaction
+
+**Gap.** F39 sketches an *interactive* event log viewer — an
+in-process ring buffer the user can walk. What's missing is the
+other half: a plain text file on disk that records every event,
+grouped so a human (or `grep`) can see which user interaction
+caused which downstream effect. Today a developer asking "what
+ran when I pressed `]` in NOTEBOOK mode?" has to read
+`asat/input_router.py`, follow the action handler to
+`asat/notebook.py`, then trace the `FOCUS_CHANGED` subscribers
+across `asat/terminal.py`, `asat/sound_engine.py`, and whatever
+bindings the default bank picked — a tree reconstructed by hand
+every time.
+
+**Where it surfaces.** Any debugging that spans more than one
+module; any new-contributor session trying to learn the
+dispatch shape; any bug report of the form "I heard this cue at
+the wrong moment" that today requires attaching a verbose
+`--log` capture (F22) and reading chronological JSON.
+
+**Sketch.** A new `EventLogFile` module subscribes wildcard on
+the `EventBus` and writes to
+`<workspace>/.asat/log/events-YYYY-MM-DD.log` (one file per local
+day, rotated at midnight — re-uses F22's sink contract so
+downstream tooling sees a single log stream). Formatting rule:
+every `KEY_PRESSED` event opens a new group; every event
+published between that keypress and the next keypress is
+indented one level below it and annotated with its originating
+module (via the event's `source` field, which every publisher
+already sets). Example:
+
+```
+14:02:17.103 KEY_PRESSED name=']' modifiers=[] (input_router)
+  14:02:17.104 ACTION_INVOKED action=next_heading matched=True level=None cell_id=c4 (input_router)
+  14:02:17.104 FOCUS_CHANGED transition=cell new_cell_id=c4 kind=heading heading_level=2 heading_title='Setup' (notebook)
+  14:02:17.106 AUDIO_SPOKEN binding_id=focus_changed_heading text='heading level 2 Setup' voice_id=narrator (sound_engine)
+```
+
+Auto-flush on every write so a crash loses at most the current
+line; tail-safe (no rewrite of earlier bytes). A `:log open`
+meta-command prints the current log file path and narrates the
+last N lines; a `:log tail` sub-command streams new lines into
+the speech console (F28) so a second session can listen in.
+Honour F41's silent-sink guard — if the workspace is read-only,
+degrade to `stderr` with a one-time `SESSION_WARNING` event
+rather than crashing.
+
+**Why this complements F39 not duplicates it.** F39 is an
+in-memory, narratable, *editable* view ("heard a cue, want to
+change the binding"). F63 is a file on disk, never narrated by
+default, optimised for *post-hoc* reading with `tail -f` /
+`grep` / `less` — two different consumer shapes that happen to
+share the same event-subscription pattern.
+
+**Depends on / pairs with.** F22 (diagnostic log file) —
+F63 picks up the same rotation and path conventions. F50
+(workspace directory) — the log lives in `<workspace>/.asat/log/`
+so per-project traces stay scoped to the project. F39 — the
+file format is a superset of F39's bounded-ring entries, so a
+future `:log open --viewer` could load a saved file back into
+the interactive viewer.
+
+---
+
+## F64 — Keybinding introspection: `:bindings` meta-command and generated reference
+
+**Gap.** `asat/input_router.py` is the source of truth for
+every keystroke the app responds to, but there is no surface
+— runtime or on-disk — that answers "given mode X and
+key combination Y, which action runs?" without reading code.
+The cheat sheet (`HELP_LINES`) lists a curated subset; the
+`USER_MANUAL.md` tables are hand-maintained and drift (see the
+test gate `test_every_meta_command_is_documented` that caught
+`:heading` / `:toc` missing last week).
+
+**Where it surfaces.** New contributors cannot see the
+dispatch shape. Power users who wire up F25 (remappable keys)
+cannot confirm their override actually took effect. Tests
+cannot assert "mode X binds key Y to action Z" without
+reaching into private router state. The F63 event-log reader
+needs a way to jump from "this `ACTION_INVOKED` fired" to
+"here is the `(mode, key, modifiers) → action` binding that
+caused it".
+
+**Sketch.** Two surfaces, one data source.
+
+1. **Runtime `:bindings` meta-command** (INPUT mode, ambient —
+   buffer survives). Accepts optional `mode` and `key`
+   filters. Output format, one per line:
+   ```
+   NOTEBOOK  ']'           →  next_heading()                 [input_router]
+   NOTEBOOK  '['           →  prev_heading()                 [input_router]
+   NOTEBOOK  '1'..'6'      →  next_heading(level=N)          [input_router]
+   INPUT     Enter         →  submit() -> Application.execute()  [input_router, app]
+   INPUT     Ctrl+U        →  clear_input_buffer()           [input_router]
+   ```
+   The trailing `[module]` annotations come from a
+   static-import walk of the action handler — one line per
+   high-level function the binding resolves to, in call
+   order. Published through the speech console (F28) so blind
+   users hear it; echoed to the terminal renderer so sighted
+   developers can copy-paste.
+2. **Generated `docs/BINDINGS.md`**. A small script
+   (`python -m asat.tools.dump_bindings`) walks the router at
+   import time and emits the same table as Markdown, grouped
+   by mode with anchor links. `test_bindings_doc_in_sync`
+   re-runs the dump in-memory and diffs against the committed
+   file, so a new binding that forgets to regenerate the doc
+   fails CI the same way `test_every_meta_command_is_documented`
+   catches missing meta-command rows.
+
+**Data source.** One public helper on `InputRouter`:
+`binding_report() -> tuple[BindingEntry, ...]` where
+`BindingEntry = (mode: FocusMode, key_spec: str,
+modifiers: frozenset[Modifier], action: str, chain:
+tuple[str, ...])`. `chain` is the ordered sequence of
+high-level functions the action resolves to — computed by
+inspecting the ActionHandler's registered Python callable and
+following `publish_event` / cursor-method calls one step deep.
+Both the `:bindings` command and the doc generator read from
+this helper; they cannot drift.
+
+**Why one function per line is the whole point.** The user
+asked for "high-level functions one per line that are run in
+response". A multi-line dispatch tree per binding is harder to
+scan than a flat list where each line is independently
+`grep`-able. Reserve depth-two chains for a `:bindings
+<key> --verbose` flag; the default stays flat.
+
+**Depends on / pairs with.** F25 (remappable keybindings) —
+if F25 lands first, the table reads the *effective* binding
+(default overlaid with user file) so users can confirm their
+overrides. F63 (event log file) — each `ACTION_INVOKED` line
+in the log gets a pointer to the binding entry that fired it,
+closing the "I just saw this event — where is the keystroke
+that caused it?" loop.
 
 ---
 
