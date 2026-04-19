@@ -288,6 +288,14 @@ def _classify_osc(body: str) -> str:
     only special-case the handful a terminal emulator actually reacts
     to; everything else is `"other"` so unknown sequences still emit an
     event but do not get mistaken for a title or a hyperlink.
+
+    OSC 133 (FinalTerm semantic prompt markers, also emitted by
+    powerlevel10k, starship, kitty, vscode, etc.) is split by
+    subcommand because each marker means something different: ``A``
+    starts a prompt, ``B`` ends it (command region begins), ``C``
+    starts the command's output, ``D`` reports completion. Bindings
+    that want a "prompt is ready" cue can gate on
+    ``category == "prompt_start"`` without re-parsing the body.
     """
     prefix = body.split(";", 1)[0] if ";" in body else body
     if prefix in {"0", "1", "2"}:
@@ -296,7 +304,18 @@ def _classify_osc(body: str) -> str:
         return "hyperlink"
     if prefix in {"4", "10", "11"}:
         return "color"
+    if prefix == "133":
+        subcommand = body.split(";", 2)[1] if ";" in body else ""
+        return _OSC_133_CATEGORIES.get(subcommand, "prompt")
     return "other"
+
+
+_OSC_133_CATEGORIES: dict[str, str] = {
+    "A": "prompt_start",
+    "B": "prompt_end",
+    "C": "command_start",
+    "D": "command_end",
+}
 
 
 def _menus_equivalent(a: InteractiveMenu, b: InteractiveMenu) -> bool:

@@ -169,6 +169,18 @@ narration voice starts) should be designed together with this.
 
 ## F7 — Default binding for OSC 133 semantic prompt
 
+**Status. Shipped.** `asat/tui_bridge.py::_classify_osc` now splits
+OSC 133 by subcommand into four distinct categories — `prompt_start`
+(`133;A`), `prompt_end` (`133;B`), `command_start` (`133;C`),
+`command_end` (`133;D`) — plus a generic `prompt` for any unknown
+subcommand. The default bank ships a `prompt_ready` 990 Hz / 30 ms
+tone on the `system` voice, gated on `category == "prompt_start"`,
+so users running zsh + powerlevel10k, starship, kitty, or vscode's
+shell-integration get an audible "shell is ready" cue out of the
+box. The other subcommands stay silent so the default doesn't fire
+four blips per command; users can clone the recipe in the editor to
+sonify command-end (with exit code) once F7 follow-ups land.
+
 **Gap.** `ANSI_OSC_RECEIVED` is emitted and
 [CLAUDE_CODE_MODES.md](CLAUDE_CODE_MODES.md) points at OSC 133 as a
 prompt-boundary signal, but the default bank has no OSC 133 binding.

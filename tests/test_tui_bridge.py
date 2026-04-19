@@ -210,6 +210,26 @@ class AnsiEventTests(unittest.TestCase):
         self.assertEqual(len(oscs), 1)
         self.assertEqual(oscs[0].payload["category"], "hyperlink")
 
+    def test_osc_133_subcommands_get_distinct_categories(self) -> None:
+        """F7: each OSC 133 subcommand maps to a unique category so the
+        default bank can bind only the prompt-start blip without firing
+        on every prompt-end / command-start / command-end marker."""
+        bus = EventBus()
+        events = _Recorder(bus)
+        bridge = TuiBridge(bus, cell_id="c1")
+        bridge.feed("\x1b]133;A\x07")
+        bridge.feed("\x1b]133;B\x07")
+        bridge.feed("\x1b]133;C\x07")
+        bridge.feed("\x1b]133;D;0\x07")
+        bridge.feed("\x1b]133;Z\x07")  # unknown subcommand
+        oscs = events.of(EventType.ANSI_OSC_RECEIVED)
+        categories = [event.payload["category"] for event in oscs]
+        self.assertEqual(
+            categories,
+            ["prompt_start", "prompt_end", "command_start", "command_end", "prompt"],
+        )
+        self.assertEqual(oscs[3].payload["body"], "133;D;0")
+
 
 class ResetTests(unittest.TestCase):
 

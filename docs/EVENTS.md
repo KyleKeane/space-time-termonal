@@ -239,9 +239,12 @@ absolute state.
 `ANSI_LINE_ERASED.mode` is the `K` parameter (0, 1, 2).
 
 `ANSI_OSC_RECEIVED.category` is one of `"title"` (OSC 0/1/2),
-`"hyperlink"` (OSC 8), `"color"` (OSC 4/10/11), or `"other"`. The raw
-`body` is included so advanced bindings can match on specific
-subcommands.
+`"hyperlink"` (OSC 8), `"color"` (OSC 4/10/11), one of the four
+OSC 133 (FinalTerm) semantic-prompt categories — `"prompt_start"`
+(`133;A`), `"prompt_end"` (`133;B`), `"command_start"` (`133;C`),
+`"command_end"` (`133;D`) — `"prompt"` (any other OSC 133
+subcommand), or `"other"`. The raw `body` is included so advanced
+bindings can match on specific subcommands.
 
 `ANSI_BELL` carries no extra data: it fires once per BEL byte (0x07)
 unless the byte is the OSC terminator.
