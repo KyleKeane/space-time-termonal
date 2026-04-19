@@ -6,6 +6,13 @@ design choice prioritises blind developers on Windows using a screen
 reader: keyboard-only operation, predictable event ordering, and
 self-voicing feedback without ever depending on colour or layout.
 
+The guiding principles, simplicity checklist, and PR recipe every
+contribution follows live in
+[`DEVELOPER_GUIDE.md`](DEVELOPER_GUIDE.md); this document stays
+focused on *how the code is wired*. Read the developer guide before
+your first PR and keep it open alongside the roadmap in
+[`FEATURE_REQUESTS.md`](FEATURE_REQUESTS.md).
+
 ## Goals
 
 * Self-voicing: every state change produces an auditable event.
