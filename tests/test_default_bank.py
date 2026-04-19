@@ -172,6 +172,11 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
     EventType.BOOKMARK_CREATED: {"name": "setup", "cell_id": "c1"},
     EventType.BOOKMARK_JUMPED: {"name": "setup", "cell_id": "c1"},
     EventType.BOOKMARK_REMOVED: {"name": "setup", "cell_id": "c1"},
+    EventType.ANSI_OSC_RECEIVED: {
+        "cell_id": "c1",
+        "body": "133;A",
+        "category": "prompt_start",
+    },
 }
 
 
@@ -238,7 +243,6 @@ class CoverageTests(unittest.TestCase):
                 EventType.ANSI_SGR_CHANGED,
                 EventType.ANSI_DISPLAY_CLEARED,
                 EventType.ANSI_LINE_ERASED,
-                EventType.ANSI_OSC_RECEIVED,
                 EventType.ANSI_BELL,
             },
         )

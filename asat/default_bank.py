@@ -96,6 +96,7 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.BOOKMARK_CREATED,
     EventType.BOOKMARK_JUMPED,
     EventType.BOOKMARK_REMOVED,
+    EventType.ANSI_OSC_RECEIVED,
 })
 
 
@@ -257,6 +258,17 @@ def _default_sounds() -> tuple[SoundRecipe, ...]:
             volume=0.95,
             azimuth=55.0,
             elevation=10.0,
+        ),
+        # F7: short, unobtrusive blip for OSC 133 prompt-start markers.
+        # Quieter and higher than `start` so a user whose shell paints
+        # a prompt every command doesn't get pummelled with the same
+        # tone they hear when the kernel begins running their code.
+        SoundRecipe(
+            id="prompt_ready",
+            kind="tone",
+            params={"frequency": 990.0, "duration": 0.03, "waveform": "sine"},
+            volume=0.35,
+            elevation=20.0,
         ),
     )
 
@@ -753,5 +765,24 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             say_template="last exit {last_exit_code}",
             predicate="last_exit_code != 0",
             priority=90,
+        ),
+
+        # F7: OSC 133 semantic prompt markers. Shells emitting these
+        # (zsh+powerlevel10k, starship, kitty, vscode shell-integration,
+        # etc.) signal where the prompt sits, when it ends, and when
+        # the command's output begins. We surface only the prompt-start
+        # cue by default — that's the moment a blind user most cares
+        # about (the shell is ready for input). The other subcommands
+        # remain silent until users opt in via the editor; otherwise
+        # every command would emit four blips. Other ANSI_OSC_RECEIVED
+        # categories (title, hyperlink, color, prompt subcommands beyond
+        # A) stay silent because no predicate matches them.
+        EventBinding(
+            id="osc_prompt_ready",
+            event_type=EventType.ANSI_OSC_RECEIVED.value,
+            voice_id="system",
+            sound_id="prompt_ready",
+            predicate="category == prompt_start",
+            priority=80,
         ),
     )

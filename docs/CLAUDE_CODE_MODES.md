@@ -34,9 +34,12 @@ Raw ANSI signals worth binding:
   `CSI 201~` around pasted data. Bracketed paste is visible only as
   `OUTPUT_LINE_APPENDED` with a synthetic "Pasted N lines" string.
 - Semantic prompt markers (OSC 133): emitted by some shells around
-  prompt / command / output regions; exposed as
-  `ANSI_OSC_RECEIVED` with `category == "other"` and `body` starting
-  `133`.
+  prompt / command / output regions; exposed as `ANSI_OSC_RECEIVED`
+  with `category` set to one of `"prompt_start"`, `"prompt_end"`,
+  `"command_start"`, `"command_end"` (or `"prompt"` for unknown OSC
+  133 subcommands) and `body` starting `133`. The default bank ships
+  a short blip on `category == "prompt_start"`; the other subcommands
+  stay silent until users opt in.
 
 ---
 
@@ -184,7 +187,7 @@ default bank today.
 
 | Surface | Event type | Voice | Cue (sound kind) | Template snippet |
 |---|---|---|---|---|
-| Default prompt ready | `ANSI_OSC_RECEIVED` (title) | narrator | short tone 440 Hz 60 ms | "ready" |
+| Default prompt ready | `ANSI_OSC_RECEIVED` (`category=="prompt_start"`) | system | short tone 990 Hz 30 ms | — |
 | Multiline continuation | `OUTPUT_LINE_APPENDED` | — | tone 220 Hz 40 ms | — |
 | Bash mode entered | `KEY_PRESSED` (`key=="!"`) | system | chord (440, 660) 80 ms | "bash mode" |
 | Memory append | `KEY_PRESSED` (`key=="#"`) | system | tone 660 Hz 50 ms | "remembered" |
