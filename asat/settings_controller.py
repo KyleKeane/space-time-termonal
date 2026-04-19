@@ -170,6 +170,27 @@ class SettingsController:
         self._editing = False
         self._edit_buffer = ""
 
+    def undo(self) -> bool:
+        """Revert the most recent edit on the underlying editor.
+
+        Returns False when the session is closed, the user is
+        composing a replacement value (the edit sub-mode owns the
+        buffer; undo at that point would be surprising), or when
+        there is nothing on the undo stack. Otherwise delegates to
+        `SettingsEditor.undo()` which restores the prior bank,
+        refocuses the cursor on the field it mutated, and publishes
+        SETTINGS_VALUE_EDITED so narration reacts.
+        """
+        if self._editor is None or self._editing:
+            return False
+        return self._editor.undo()
+
+    def redo(self) -> bool:
+        """Re-apply the most recently undone edit. Mirror of `undo()`."""
+        if self._editor is None or self._editing:
+            return False
+        return self._editor.redo()
+
     def save(self, path: Optional[Path | str] = None) -> Path:
         """Persist the bank. Uses the configured save_path if none is given."""
         target = Path(path) if path is not None else self._save_path

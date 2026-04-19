@@ -168,6 +168,8 @@ def default_bindings() -> BindingMap:
             Key.printable("e"): "settings_begin_edit",
             Key.combo("s", Modifier.CTRL): "settings_save",
             Key.combo("q", Modifier.CTRL): "settings_close",
+            Key.combo("z", Modifier.CTRL): "settings_undo",
+            Key.combo("y", Modifier.CTRL): "settings_redo",
         },
     }
 
@@ -578,6 +580,16 @@ class InputRouter:
         if self._settings_controller is not None:
             self._settings_controller.backspace_edit()
 
+    def _settings_undo(self) -> None:
+        """Revert the most recent edit via the settings controller."""
+        if self._settings_controller is not None:
+            self._settings_controller.undo()
+
+    def _settings_redo(self) -> None:
+        """Re-apply the most recently undone edit via the settings controller."""
+        if self._settings_controller is not None:
+            self._settings_controller.redo()
+
     def _open_action_menu(self) -> Optional[dict[str, object]]:
         """Open the contextual actions menu against the current focus.
 
@@ -693,6 +705,8 @@ class InputRouter:
             "settings_edit_commit": self._settings_edit_commit,
             "settings_edit_cancel": _void(self._settings_edit_cancel),
             "settings_edit_backspace": _void(self._settings_edit_backspace),
+            "settings_undo": _void(self._settings_undo),
+            "settings_redo": _void(self._settings_redo),
             "open_action_menu": self._open_action_menu,
             "menu_prev": _void(self._menu_prev),
             "menu_next": _void(self._menu_next),

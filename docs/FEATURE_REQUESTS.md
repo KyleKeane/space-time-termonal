@@ -499,6 +499,9 @@ re-onboarding scenarios.
 
 ## F21 — Settings: undo, search, and reset
 
+**Status.** In progress. Undo/redo shipped; `/` search and `:reset`
+still pending.
+
 **Gap.** The settings editor has no undo, no search, and no "reset
 this field / record / whole bank to defaults". A user who mistypes
 a value and commits it has to remember the old value and re-enter it.
@@ -515,6 +518,24 @@ record's id / event_type / label. A `:reset` meta-command (or
 Ctrl+R keystroke) with a confirm to reload the built-in defaults
 for the current record, the current section, or the whole bank.
 Pairs naturally with F2 (create/delete) and F3 (reload from disk).
+
+**Sketch (shipped — undo/redo).** `SettingsEditor` now maintains
+bounded undo/redo stacks (`MAX_HISTORY = 64`). Each successful
+`edit()` pushes an `_EditRecord` carrying both the mutated
+coordinates (section / record_index / field / old_value /
+new_value) and the pre/post bank references; any fresh edit clears
+the redo stack (standard Word-style semantics). `undo()` pops the
+most recent record, restores the prior bank, parks the cursor on
+the field the history step touched, and re-publishes
+`SETTINGS_VALUE_EDITED` with old/new reversed so narration and
+logs react uniformly. `redo()` is the mirror image. The editor
+tracks a `_saved_bank` baseline so the `dirty` flag clears when
+undo restores the post-save state and reasserts when redo moves
+past it. `SettingsController` exposes `undo()` / `redo()` that
+refuse during the edit sub-mode and when the session is closed.
+`InputRouter` binds **Ctrl+Z** to `settings_undo` and **Ctrl+Y**
+to `settings_redo` inside `FocusMode.SETTINGS`. Search and reset
+will follow in later PRs.
 
 ---
 
