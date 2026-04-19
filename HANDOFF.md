@@ -31,13 +31,14 @@ F9 README · F11 auto-advance after submit · F13 in-line buffer editing
 · F14 action-menu keystroke · F15 cell delete/move/duplicate · F16
 output search + jump-to-line · F17 richer meta-commands · F18 OS
 clipboard · F19 prompt context on re-entry · F20 first-run onboarding
-· F21a settings undo/redo · F6 Windows live audio (POSIX still open).
+· F21a settings undo/redo · F21b settings `/` search overlay · F6
+Windows live audio (POSIX still open).
 
 ## Open (roadmap)
 F1/F10 cancel + non-blocking exec · F2 settings create/delete · F3
 bank reload · F4 command history · F5 SAPI TTS · F6 POSIX live audio
 · F7 OSC 133 · F8 measured-HRTF user surface · F12 shell mode +
-session CWD · F21b/c settings search + reset · F22 diagnostic log
+session CWD · F21c settings `:reset` · F22 diagnostic log
 (`--log path.jsonl`) · F23 tab completion · F24 continuous output
 playback · **F25** remappable keybindings · **F26** cell clipboard
 (cut/copy/paste cells) · **F27** heading/text cells + outline
@@ -54,7 +55,7 @@ tabs with per-tab kernel (and child tabs sharing one kernel).
   clocks, no real audio.
 - One feature per PR on branch `claude/accessible-audio-terminal-cOh64`.
 - Test command: `python -m unittest discover -s tests -t .` —
-  currently **629 passing**.
+  currently **682 passing**.
 
 ## Entry points for the next session
 - **Roadmap (authoritative):** `docs/FEATURE_REQUESTS.md`
@@ -64,12 +65,18 @@ tabs with per-tab kernel (and child tabs sharing one kernel).
 - **CLI:** `python -m asat [--live | --wav-dir DIR] [--session PATH] [--quiet]`
 
 ## Suggested next PR
-**F21b** — `/` search overlay for `SettingsEditor`. Sub-modes mirror
-the existing edit sub-mode (`begin_search` / `extend_search` /
-`commit_search` / `cancel_search`). Cross-section substring match on
-Voice.id / SoundRecipe.id / EventBinding.(id | event_type | voice_id
-| sound_id). Park cursor at RECORD level on match. Controller API +
-InputRouter `/` binding + tests + docs, then PR.
+**F21c** — `:reset` for `SettingsEditor`. Reload the built-in
+defaults for the currently focused record, the whole section, or
+the whole bank, with a confirm step (either an InputRouter confirm
+sub-mode or an action-menu "Reset to defaults → {scope}" row).
+Integrate cleanly with the undo stack so a reset is itself undoable.
+Narrate scope + record count in the confirmation prompt. Controller
+API + InputRouter key (Ctrl+R?) + tests + docs, then PR.
+
+Alternative one-shot PRs if F21c feels heavy: **F22** `--log
+path.jsonl` diagnostic file (a single `JsonlEventLogger` subscriber,
+CLI flag, tests); **F4** command history (ring buffer + Up/Down in
+INPUT mode); **F23** Tab completion of executables + paths.
 
 ---
 

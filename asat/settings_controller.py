@@ -117,9 +117,13 @@ class SettingsController:
         """Rise one level; return False at the top so the caller can close.
 
         While editing, ascend cancels the in-progress edit instead.
+        While searching, ascend cancels the in-progress search.
         """
         if self._editing:
             self.cancel_edit()
+            return True
+        if self.searching:
+            self.cancel_search()
             return True
         if self.editor.state.level == Level.SECTION:
             return False
@@ -175,21 +179,72 @@ class SettingsController:
 
         Returns False when the session is closed, the user is
         composing a replacement value (the edit sub-mode owns the
-        buffer; undo at that point would be surprising), or when
-        there is nothing on the undo stack. Otherwise delegates to
+        buffer; undo at that point would be surprising), the user is
+        composing a `/` search query (same rationale), or when there
+        is nothing on the undo stack. Otherwise delegates to
         `SettingsEditor.undo()` which restores the prior bank,
         refocuses the cursor on the field it mutated, and publishes
         SETTINGS_VALUE_EDITED so narration reacts.
         """
-        if self._editor is None or self._editing:
+        if self._editor is None or self._editing or self.searching:
             return False
         return self._editor.undo()
 
     def redo(self) -> bool:
         """Re-apply the most recently undone edit. Mirror of `undo()`."""
-        if self._editor is None or self._editing:
+        if self._editor is None or self._editing or self.searching:
             return False
         return self._editor.redo()
+
+    @property
+    def searching(self) -> bool:
+        """Return True when a `/` search composer is active."""
+        return self._editor is not None and self._editor.searching
+
+    @property
+    def search_buffer(self) -> str:
+        """Return the in-progress search query (empty when not searching)."""
+        return self._editor.search_buffer if self._editor is not None else ""
+
+    def begin_search(self) -> bool:
+        """Open the `/` search overlay. Cancels any in-progress edit first.
+
+        Returns False when no session is open or the bank has no
+        records to search across. Opening a second search over an
+        active one is a no-op (the buffer is preserved so an
+        accidental retap can't wipe the query).
+        """
+        if self._editor is None:
+            return False
+        if self._editing:
+            self.cancel_edit()
+        return self._editor.begin_search()
+
+    def extend_search(self, character: str) -> None:
+        """Append a character to the search buffer."""
+        if self._editor is None or not self.searching:
+            raise SettingsControllerError("not in search sub-mode")
+        if len(character) != 1:
+            raise ValueError("extend_search expects exactly one character")
+        self._editor.extend_search(character)
+
+    def backspace_search(self) -> None:
+        """Remove the last character from the search buffer."""
+        if self._editor is None or not self.searching:
+            raise SettingsControllerError("not in search sub-mode")
+        self._editor.backspace_search()
+
+    def commit_search(self) -> bool:
+        """Close the overlay, keeping the cursor on the matched record."""
+        if self._editor is None or not self.searching:
+            return False
+        return self._editor.commit_search()
+
+    def cancel_search(self) -> bool:
+        """Close the overlay and restore the cursor to its pre-search spot."""
+        if self._editor is None or not self.searching:
+            return False
+        return self._editor.cancel_search()
 
     def save(self, path: Optional[Path | str] = None) -> Path:
         """Persist the bank. Uses the configured save_path if none is given."""

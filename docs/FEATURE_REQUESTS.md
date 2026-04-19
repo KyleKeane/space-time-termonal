@@ -499,7 +499,7 @@ re-onboarding scenarios.
 
 ## F21 — Settings: undo, search, and reset
 
-**Status.** In progress. Undo/redo shipped; `/` search and `:reset`
+**Status.** In progress. Undo/redo and `/` search shipped; `:reset`
 still pending.
 
 **Gap.** The settings editor has no undo, no search, and no "reset
@@ -534,8 +534,30 @@ undo restores the post-save state and reasserts when redo moves
 past it. `SettingsController` exposes `undo()` / `redo()` that
 refuse during the edit sub-mode and when the session is closed.
 `InputRouter` binds **Ctrl+Z** to `settings_undo` and **Ctrl+Y**
-to `settings_redo` inside `FocusMode.SETTINGS`. Search and reset
-will follow in later PRs.
+to `settings_redo` inside `FocusMode.SETTINGS`.
+
+**Sketch (shipped — `/` search overlay).** Pressing `/` anywhere
+in the settings tree enters a search sub-mode that mirrors the
+edit and F16 output-search composers: printable characters extend
+the query, Backspace trims, Enter commits, Escape restores the
+pre-search cursor (level / section / record / field). Matching is
+case-insensitive substring across every section at once — Voice
+and SoundRecipe match on `id`; EventBinding matches on `id`,
+`event_type`, `voice_id`, or `sound_id` — and the first hit parks
+the cursor at **record** level so the narrator reads the matched
+record and the user can descend into fields if they choose. After
+commit, `n` / `N` cycle forward / backward through the preserved
+match list (wrapping). New events `SETTINGS_SEARCH_OPENED`,
+`SETTINGS_SEARCH_UPDATED`, and `SETTINGS_SEARCH_CLOSED` narrate
+the overlay; the default bank binds them to the system voice so
+they narrate cleanly on every platform. `SettingsController`
+exposes `begin_search` / `extend_search` / `backspace_search` /
+`commit_search` / `cancel_search`; `ascend()`, `undo()`, and
+`redo()` all refuse while the search sub-mode is active.
+`InputRouter` binds `/` to open, `n` / `N` to cycle, and routes
+every key through a dedicated dispatch while searching so motion
+keys do not leak into the editor. Reset is the remaining F21
+sub-feature.
 
 ---
 
