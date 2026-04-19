@@ -19,6 +19,7 @@ call move_to_start() to jump to the top of the output.
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Optional
 
 from asat.event_bus import EventBus, publish_event
@@ -27,6 +28,18 @@ from asat.output_buffer import OutputBuffer, OutputLine
 
 
 DEFAULT_PAGE_SIZE = 10
+
+
+class ComposerMode(str, Enum):
+    """Which overlay the OUTPUT-mode composer is currently driving.
+
+    Subclasses `str` so historic call sites (and tests) that compare
+    against the literals "search" / "goto" keep working without
+    needing to import the enum.
+    """
+
+    SEARCH = "search"
+    GOTO = "goto"
 
 
 class OutputCursor:
@@ -58,7 +71,7 @@ class OutputCursor:
         # persists after commit so `next_match` / `prev_match` can keep
         # cycling through hits until the user searches again or
         # detaches the cursor.
-        self._composer_mode: Optional[str] = None
+        self._composer_mode: Optional[ComposerMode] = None
         self._composer_buffer: str = ""
         self._search_matches: tuple[int, ...] = ()
         self._search_position: int = -1
@@ -140,8 +153,12 @@ class OutputCursor:
         return self._seek(len(self._buffer) - 1)
 
     @property
-    def composer_mode(self) -> Optional[str]:
-        """Return "search", "goto", or None when no composer is active."""
+    def composer_mode(self) -> Optional[ComposerMode]:
+        """Return ComposerMode.SEARCH, .GOTO, or None when idle.
+
+        Members compare equal to the legacy strings ("search", "goto")
+        for back-compat with callers and tests written before F49.
+        """
         return self._composer_mode
 
     @property
@@ -152,7 +169,11 @@ class OutputCursor:
     @property
     def search_query(self) -> str:
         """Return the query used by the most recent search (empty if none)."""
-        return self._composer_buffer if self._composer_mode == "search" else self._last_search_query
+        return (
+            self._composer_buffer
+            if self._composer_mode is ComposerMode.SEARCH
+            else self._last_search_query
+        )
 
     @property
     def search_match_count(self) -> int:
@@ -161,11 +182,11 @@ class OutputCursor:
 
     def begin_search(self) -> bool:
         """Enter SEARCH composer mode; returns False when no buffer lines."""
-        return self._begin_composer("search")
+        return self._begin_composer(ComposerMode.SEARCH)
 
     def begin_goto(self) -> bool:
         """Enter GOTO-LINE composer mode; returns False when no buffer lines."""
-        return self._begin_composer("goto")
+        return self._begin_composer(ComposerMode.GOTO)
 
     def extend_composer(self, char: str) -> None:
         """Append a character to the composer buffer.
@@ -180,10 +201,10 @@ class OutputCursor:
             return
         if len(char) != 1:
             raise ValueError("extend_composer expects exactly one character")
-        if self._composer_mode == "goto" and not char.isdigit():
+        if self._composer_mode is ComposerMode.GOTO and not char.isdigit():
             return
         self._composer_buffer += char
-        if self._composer_mode == "search":
+        if self._composer_mode is ComposerMode.SEARCH:
             self._recompute_matches(jump_to_first=True)
 
     def backspace_composer(self) -> None:
@@ -191,7 +212,7 @@ class OutputCursor:
         if self._composer_mode is None or not self._composer_buffer:
             return
         self._composer_buffer = self._composer_buffer[:-1]
-        if self._composer_mode == "search":
+        if self._composer_mode is ComposerMode.SEARCH:
             self._recompute_matches(jump_to_first=True)
 
     def commit_composer(self) -> Optional[OutputLine]:
@@ -208,7 +229,7 @@ class OutputCursor:
             return None
         buffer_text = self._composer_buffer
         self._composer_mode = None
-        if mode == "search":
+        if mode is ComposerMode.SEARCH:
             self._composer_buffer = ""
             self._last_search_query = buffer_text
             return self.current_line()
@@ -249,14 +270,14 @@ class OutputCursor:
         """Focus the given zero-based line number (clamped to the buffer)."""
         return self._seek(line_number)
 
-    def _begin_composer(self, mode: str) -> bool:
+    def _begin_composer(self, mode: ComposerMode) -> bool:
         """Shared entry point for `begin_search` and `begin_goto`."""
         if self._buffer is None or len(self._buffer) == 0:
             return False
         self._composer_mode = mode
         self._composer_buffer = ""
         self._composer_origin = self._index
-        if mode == "search":
+        if mode is ComposerMode.SEARCH:
             self._search_matches = ()
             self._search_position = -1
         return True

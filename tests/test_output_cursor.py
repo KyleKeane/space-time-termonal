@@ -7,7 +7,7 @@ import unittest
 from asat.event_bus import EventBus
 from asat.events import Event, EventType
 from asat.output_buffer import OutputBuffer, STDERR, STDOUT
-from asat.output_cursor import OutputCursor
+from asat.output_cursor import ComposerMode, OutputCursor
 
 
 class _Recorder:
@@ -171,6 +171,13 @@ class SearchComposerTests(unittest.TestCase):
         cursor.attach(OutputBuffer("empty"))
         self.assertFalse(cursor.begin_search())
         self.assertIsNone(cursor.composer_mode)
+
+    def test_composer_mode_is_composermode_enum(self) -> None:
+        """F49: composer_mode returns a ComposerMode (str-equatable)."""
+        self.cursor.begin_search()
+        self.assertIs(self.cursor.composer_mode, ComposerMode.SEARCH)
+        # Back-compat: the enum still compares equal to the legacy literal.
+        self.assertEqual(self.cursor.composer_mode, "search")
 
     def test_extend_jumps_to_first_match_live(self) -> None:
         self.cursor.begin_search()
