@@ -228,6 +228,10 @@ class OutputCursor:
         if mode is None:
             return None
         buffer_text = self._composer_buffer
+        # State transition: SEARCH or GOTO → idle (apply branch). For
+        # SEARCH the cursor stays where the live-jump put it; for GOTO
+        # we seek to the parsed line below. See
+        # docs/USER_MANUAL.md "OUTPUT mode — re-reading output".
         self._composer_mode = None
         if mode is ComposerMode.SEARCH:
             self._composer_buffer = ""
@@ -274,6 +278,10 @@ class OutputCursor:
         """Shared entry point for `begin_search` and `begin_goto`."""
         if self._buffer is None or len(self._buffer) == 0:
             return False
+        # State transition: idle → SEARCH or GOTO sub-mode. The router
+        # dispatches every keystroke through the composer key path
+        # while `_composer_mode` is non-None. See
+        # docs/USER_MANUAL.md "OUTPUT mode — re-reading output".
         self._composer_mode = mode
         self._composer_buffer = ""
         self._composer_origin = self._index
@@ -284,6 +292,9 @@ class OutputCursor:
 
     def _clear_composer_state(self) -> None:
         """Reset every composer field back to its detached defaults."""
+        # State transition: SEARCH or GOTO → idle. After this returns
+        # the router resumes regular OUTPUT-mode dispatch. See
+        # docs/USER_MANUAL.md "OUTPUT mode — re-reading output".
         self._composer_mode = None
         self._composer_buffer = ""
         self._search_matches = ()
