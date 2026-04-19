@@ -821,6 +821,18 @@ class MetaCommandTests(unittest.TestCase):
         for name in META_COMMANDS:
             self.assertIn(f":{name}", text)
 
+    def test_help_lines_list_every_meta_command(self) -> None:
+        """Drift guard: `:help` cheat-sheet mentions every meta-command."""
+        from asat.input_router import HELP_LINES, META_COMMANDS
+
+        text = "\n".join(HELP_LINES)
+        missing = [name for name in META_COMMANDS if f":{name}" not in text]
+        self.assertEqual(
+            missing, [],
+            f"META_COMMANDS drifted from HELP_LINES; add to the Meta: "
+            f"row in input_router.py: {missing}",
+        )
+
     def test_colon_help_publishes_help_requested_with_cheat_sheet_lines(self) -> None:
         from asat.input_router import HELP_LINES
 
