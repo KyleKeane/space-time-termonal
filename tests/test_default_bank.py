@@ -152,6 +152,23 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "lines": ["Welcome."],
         "sentinel_path": "/tmp/first-run-done",
     },
+    EventType.WORKSPACE_OPENED: {
+        "root": "/tmp/proj",
+        "name": "proj",
+        "notebook_count": 2,
+    },
+    EventType.NOTEBOOK_OPENED: {
+        "path": "/tmp/proj/notebooks/default.asatnb",
+        "name": "default",
+    },
+    EventType.NOTEBOOK_CREATED: {
+        "path": "/tmp/proj/notebooks/ideas.asatnb",
+        "name": "ideas",
+    },
+    EventType.NOTEBOOK_LISTED: {
+        "names": ["default", "ideas"],
+        "summary": "two notebooks: default, ideas",
+    },
 }
 
 

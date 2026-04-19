@@ -75,6 +75,16 @@ class EventType(str, Enum):
     Onboarding:
         FIRST_RUN_DETECTED
 
+    Workspace (F50):
+        WORKSPACE_OPENED fires once on launch with the resolved
+        workspace root and the count of notebooks found.
+        NOTEBOOK_OPENED fires each time a notebook is loaded into
+        the active session (today: once per launch; post-F29 tabs
+        will fire it on every tab switch). NOTEBOOK_CREATED fires
+        when ``:new-notebook`` or ``Workspace.new_notebook`` writes
+        a fresh file. NOTEBOOK_LISTED is the ambient response to
+        ``:list-notebooks``.
+
     Completion alerts:
         COMMAND_COMPLETED_AWAY (fires alongside COMMAND_COMPLETED /
         COMMAND_FAILED when the user's focus has moved to a different
@@ -131,6 +141,11 @@ class EventType(str, Enum):
     PROMPT_REFRESH = "prompt.refresh"
 
     FIRST_RUN_DETECTED = "onboarding.first_run"
+
+    WORKSPACE_OPENED = "workspace.opened"
+    NOTEBOOK_OPENED = "workspace.notebook.opened"
+    NOTEBOOK_CREATED = "workspace.notebook.created"
+    NOTEBOOK_LISTED = "workspace.notebook.listed"
 
     SETTINGS_OPENED = "settings.opened"
     SETTINGS_CLOSED = "settings.closed"

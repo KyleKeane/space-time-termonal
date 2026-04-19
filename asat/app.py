@@ -20,6 +20,7 @@ to construct a fully-wired instance with sensible defaults.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Optional, TextIO
@@ -53,6 +54,7 @@ from asat.settings_controller import SettingsController
 from asat.sound_bank import SoundBank
 from asat.sound_engine import SoundEngine
 from asat.terminal import TerminalRenderer
+from asat.workspace import Workspace, WorkspaceError
 
 
 @dataclass
@@ -86,6 +88,14 @@ class Application:
     onboarding: Optional[OnboardingCoordinator] = None
     event_logger: Optional[JsonlEventLogger] = None
     session_path: Optional[Path] = None
+    # F50: when an Application is opened from a workspace, this holds
+    # the Workspace handle so meta-commands (`:workspace`,
+    # `:list-notebooks`, `:new-notebook`) can resolve names against
+    # the project root and so `close()` can update the
+    # `last_opened_notebook` pointer in `<workspace>/.asat/config.json`.
+    # ``None`` means the legacy single-notebook path (`asat --session
+    # foo.json`); every other surface ignores the field.
+    workspace: Optional[Workspace] = None
     # F62: when async_execution=True, `execute(cell_id)` hands the id
     # to this worker's background queue instead of running on the
     # caller's thread. None means synchronous execution (the default
@@ -120,6 +130,7 @@ class Application:
         ] = None,
         runner: Optional[object] = None,
         async_execution: bool = False,
+        workspace: Optional[Workspace] = None,
     ) -> "Application":
         """Wire every collaborator with sensible defaults.
 
@@ -175,6 +186,16 @@ class Application:
         keyboard read. Tests and embedding code that rely on
         deterministic inline ordering leave it False; the CLI flips
         it on.
+
+        `workspace` (F50) attaches a Workspace so meta-commands and
+        `close()` can read/write `<root>/.asat/config.json` and the
+        per-project notebooks directory. When set, the constructor
+        also chdirs into the resolved cwd (per-notebook
+        ``Session.cwd`` if present, else workspace root) and
+        publishes WORKSPACE_OPENED + NOTEBOOK_OPENED so the user
+        hears which project they landed in. Pass ``None`` for the
+        legacy single-file mode where ``--session foo.json`` is the
+        whole story.
         """
         bus = EventBus()
         # Attach the diagnostic logger FIRST so SESSION_CREATED and the
@@ -263,7 +284,16 @@ class Application:
             event_logger=event_logger,
             session_path=Path(session_path) if session_path is not None else None,
             execution_worker=execution_worker,
+            workspace=workspace,
         )
+        # F50: chdir BEFORE the launch events so a `pwd` cell run as
+        # the user's first action sees the project directory and so
+        # `PROMPT_REFRESH` carries the right cwd from the very first
+        # focus event.
+        if workspace is not None:
+            target = workspace.resolve_cwd(resolved_session)
+            if target.exists():
+                os.chdir(target)
         # Everything below fires AFTER sound_engine and (if requested)
         # the TerminalRenderer have subscribed, so the launch banner
         # both narrates through the sink and prints to the text trace.
@@ -273,6 +303,28 @@ class Application:
             {"session_id": resolved_session.session_id},
             source="app",
         )
+        if workspace is not None:
+            publish_event(
+                bus,
+                EventType.WORKSPACE_OPENED,
+                {
+                    "root": str(workspace.root),
+                    "name": workspace.root.name,
+                    "notebook_count": len(workspace.list_notebooks()),
+                },
+                source="app",
+            )
+            if session_path is not None:
+                publish_event(
+                    bus,
+                    EventType.NOTEBOOK_OPENED,
+                    {
+                        "path": str(session_path),
+                        "name": Path(session_path).stem,
+                    },
+                    source="app",
+                )
+                workspace.set_last_opened(Path(session_path))
         if not seeded and session_path is not None:
             publish_event(
                 bus,
@@ -374,6 +426,12 @@ class Application:
                 self._replay_welcome()
             elif meta == "repeat":
                 self.sound_engine.replay_last_narration()
+            elif meta == "workspace":
+                self._announce_workspace()
+            elif meta == "list-notebooks":
+                self._announce_notebook_list()
+            elif meta == "new-notebook":
+                self._create_notebook(str(payload.get("meta_argument", "")))
 
     def _replay_welcome(self) -> None:
         """Re-invoke the onboarding tour on `:welcome` (F44).
@@ -405,6 +463,128 @@ class Application:
             {
                 "session_id": self.session.session_id,
                 "path": str(self.session_path),
+            },
+            source="app",
+        )
+
+    def _announce_workspace(self) -> None:
+        """`:workspace` — re-announce the active project root and notebook count.
+
+        A no-op when ASAT was started without a workspace (legacy
+        ``--session foo.json`` mode); the meta-command still parses
+        cleanly so users can type it without crashing the router.
+        Re-publishes WORKSPACE_OPENED rather than HELP_REQUESTED so
+        the existing audio binding (default_bank.workspace_opened)
+        narrates the answer in the same voice as the launch banner.
+        """
+        if self.workspace is None:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": ["No workspace open — run `asat <dir>` to attach one."]},
+                source="app",
+            )
+            return
+        publish_event(
+            self.bus,
+            EventType.WORKSPACE_OPENED,
+            {
+                "root": str(self.workspace.root),
+                "name": self.workspace.root.name,
+                "notebook_count": len(self.workspace.list_notebooks()),
+            },
+            source="app",
+        )
+
+    def _announce_notebook_list(self) -> None:
+        """`:list-notebooks` — narrate every notebook in the workspace.
+
+        Publishes NOTEBOOK_LISTED with both ``names`` (machine-friendly
+        list of stems) and ``summary`` (the human-friendly sentence the
+        sound bank narrates). When no workspace is attached the user
+        gets a HELP_REQUESTED hint instead of silence so they know
+        why nothing was announced.
+        """
+        if self.workspace is None:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": ["No workspace open — run `asat <dir>` to attach one."]},
+                source="app",
+            )
+            return
+        notebooks = self.workspace.list_notebooks()
+        names = [path.stem for path in notebooks]
+        if not names:
+            summary = "no notebooks yet"
+        elif len(names) == 1:
+            summary = f"1 notebook: {names[0]}"
+        else:
+            summary = f"{len(names)} notebooks: {', '.join(names)}"
+        publish_event(
+            self.bus,
+            EventType.NOTEBOOK_LISTED,
+            {"names": names, "summary": summary},
+            source="app",
+        )
+
+    def _create_notebook(self, argument: str) -> None:
+        """`:new-notebook <name>` — create a fresh notebook on disk.
+
+        The created notebook inherits the workspace root as its cwd.
+        Narrates NOTEBOOK_CREATED so the user hears confirmation, plus
+        a follow-up HELP_REQUESTED that explains the in-flight switch
+        is deferred to F51 — for now they restart ASAT with
+        ``asat <root> <name>`` to open it. A blank or invalid name
+        emits HELP_REQUESTED instead of crashing the router.
+        """
+        if self.workspace is None:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": ["No workspace open — run `asat <dir>` to attach one."]},
+                source="app",
+            )
+            return
+        name = argument.strip()
+        if not name:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {
+                    "lines": [
+                        "`:new-notebook <name>` — name is required.",
+                        "Example: `:new-notebook ideas`.",
+                    ],
+                },
+                source="app",
+            )
+            return
+        try:
+            path = self.workspace.new_notebook(name)
+        except WorkspaceError as exc:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": [f"Could not create notebook: {exc}"]},
+                source="app",
+            )
+            return
+        publish_event(
+            self.bus,
+            EventType.NOTEBOOK_CREATED,
+            {"path": str(path), "name": path.stem},
+            source="app",
+        )
+        publish_event(
+            self.bus,
+            EventType.HELP_REQUESTED,
+            {
+                "lines": [
+                    f"Created notebook {path.stem}. "
+                    "Restart ASAT with `asat "
+                    f"{self.workspace.root} {path.stem}` to open it."
+                ],
             },
             source="app",
         )

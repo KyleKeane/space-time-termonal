@@ -611,5 +611,115 @@ class ApplicationTextTraceTests(unittest.TestCase):
         self.assertEqual(stream.getvalue(), "")
 
 
+class ApplicationWorkspaceTests(unittest.TestCase):
+    """When a Workspace is supplied, the Application chdirs into it
+    on launch and the three workspace meta-commands (`:workspace`,
+    `:list-notebooks`, `:new-notebook`) publish the right events."""
+
+    def setUp(self) -> None:
+        import os
+        import tempfile
+        from asat.workspace import Workspace
+
+        self._cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._restore_cwd)
+        self.addCleanup(self._tmp.cleanup)
+        self.workspace = Workspace.init(self._tmp.name)
+
+    def _restore_cwd(self) -> None:
+        import os
+
+        os.chdir(self._cwd)
+
+    def _build(self, **overrides):
+        events: list[Event] = []
+
+        def _record(event: Event) -> None:
+            events.append(event)
+
+        from asat.session import Session
+
+        defaults: dict = {
+            "workspace": self.workspace,
+            "session": Session.new(),
+        }
+        defaults.update(overrides)
+        app = Application.build(**defaults)
+        for event_type in EventType:
+            app.bus.subscribe(event_type, _record)
+        self.addCleanup(app.close)
+        return app, events
+
+    def test_build_chdirs_into_workspace_root(self) -> None:
+        import os
+
+        Application.build(workspace=self.workspace)
+        self.assertEqual(os.getcwd(), str(self.workspace.root))
+
+    def test_build_publishes_workspace_opened_with_count(self) -> None:
+        events: list[Event] = []
+
+        def _record(event: Event) -> None:
+            events.append(event)
+
+        from asat.event_bus import EventBus
+        # Subscribe BEFORE build so we capture the launch event.
+        # Easiest path: build with text_trace=None, then assert via
+        # a captured publication using a pre-supplied bus is not
+        # possible because build() owns the bus. Instead we let
+        # build() fire the event and read it back from the
+        # JsonlEventLogger path is heavyweight; the simpler check
+        # is: re-trigger by calling _announce_workspace.
+        app = Application.build(workspace=self.workspace)
+        self.addCleanup(app.close)
+        for event_type in EventType:
+            app.bus.subscribe(event_type, _record)
+        app._announce_workspace()
+        opened = [e for e in events if e.event_type == EventType.WORKSPACE_OPENED]
+        self.assertEqual(len(opened), 1)
+        self.assertEqual(opened[0].payload["name"], self.workspace.root.name)
+        self.assertEqual(opened[0].payload["notebook_count"], 0)
+
+    def test_list_notebooks_meta_command_publishes_summary(self) -> None:
+        self.workspace.new_notebook("alpha")
+        self.workspace.new_notebook("beta")
+        app, events = self._build()
+        app._announce_notebook_list()
+        listed = [e for e in events if e.event_type == EventType.NOTEBOOK_LISTED]
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(listed[0].payload["names"], ["alpha", "beta"])
+        self.assertIn("alpha", listed[0].payload["summary"])
+
+    def test_new_notebook_meta_command_creates_file_and_event(self) -> None:
+        app, events = self._build()
+        app._create_notebook("ideas")
+        path = self.workspace.notebook_path("ideas")
+        self.assertTrue(path.exists())
+        created = [e for e in events if e.event_type == EventType.NOTEBOOK_CREATED]
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0].payload["name"], "ideas")
+
+    def test_new_notebook_blank_argument_emits_help_hint(self) -> None:
+        app, events = self._build()
+        app._create_notebook("   ")
+        helps = [e for e in events if e.event_type == EventType.HELP_REQUESTED]
+        self.assertTrue(any("name is required" in line
+                            for e in helps for line in e.payload.get("lines", [])))
+
+    def test_meta_commands_are_safe_without_workspace(self) -> None:
+        from asat.session import Session
+
+        app = Application.build(session=Session.new())
+        self.addCleanup(app.close)
+        events: list[Event] = []
+        app.bus.subscribe(EventType.HELP_REQUESTED, events.append)
+        app._announce_workspace()
+        app._announce_notebook_list()
+        app._create_notebook("ignored")
+        # Each helper publishes a "no workspace" hint instead of crashing.
+        self.assertEqual(len(events), 3)
+
+
 if __name__ == "__main__":
     unittest.main()

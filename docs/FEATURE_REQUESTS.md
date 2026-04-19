@@ -1627,6 +1627,21 @@ the cluster in short-term context.
 
 ## F50 — Workspace directory model
 
+**Status (2026-04-19).** A minimal slice has shipped:
+[`asat/workspace.py`](../asat/workspace.py) defines the
+`Workspace` handle, the `<root>/.asat/{config.json,log/}` +
+`<root>/notebooks/*.asatnb` layout, `init` / `load` /
+`is_workspace` / `find_enclosing` / `notebook_path` /
+`new_notebook` / `resolve_cwd` / `set_last_opened` /
+`default_notebook`, and per-notebook `Session.cwd`. The
+`Application.build` ctor accepts a `workspace` and chdir's into
+it before publishing `WORKSPACE_OPENED` + `NOTEBOOK_OPENED`.
+Deferred to a follow-up: advisory file locking
+(`.asat-workspace.lock`, fcntl/msvcrt), per-notebook sidecars
+(`<slug>.asatnb.state`), and the workspace-level
+`settings/bank.json` cascade — the default bank still loads
+from `~/.asat/bank.json` only.
+
 **Gap.** ASAT has no concept of a "workspace". State that should
 be persistent (the cells a user is building up, which tabs are
 open, workspace-scoped settings) is either in-memory only or
@@ -2087,6 +2102,18 @@ tab lifecycle.
 ---
 
 ## F54 — Workspace CLI discovery + `:workspace` meta-commands
+
+**Status (2026-04-19).** A minimal slice has shipped:
+`asat <dir>`, `asat <dir> <name>`, `asat <file.asatnb>`, and
+`asat --init-workspace <dir>` all open / create a workspace and
+pick a default notebook (last-opened pointer, single existing,
+or fresh `default.asatnb`). Three meta-commands are live:
+`:workspace` re-announces the project root, `:list-notebooks`
+narrates every notebook by name, `:new-notebook <name>` writes
+a fresh file (the user must restart ASAT to open it; in-flight
+tab switching is deferred). Recent-workspaces history,
+`--list-workspaces`, in-process `:workspace open`, and the
+dirty-save / Y/N bootstrap prompt remain on this card.
 
 **Gap.** Once F50/F51 give workspaces and notebook files a shape
 on disk, ASAT still needs a way for a human to open one.

@@ -285,6 +285,9 @@ discarded and the cell is not modified.
 | `:reset bank` | Reset the whole sound bank to the built-in defaults (also `:reset all`). |
 | `:heading <level> <title>` | Append a heading landmark at level 1..6 for NVDA-style navigation (F61). |
 | `:toc`       | Narrate the notebook's heading outline.              |
+| `:workspace` | Re-announce the active project root and notebook count (no-op without a workspace). |
+| `:list-notebooks` | Narrate every notebook in the workspace by name. |
+| `:new-notebook <name>` | Create a fresh notebook on disk; restart ASAT with `asat <root> <name>` to open it. |
 
 Meta-command names are **case-insensitive** — `:HELP`, `:Help`, and
 `:help` all do the same thing. A single trailing argument is
