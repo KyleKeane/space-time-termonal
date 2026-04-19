@@ -33,6 +33,7 @@ from asat.actions import (
 )
 from asat.audio_sink import AudioSink, MemorySink
 from asat.default_bank import default_sound_bank
+from asat.error_tail import StderrTailAnnouncer
 from asat.event_bus import EventBus, publish_event
 from asat.events import Event, EventType
 from asat.input_router import InputRouter, default_bindings
@@ -75,6 +76,7 @@ class Application:
     action_catalog: ActionCatalog
     action_menu: ActionMenu
     prompt_context: PromptContext
+    error_tail: StderrTailAnnouncer
     onboarding: Optional[OnboardingCoordinator] = None
     session_path: Optional[Path] = None
     running: bool = True
@@ -175,6 +177,10 @@ class Application:
         # dispatch order (helpful for test assertions that check the
         # rendered line sequence).
         prompt_context = PromptContext(bus)
+        # error_tail subscribes AFTER sound_engine so the normal
+        # failure chord + narration play first; the stderr-tail
+        # announcement arrives a beat later.
+        error_tail = StderrTailAnnouncer(bus, recorder)
         if text_trace is not None:
             TerminalRenderer(bus, stream=text_trace)
         onboarding = onboarding_factory(bus) if onboarding_factory is not None else None
@@ -193,6 +199,7 @@ class Application:
             action_catalog=action_catalog,
             action_menu=action_menu,
             prompt_context=prompt_context,
+            error_tail=error_tail,
             onboarding=onboarding,
             session_path=Path(session_path) if session_path is not None else None,
         )

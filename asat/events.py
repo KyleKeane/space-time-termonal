@@ -83,6 +83,7 @@ class EventType(str, Enum):
     COMMAND_STARTED = "command.started"
     COMMAND_COMPLETED = "command.completed"
     COMMAND_FAILED = "command.failed"
+    COMMAND_FAILED_STDERR_TAIL = "command.failed.stderr_tail"
     COMMAND_CANCELLED = "command.cancelled"
 
     OUTPUT_CHUNK = "output.chunk"

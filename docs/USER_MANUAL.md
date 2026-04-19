@@ -228,6 +228,11 @@ On Enter:
 4. When the process exits you hear either the major-chord success
    chime (exit code 0) or the low minor-second failure chord plus
    the alert voice reading the exit code (nonzero).
+5. On failure, the alert voice also auto-reads the last few stderr
+   lines so you hear *what* went wrong without having to jump into
+   OUTPUT mode. The tail defaults to three lines (configurable in
+   `StderrTailAnnouncer`); disable the `command_failed_stderr_tail`
+   binding in the settings editor if you prefer the minimal cue.
 
 Cancelling a running command is a future keyboard binding; for now
 let commands finish or send `:quit` to bail out of the whole session.

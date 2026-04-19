@@ -53,13 +53,21 @@ Producer: `Session` mutators + `NotebookCursor` operations.
 
 Producer: `asat.kernel.ExecutionKernel` (`source="kernel"`).
 
-| EventType           | Payload keys                                         |
-|---------------------|------------------------------------------------------|
-| `COMMAND_SUBMITTED` | `cell_id`, `command`                                 |
-| `COMMAND_STARTED`   | `cell_id`                                            |
-| `COMMAND_COMPLETED` | `cell_id`, `exit_code`, `timed_out`                  |
-| `COMMAND_FAILED`    | `cell_id`, `exit_code`, `timed_out` or `error`/`error_type` when launch itself failed |
-| `COMMAND_CANCELLED` | `cell_id`                                            |
+| EventType                     | Payload keys                                         |
+|-------------------------------|------------------------------------------------------|
+| `COMMAND_SUBMITTED`           | `cell_id`, `command`                                 |
+| `COMMAND_STARTED`             | `cell_id`                                            |
+| `COMMAND_COMPLETED`           | `cell_id`, `exit_code`, `timed_out`                  |
+| `COMMAND_FAILED`              | `cell_id`, `exit_code`, `timed_out` or `error`/`error_type` when launch itself failed |
+| `COMMAND_FAILED_STDERR_TAIL`  | `cell_id`, `exit_code`, `timed_out`, `tail_lines`, `tail_text`, `line_count` |
+| `COMMAND_CANCELLED`           | `cell_id`                                            |
+
+`COMMAND_FAILED_STDERR_TAIL` is a secondary event produced by
+`asat.error_tail.StderrTailAnnouncer` (`source="error_tail"`) a beat
+after `COMMAND_FAILED`. It carries the last N stderr lines captured
+by the `OutputRecorder` so a binding can narrate the actual error
+text. Only fires when the failed cell produced at least one stderr
+line; see [FEATURE_REQUESTS.md#f36](FEATURE_REQUESTS.md#f36).
 
 ## Output streaming
 
