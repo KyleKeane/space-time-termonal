@@ -93,16 +93,23 @@ class OnboardingCoordinator:
         """Return True when the sentinel is absent (no prior welcome)."""
         return not self._sentinel_path.exists()
 
-    def run(self) -> bool:
-        """Publish the tour once and create the sentinel; return True if fired.
+    def run(self, *, force: bool = False) -> bool:
+        """Publish the tour and (on a first run) create the sentinel.
 
-        Returns False on subsequent calls so the CLI can treat the
-        result as "did I just onboard a newcomer?" without re-checking
-        the filesystem itself.
+        Returns False on a non-first-run, non-forced call so the CLI
+        can treat the result as "did I just onboard a newcomer?"
+        without re-checking the filesystem itself.
+
+        `force=True` is the `:welcome` replay path (F44): it publishes
+        the same `FIRST_RUN_DETECTED` event but does NOT write the
+        sentinel, because the sentinel's meaning is "the user has
+        seen this once" and a replay must not rewind that fact. The
+        silent-sink hint (F41) is also skipped on a forced replay —
+        the user chose this; they already know whether they can hear.
         """
-        if not self.is_first_run():
+        if not force and not self.is_first_run():
             return False
-        if not self._has_live_audio:
+        if not force and not self._has_live_audio:
             print(SILENT_SINK_HINT, file=self._hint_stream)
         publish_event(
             self._bus,
@@ -110,9 +117,12 @@ class OnboardingCoordinator:
             {
                 "lines": list(self._lines),
                 "sentinel_path": str(self._sentinel_path),
+                "replay": force,
             },
             source=self.SOURCE,
         )
+        if force:
+            return True
         self._sentinel_path.parent.mkdir(parents=True, exist_ok=True)
         self._sentinel_path.write_text("first-run-done\n", encoding="utf-8")
         return True

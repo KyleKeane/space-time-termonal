@@ -171,6 +171,57 @@ class OnboardingCoordinatorTests(unittest.TestCase):
         self.assertFalse(fired_again)
         self.assertEqual(stream.getvalue(), "")
 
+    def test_force_run_fires_even_when_sentinel_exists(self) -> None:
+        """F44: `.run(force=True)` replays the tour after the first
+        run. A user invoking `:welcome` must hear the same lines the
+        sentinel saved them from hearing on every launch."""
+        bus = EventBus()
+        coordinator = OnboardingCoordinator(bus, self.sentinel)
+        coordinator.run()
+        self.assertFalse(coordinator.is_first_run())
+
+        recorder = _Recorder(bus)
+        fired = coordinator.run(force=True)
+
+        self.assertTrue(fired)
+        events = recorder.of(EventType.FIRST_RUN_DETECTED)
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0].payload["replay"])
+        self.assertEqual(
+            events[0].payload["lines"], list(DEFAULT_ONBOARDING_LINES)
+        )
+
+    def test_force_run_does_not_rewrite_sentinel(self) -> None:
+        """F44: a replay must not touch the sentinel. Its meaning
+        stays `the user has seen the tour once` — rewinding that would
+        break F20's once-per-machine contract."""
+        bus = EventBus()
+        coordinator = OnboardingCoordinator(bus, self.sentinel)
+        coordinator.run()
+        first_mtime = self.sentinel.stat().st_mtime_ns
+
+        coordinator.run(force=True)
+        coordinator.run(force=True)
+
+        self.assertEqual(self.sentinel.stat().st_mtime_ns, first_mtime)
+
+    def test_force_run_skips_silent_sink_hint(self) -> None:
+        """F44 + F41: the replay must not print the silent-sink hint.
+        The user chose to replay; they already know whether they
+        can hear. Spamming stderr on every `:welcome` would be noise."""
+        bus = EventBus()
+        stream = io.StringIO()
+        coordinator = OnboardingCoordinator(
+            bus,
+            self.sentinel,
+            has_live_audio=False,
+            hint_stream=stream,
+        )
+
+        coordinator.run(force=True)
+
+        self.assertEqual(stream.getvalue(), "")
+
     def test_default_lines_mention_help_and_quit(self) -> None:
         # Sanity check the welcome text a newcomer will actually hear
         # so a careless edit doesn't ship a tour without the two

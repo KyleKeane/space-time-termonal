@@ -818,6 +818,71 @@ class MetaCommandTests(unittest.TestCase):
         ]
         self.assertEqual(submits[-1].payload["meta_command"], "help")
 
+    def test_colon_help_topic_publishes_that_topics_lines(self) -> None:
+        """F38: `:help <topic>` narrates a focused micro-tour."""
+        from asat.help_topics import HELP_TOPICS
+
+        bus, _, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":help settings":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertEqual(len(helps), 1)
+        self.assertEqual(
+            tuple(helps[0].payload["lines"]),
+            HELP_TOPICS["settings"],
+        )
+        self.assertEqual(helps[0].payload["help_topic"], "settings")
+
+    def test_colon_help_topic_is_case_insensitive(self) -> None:
+        """F38: `:HELP Navigation` resolves the same as `:help navigation`."""
+        from asat.help_topics import HELP_TOPICS
+
+        bus, _, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":HELP Navigation":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertEqual(tuple(helps[0].payload["lines"]), HELP_TOPICS["navigation"])
+
+    def test_colon_help_topics_lists_every_topic_name(self) -> None:
+        """F38: `:help topics` enumerates every registered topic."""
+        from asat.help_topics import topic_names
+
+        bus, _, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":help topics":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertEqual(len(helps), 1)
+        text = "\n".join(helps[0].payload["lines"])
+        for name in topic_names():
+            self.assertIn(f":help {name}", text)
+        self.assertEqual(helps[0].payload["help_topic"], "topics")
+
+    def test_colon_help_unknown_topic_suggests_closest_match(self) -> None:
+        """F38: `:help navgation` (typo) suggests `:help navigation`."""
+        bus, _, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":help navgation":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        helps = recorder.types_of(EventType.HELP_REQUESTED)
+        self.assertEqual(len(helps), 1)
+        text = "\n".join(helps[0].payload["lines"])
+        self.assertIn("Unknown", text)
+        self.assertIn(":help navigation", text)
+        self.assertEqual(
+            helps[0].payload["help_topic_unknown"], "navgation"
+        )
+
     def test_colon_help_is_ambient_leaves_user_in_input_mode(self) -> None:
         """`:help` consumes the buffer but keeps INPUT focus so the
         user can immediately continue typing their real command."""
@@ -832,6 +897,24 @@ class MetaCommandTests(unittest.TestCase):
         for ch in "echo hi":
             router.handle_key(Key.printable(ch))
         self.assertEqual(cursor.focus.input_buffer, "echo hi")
+
+    def test_colon_welcome_surfaces_meta_command_and_stays_in_input(self) -> None:
+        """F44: `:welcome` emits `meta_command: welcome` on the submit
+        action and, being ambient, keeps the user in INPUT mode so
+        they can keep typing after hearing the tour replay."""
+        bus, cursor, router, _controller = _build_with_settings([""])
+        recorder = _Recorder(bus)
+        router.handle_key(ENTER)
+        for ch in ":welcome":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        submits = [
+            e for e in recorder.types_of(EventType.ACTION_INVOKED)
+            if e.payload.get("action") == "submit"
+        ]
+        self.assertEqual(submits[-1].payload["meta_command"], "welcome")
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertEqual(cursor.focus.input_buffer, "")
 
     def test_colon_save_is_ambient_leaves_user_in_input_mode(self) -> None:
         """Same ambient semantics for `:save` — session gets saved by
