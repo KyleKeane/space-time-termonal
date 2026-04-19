@@ -197,13 +197,23 @@ See [AUDIO.md](AUDIO.md) for the full reference.
 Producer: `asat.settings_editor.SettingsEditor`
 (`source="settings_editor"`).
 
-| EventType                | Payload keys                                                        |
-|--------------------------|---------------------------------------------------------------------|
-| `SETTINGS_OPENED`        | `section`, `record_count`                                           |
-| `SETTINGS_CLOSED`        | `dirty`                                                             |
-| `SETTINGS_FOCUSED`       | `level`, `section`, (optional) `record_index`, `record_id`, `field`, `value` |
-| `SETTINGS_VALUE_EDITED`  | `section`, `record_index`, `field`, `old_value`, `new_value`        |
-| `SETTINGS_SAVED`         | `path`                                                              |
+| EventType                  | Payload keys                                                        |
+|----------------------------|---------------------------------------------------------------------|
+| `SETTINGS_OPENED`          | `section`, `record_count`                                           |
+| `SETTINGS_CLOSED`          | `dirty`                                                             |
+| `SETTINGS_FOCUSED`         | `level`, `section`, (optional) `record_index`, `record_id`, `field`, `value` |
+| `SETTINGS_VALUE_EDITED`    | `section`, `record_index`, `field`, `old_value`, `new_value`        |
+| `SETTINGS_SAVED`           | `path`                                                              |
+| `SETTINGS_SEARCH_OPENED`   | `origin_level`, `origin_section`, `origin_record_index`, `origin_field_index` |
+| `SETTINGS_SEARCH_UPDATED`  | `query`, `match_count`, (optional, when matched) `section`, `record_index`, `record_id` |
+| `SETTINGS_SEARCH_CLOSED`   | `query`, `match_count`, `committed`                                 |
+
+The `SETTINGS_SEARCH_*` family fires from the `/` search overlay
+described in [USER_MANUAL.md § Searching the bank](USER_MANUAL.md#searching-the-bank).
+`SETTINGS_SEARCH_UPDATED` publishes on every buffer edit, including
+zero-match queries (so narration can announce "0 matches").
+`SETTINGS_SEARCH_CLOSED` carries `committed=True` on Enter and
+`committed=False` on Escape / ascend cancel.
 
 ## Help surface
 
