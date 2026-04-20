@@ -54,6 +54,8 @@ from asat.session import Session
 from asat.settings_controller import SettingsController
 from asat.sound_bank import SoundBank
 from asat.sound_engine import SoundEngine
+from asat.tts import TTSEngine
+from asat.tts_registry import TTSEngineRegistry, TTSRegistryError
 from asat.streaming_monitor import StreamingMonitor
 from asat.terminal import TerminalRenderer
 from asat.workspace import Workspace, WorkspaceError
@@ -111,6 +113,15 @@ class Application:
     def __post_init__(self) -> None:
         """Wire subscriptions that need the fully-constructed Application."""
         self._pending: list[str] = []
+        # Per-session TTS state for the `:tts` meta-command. The
+        # registry is the single source of engine-id → factory; the
+        # id + parameter dict remember how the current engine was
+        # built so `:tts set` can rebuild with one parameter changed.
+        self._tts_registry: TTSEngineRegistry = TTSEngineRegistry.default()
+        self._tts_engine_id: Optional[str] = _classify_tts_engine(
+            self.sound_engine.tts, self._tts_registry
+        )
+        self._tts_parameters: dict[str, object] = {}
         self.bus.subscribe(EventType.ACTION_INVOKED, self._on_action_invoked)
         self.bus.subscribe(EventType.FOCUS_CHANGED, self._on_focus_changed)
 
@@ -136,6 +147,7 @@ class Application:
         runner: Optional[object] = None,
         async_execution: bool = False,
         workspace: Optional[Workspace] = None,
+        tts: Optional[TTSEngine] = None,
     ) -> "Application":
         """Wire every collaborator with sensible defaults.
 
@@ -242,7 +254,7 @@ class Application:
             output_recorder=recorder,
         )
         resolved_sink: AudioSink = sink if sink is not None else MemorySink()
-        sound_engine = SoundEngine(bus, resolved_bank, resolved_sink)
+        sound_engine = SoundEngine(bus, resolved_bank, resolved_sink, tts=tts)
         # PromptContext must subscribe BEFORE TerminalRenderer so that
         # when the user transitions into INPUT mode post-command, the
         # PROMPT_REFRESH event it publishes reaches the renderer in
@@ -491,6 +503,8 @@ class Application:
                 self._set_verbosity(str(payload.get("meta_argument", "")))
             elif meta == "reload-bank":
                 self._reload_bank()
+            elif meta == "tts":
+                self._handle_meta_tts(str(payload.get("meta_argument", "")))
 
     def _cancel_running_command(self) -> None:
         """`cancel_command` (Ctrl+C in INPUT mode) — F1.
@@ -802,3 +816,174 @@ class Application:
             },
             source="app",
         )
+
+    def _handle_meta_tts(self, argument: str) -> None:
+        """Dispatch `:tts list | use <id> | set <param> <value>`.
+
+        The command is the user-facing knob for the pluggable TTS
+        registry (``asat/tts_registry.py``). All three sub-commands
+        narrate their outcome via ``HELP_REQUESTED`` so the user
+        always hears confirmation — no silent state changes.
+        """
+        parts = argument.strip().split(maxsplit=2)
+        subcommand = parts[0].lower() if parts else "list"
+        if subcommand == "list":
+            description = self._tts_registry.describe()
+            active = self._tts_engine_id or "(custom)"
+            params_summary = (
+                ", ".join(f"{k}={v}" for k, v in self._tts_parameters.items())
+                or "(defaults)"
+            )
+            lines = [
+                f"active: {active}; parameters: {params_summary}",
+                *description.splitlines(),
+                "Use `:tts use <id>` to switch, `:tts set <param> <value>` to tune.",
+            ]
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": lines},
+                source="app",
+            )
+            return
+        if subcommand == "use":
+            if len(parts) < 2:
+                publish_event(
+                    self.bus,
+                    EventType.HELP_REQUESTED,
+                    {
+                        "lines": [
+                            "`:tts use <id>` — id is one of: "
+                            f"{', '.join(self._tts_registry.available_ids()) or 'none'}."
+                        ]
+                    },
+                    source="app",
+                )
+                return
+            engine_id = parts[1]
+            try:
+                engine = self._tts_registry.build(engine_id)
+            except TTSRegistryError as exc:
+                publish_event(
+                    self.bus,
+                    EventType.HELP_REQUESTED,
+                    {"lines": [f"`:tts use {engine_id}` — {exc}"]},
+                    source="app",
+                )
+                return
+            self.sound_engine.set_tts(engine)
+            self._tts_engine_id = engine_id
+            self._tts_parameters = {}
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": [f"TTS engine switched to {engine_id}."]},
+                source="app",
+            )
+            return
+        if subcommand == "set":
+            if self._tts_engine_id is None:
+                publish_event(
+                    self.bus,
+                    EventType.HELP_REQUESTED,
+                    {
+                        "lines": [
+                            "`:tts set` is only available for registry-managed "
+                            "engines. Run `:tts use <id>` first."
+                        ]
+                    },
+                    source="app",
+                )
+                return
+            if len(parts) < 3:
+                publish_event(
+                    self.bus,
+                    EventType.HELP_REQUESTED,
+                    {"lines": ["`:tts set <param> <value>` — see `:tts list` for params."]},
+                    source="app",
+                )
+                return
+            param_name, raw_value = parts[1], parts[2]
+            new_params = dict(self._tts_parameters)
+            new_params[param_name] = _coerce_tts_value(raw_value)
+            try:
+                engine = self._tts_registry.build(
+                    self._tts_engine_id, parameters=new_params
+                )
+            except TTSRegistryError as exc:
+                publish_event(
+                    self.bus,
+                    EventType.HELP_REQUESTED,
+                    {"lines": [f"`:tts set` failed: {exc}"]},
+                    source="app",
+                )
+                return
+            self.sound_engine.set_tts(engine)
+            self._tts_parameters = new_params
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {
+                    "lines": [
+                        f"TTS {self._tts_engine_id}: set {param_name}={raw_value}."
+                    ]
+                },
+                source="app",
+            )
+            return
+        publish_event(
+            self.bus,
+            EventType.HELP_REQUESTED,
+            {
+                "lines": [
+                    f"`:tts {subcommand}` is not recognised. Try `:tts list`, "
+                    "`:tts use <id>`, or `:tts set <param> <value>`."
+                ]
+            },
+            source="app",
+        )
+
+
+_TTS_CLASS_TO_ID: dict[str, str] = {
+    "ToneTTSEngine": "tone",
+    "Pyttsx3Engine": "pyttsx3",
+    "EspeakNgEngine": "espeak-ng",
+    "SystemSayEngine": "say",
+}
+
+
+def _classify_tts_engine(
+    engine: TTSEngine, registry: TTSEngineRegistry
+) -> Optional[str]:
+    """Map a live TTS engine object back to its registry id, or None.
+
+    Used to seed ``Application._tts_engine_id`` so the ``:tts`` meta-
+    command knows which knob to rebuild when the user says ``:tts set
+    <param> <value>``. Returns ``None`` for engines not registered
+    (custom plug-ins passed via ``Application.build(tts=...)``), which
+    makes ``:tts set`` refuse cleanly.
+    """
+    engine_id = _TTS_CLASS_TO_ID.get(type(engine).__name__)
+    if engine_id is None or not registry.has(engine_id):
+        return None
+    return engine_id
+
+
+def _coerce_tts_value(raw: str) -> object:
+    """Parse a ``:tts set`` value into the most natural Python type.
+
+    Integers and floats parse via ``int``/``float``; everything else
+    stays a string. Keeping the grammar this small matches the rest
+    of ASAT's meta-commands — there is no need for a full expression
+    parser when ``voice en-us`` and ``rate 220`` cover the useful
+    knobs.
+    """
+    try:
+        return int(raw)
+    except ValueError:
+        pass
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    return raw

@@ -26,6 +26,90 @@ see [EVENTS.md](EVENTS.md); for the overall module map see
 
 ---
 
+## Speech backends (TTS engines)
+
+ASAT ships a pluggable TTS registry (`asat/tts_registry.py`). Every
+backend implements the tiny `TTSEngine` protocol
+(`synthesize(text, voice) -> AudioBuffer`) and is registered as a
+`TTSEngineSpec` with a stable id, an `available()` probe, and the
+tunable parameters that `:tts set` exposes.
+
+On launch the registry walks this priority chain and picks the first
+one whose `available()` says yes:
+
+1. `pyttsx3` — cross-platform Python package that routes to SAPI5 on
+   Windows, NSSpeechSynthesizer on macOS, and espeak on Linux.
+2. `espeak-ng` — subprocess to the `espeak-ng` binary. Fastest, most
+   portable open-source synthesizer; exposes pitch / speed / amplitude.
+3. `say` — macOS' built-in `say` command (Darwin only).
+4. `tone` — deterministic tone stand-in. Always available; used by
+   tests and as the last-resort fallback when no speech engine is
+   installed.
+
+### Install recipes
+
+| Platform | Recommended install                                                                   |
+|----------|---------------------------------------------------------------------------------------|
+| Linux    | `sudo apt install espeak-ng pulseaudio-utils` *or* `pip install pyttsx3` + `alsa-utils` |
+| macOS    | Built-in `say` works out of the box. For espeak-ng: `brew install espeak-ng`.         |
+| Windows  | `pip install pyttsx3` (routes to SAPI5 via Windows' bundled voices).                  |
+
+If none are installed, ASAT falls back to the `tone` engine — you'll
+hear a beep pattern rather than speech — and the startup banner prints
+a one-line hint naming the packages to install.
+
+### Runtime controls
+
+| Command                           | Effect                                                     |
+|-----------------------------------|------------------------------------------------------------|
+| `python -m asat --tts ENGINE_ID`  | Pin a specific engine for this run.                        |
+| `ASAT_TTS_ENGINE=ID python -m asat` | Same, via environment (handy for fish / zsh aliases).     |
+| `:tts list` (inside the app)      | List installed engines and the current default.            |
+| `:tts use <id>`                   | Hot-swap the live engine without restarting.               |
+| `:tts set <param> <value>`        | Tune the current engine (e.g. `:tts set rate 180`).        |
+| `python -m asat --check`          | Print the resolved engine ids in the self-test report.     |
+
+Each adapter declares the params it accepts:
+
+| Engine     | Params                                                 |
+|------------|--------------------------------------------------------|
+| `pyttsx3`  | `voice` (backend voice id), `rate` (wpm), `volume` (0–1), `pitch` |
+| `espeak-ng`| `voice` (e.g. `en-us`), `speed` (wpm), `pitch` (0–99), `amplitude` (0–200) |
+| `say`      | `voice` (e.g. `Samantha`), `rate` (wpm)                |
+| `tone`     | — (parameter-free on purpose; used for determinism)    |
+
+Add your own by constructing a `TTSEngineSpec`, passing a custom
+`TTSEngineRegistry(specs=..., priority=...)` into `Application.build`,
+or subclassing `TTSEngine` and handing the instance directly to
+`SoundEngine(tts=...)`.
+
+---
+
+## Live audio sinks
+
+`AudioSink` is the last stage of the pipeline. Three shipping
+implementations:
+
+| Sink                    | When used                                            |
+|-------------------------|------------------------------------------------------|
+| `MemorySink`            | Default under `--check`, piped stdout, or when no live player is available. Buffers are kept in memory for tests and CI. |
+| `WavFileSink`           | Selected by `--wav-dir DIR`. Every buffer writes one `.wav` in the directory — handy for offline review. |
+| `WindowsLiveAudioSink`  | Windows default. Pipes PCM WAV into `winsound.PlaySound` on a background thread. |
+| `PosixLiveAudioSink`    | Linux / macOS default. Probes `paplay` → `aplay` → `afplay` in priority order and pipes WAV into the first one it finds. |
+
+`pick_live_sink()` (`asat/audio_sink.py`) returns the right sink for
+the host and raises `LiveAudioUnavailable` with an install hint when no
+live player exists. The CLI catches that and falls back to
+`MemorySink` with the hint printed to stderr — audio will be buffered
+silently, but the session still starts.
+
+On Linux the most common fix is `sudo apt install pulseaudio-utils`
+(for `paplay`) or `sudo apt install alsa-utils` (for `aplay`). On
+macOS `afplay` ships in the base system, so the POSIX sink works
+without any install.
+
+---
+
 ## Data model
 
 Everything persistable lives in `asat/sound_bank.py`. All four records

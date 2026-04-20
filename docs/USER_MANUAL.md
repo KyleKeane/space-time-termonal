@@ -335,6 +335,9 @@ discarded and the cell is not modified.
 | `:jump <name>` | Move focus to the cell registered under `<name>` (F35). Leaves you in NOTEBOOK mode at the target cell. |
 | `:verbosity <level>` | Set the bank-wide narration ceiling to `minimal`, `normal`, or `verbose` (F31). Chattier tiers are silenced when the level drops. Plain `:verbosity` narrates the allowed values and the current setting. |
 | `:reload-bank` | Discard any in-memory bank edits and re-read the on-disk bank from the configured `bank_path` (F3). Refuses while the settings editor is open; emits a hint when no bank path is configured or the file fails to parse. |
+| `:tts list` | Describe every TTS engine registered in the pluggable registry (`docs/AUDIO.md`) and mark which ones are installed on this host. |
+| `:tts use <id>` | Hot-swap the live TTS engine (`pyttsx3`, `espeak-ng`, `say`, `tone`). The next narration is rendered through the new backend without restarting ASAT. |
+| `:tts set <param> <value>` | Tune the current engine — e.g. `:tts set rate 180` or `:tts set voice en-us`. Parameter names are engine-specific; `:tts list` enumerates them. |
 
 Meta-command names are **case-insensitive** — `:HELP`, `:Help`, and
 `:help` all do the same thing. A single trailing argument is
