@@ -60,6 +60,7 @@ Each row is one binding. The `Action` column is the handler name `InputRouter._a
 
 | Keystroke | Action |
 |-----------|--------|
+| ` ` | `output_playback_toggle` |
 | `/` | `output_search_begin` |
 | `Ctrl+.` | `open_action_menu` |
 | `Down` | `output_line_down` |
@@ -73,6 +74,7 @@ Each row is one binding. The `Action` column is the handler name `InputRouter._a
 | `Up` | `output_line_up` |
 | `g` | `output_goto_begin` |
 | `n` | `output_search_next` |
+| `p` | `output_playback_toggle` |
 
 ## SETTINGS mode
 

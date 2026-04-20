@@ -195,6 +195,14 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "path": "/home/user/.config/asat/bank.json",
         "binding_count": 42,
     },
+    EventType.OUTPUT_PLAYBACK_STARTED: {
+        "cell_id": "c1",
+        "interval_sec": 1.5,
+    },
+    EventType.OUTPUT_PLAYBACK_STOPPED: {
+        "cell_id": "c1",
+        "reason": "end",
+    },
     EventType.ANSI_OSC_RECEIVED: {
         "cell_id": "c1",
         "body": "133;A",

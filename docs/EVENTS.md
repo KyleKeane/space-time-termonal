@@ -415,6 +415,24 @@ freshly loaded bank so narration can confirm the swap.
 |-------------------|---------------------------|
 | `BANK_RELOADED`   | `path`, `binding_count`   |
 
+## Continuous output playback
+
+Producer: `asat.output_playback.OutputPlaybackDriver`
+(`source="output_playback"`). When the user taps `p` or `Space` in
+OUTPUT mode and the cursor has at least one more line to move to, the
+driver flips `active=True`, publishes `OUTPUT_PLAYBACK_STARTED`, and
+arms a background ticker that calls `OutputCursor.move_line_down()`
+every `interval_sec` seconds. Each tick publishes the usual
+`OUTPUT_LINE_FOCUSED` so no new narration plumbing is required.
+`OUTPUT_PLAYBACK_STOPPED` fires when playback ends; `reason` is one of
+`"end"` (buffer exhausted), `"cancelled"` (any key), or
+`"focus_changed"` (focus left OUTPUT mode).
+
+| EventType                   | Payload keys                      |
+|-----------------------------|-----------------------------------|
+| `OUTPUT_PLAYBACK_STARTED`   | `cell_id`, `interval_sec`         |
+| `OUTPUT_PLAYBACK_STOPPED`   | `cell_id`, `reason`               |
+
 ## Self-check
 
 Producer: `asat.self_check.run_self_check` (`source="self_check"`),

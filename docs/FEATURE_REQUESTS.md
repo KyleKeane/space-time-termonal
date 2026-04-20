@@ -718,6 +718,18 @@ coordinate with F12 (CWD) to be useful.
 
 ## F24 — Continuous output playback
 
+**Status: Shipped.** `p` / `Space` in OUTPUT mode toggle an
+`OutputPlaybackDriver` that auto-advances `OutputCursor` one line
+every 1.5 s on a daemon ticker. Each tick publishes the usual
+`OUTPUT_LINE_FOCUSED` so the narration pipeline reads lines end-to-
+end without special casing. `OUTPUT_PLAYBACK_STARTED` / `_STOPPED`
+bookend the run; reasons are `"end"` (buffer exhausted),
+`"cancelled"` (any other key), or `"focus_changed"` (leaving
+OUTPUT mode). The bank-driven `voices.narrator.playback_rate` knob
+from the original sketch is left for a follow-up — the fixed
+cadence handles the "catching up on a long build log" use case
+today.
+
 **Gap.** OUTPUT mode steps line-by-line. There is no "play the
 whole captured output end-to-end" mode for catching up on a long
 build log.

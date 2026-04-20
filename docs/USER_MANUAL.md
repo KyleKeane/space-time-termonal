@@ -365,6 +365,7 @@ command's narration flew by and you want to re-hear line 47.
 | `/`         | Search: type a query (case-insensitive). The cursor jumps to the first match as you type. Enter commits, Escape restores your starting line. |
 | `n` / `N`   | After a committed search, cycle to the next / previous match. |
 | `g`         | Jump to line: type a 1-based line number, Enter commits. |
+| `p` / Space | Play/pause: auto-advance through the buffer at ~1.5 s per line. Any other key pauses; Escape leaves OUTPUT mode. |
 | F2 / Ctrl+. | Open the actions menu.                            |
 | Escape      | Return to NOTEBOOK mode.                          |
 
@@ -602,6 +603,7 @@ Every key you need, one table.
 | OUTPUT     | `/`               | Search (live), Enter commits, Escape restores |
 | OUTPUT     | `n` / `N`         | Next / previous search match          |
 | OUTPUT     | `g<number>` Enter | Jump to 1-based line number           |
+| OUTPUT     | `p` / Space       | Play / pause auto-advance (F24)       |
 | OUTPUT     | Escape            | Back to NOTEBOOK                      |
 | OUTPUT     | F2 / Ctrl+.       | Open actions menu                     |
 | MENU       | Up / Down         | Prev / next item                      |

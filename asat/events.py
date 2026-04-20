@@ -114,6 +114,16 @@ class EventType(str, Enum):
         on-disk bank and swaps the live bank in. Payload carries
         ``path`` (resolved string) and ``binding_count`` so the user
         hears confirmation that the edits-in-progress were discarded.
+
+    Continuous output playback (F24):
+        OUTPUT_PLAYBACK_STARTED fires when the user presses ``p`` /
+        ``Space`` in OUTPUT mode and the auto-advance ticker begins.
+        OUTPUT_PLAYBACK_STOPPED fires when playback ends — whether the
+        cursor reached the bottom (``reason="end"``), the user tapped
+        any key (``"cancelled"``), focus left OUTPUT mode
+        (``"focus_changed"``), or the buffer was re-attached
+        (``"detached"``). Payload also carries ``cell_id`` and, on
+        start, ``interval_sec``.
     """
 
     SESSION_CREATED = "session.created"
@@ -202,6 +212,9 @@ class EventType(str, Enum):
     VERBOSITY_CHANGED = "verbosity.changed"
 
     BANK_RELOADED = "bank.reloaded"
+
+    OUTPUT_PLAYBACK_STARTED = "output.playback.started"
+    OUTPUT_PLAYBACK_STOPPED = "output.playback.stopped"
 
 
 @dataclass(frozen=True)
