@@ -44,6 +44,7 @@ from typing import Callable, Sequence, TextIO
 
 from asat.cell import Cell
 from asat.event_bus import EventBus
+from asat.event_log import EventLogViewer
 from asat.events import Event, EventType
 from asat.outline import render_outline
 
@@ -51,6 +52,10 @@ from asat.outline import render_outline
 OUTLINE_HEADER = "-- outline --"
 OUTLINE_FOOTER = "-- /outline --"
 OUTLINE_EMPTY_LINE = "  (no cells yet)"
+EVENT_LOG_HEADER = "-- event log --"
+EVENT_LOG_FOOTER = "-- /event log --"
+EVENT_LOG_EMPTY_LINE = "  (no events yet)"
+EVENT_LOG_TAIL_LINES = 10
 _ANSI_CLEAR_HOME = "\x1b[H\x1b[2J"
 
 
@@ -66,6 +71,7 @@ class TerminalRenderer:
         show_outline: bool = False,
         cells_provider: Callable[[], Sequence[Cell]] | None = None,
         outline_width: int = 80,
+        event_log_viewer: EventLogViewer | None = None,
     ) -> None:
         """Attach to the bus and remember where to write (defaults to stdout).
 
@@ -90,6 +96,7 @@ class TerminalRenderer:
         self._show_outline = show_outline
         self._cells_provider = cells_provider
         self._outline_width = outline_width
+        self._event_log_viewer = event_log_viewer
         self._focus_cell_id: str | None = None
         if show_outline and cells_provider is None:
             raise ValueError(
@@ -119,6 +126,22 @@ class TerminalRenderer:
             bus.subscribe(EventType.CELL_UPDATED, self._on_cells_changed)
             bus.subscribe(EventType.CELL_REMOVED, self._on_cells_changed)
             bus.subscribe(EventType.CELL_MOVED, self._on_cells_changed)
+        # F39 event-log panel: repaint whenever the viewer opens, moves
+        # focus, or closes. Editing / replay events land back through
+        # FOCUS_CHANGED / QUICK_EDIT_COMMITTED so a fresh snapshot shows
+        # the updated binding without the viewer having to push a dedicated
+        # repaint signal.
+        if event_log_viewer is not None:
+            bus.subscribe(EventType.EVENT_LOG_OPENED, self._on_event_log_changed)
+            bus.subscribe(EventType.EVENT_LOG_FOCUSED, self._on_event_log_changed)
+            bus.subscribe(EventType.EVENT_LOG_CLOSED, self._on_event_log_changed)
+            bus.subscribe(
+                EventType.EVENT_LOG_QUICK_EDIT_COMMITTED,
+                self._on_event_log_changed,
+            )
+            bus.subscribe(
+                EventType.EVENT_LOG_REPLAYED, self._on_event_log_changed
+            )
 
     def _write_line(self, text: str) -> None:
         """Print a full line, ending any in-flight keystroke echo first."""
@@ -213,6 +236,48 @@ class TerminalRenderer:
             for line in lines:
                 self._stream.write(line + "\n")
         self._stream.write(OUTLINE_FOOTER + "\n")
+        self._stream.flush()
+
+    def _on_event_log_changed(self, event: Event) -> None:
+        """Repaint the event-log panel on open/move/close/edit/replay."""
+        self._repaint_event_log()
+
+    def _repaint_event_log(self) -> None:
+        """Render the event-log panel and flush it to the stream.
+
+        Only paints while the viewer reports ``is_open`` so the panel
+        disappears cleanly on close. Mirrors ``_repaint_outline`` —
+        append-only on piped streams, ANSI-clear on TTY when no trace
+        is stacking on top.
+        """
+        if self._event_log_viewer is None:
+            return
+        if not self._event_log_viewer.is_open:
+            return
+        entries = self._event_log_viewer.entries
+        focus_index = self._event_log_viewer.focus_index
+        tail = entries[-EVENT_LOG_TAIL_LINES:] if entries else ()
+        first_index = len(entries) - len(tail)
+        if not self._at_line_start:
+            self._stream.write("\n")
+            self._at_line_start = True
+        if self._stream_is_tty() and self._show_trace is False:
+            self._stream.write(_ANSI_CLEAR_HOME)
+        self._stream.write(EVENT_LOG_HEADER + "\n")
+        if not entries:
+            self._stream.write(EVENT_LOG_EMPTY_LINE + "\n")
+        else:
+            for offset, entry in enumerate(tail):
+                absolute = first_index + offset
+                marker = "> " if absolute == focus_index else "  "
+                self._stream.write(f"{marker}{entry.narration}\n")
+            quick_field = self._event_log_viewer.quick_edit_field
+            if quick_field is not None:
+                buffer = self._event_log_viewer.quick_edit_buffer
+                self._stream.write(
+                    f"  [edit {quick_field}] {buffer}\n"
+                )
+        self._stream.write(EVENT_LOG_FOOTER + "\n")
         self._stream.flush()
 
     def _stream_is_tty(self) -> bool:

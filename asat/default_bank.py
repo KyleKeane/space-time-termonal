@@ -106,6 +106,11 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.OUTLINE_FOLDED,
     EventType.OUTLINE_UNFOLDED,
     EventType.ANSI_OSC_RECEIVED,
+    EventType.EVENT_LOG_OPENED,
+    EventType.EVENT_LOG_CLOSED,
+    EventType.EVENT_LOG_FOCUSED,
+    EventType.EVENT_LOG_QUICK_EDIT_COMMITTED,
+    EventType.EVENT_LOG_REPLAYED,
 })
 
 
@@ -929,5 +934,51 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             sound_id="prompt_ready",
             predicate="category == prompt_start",
             priority=80,
+        ),
+
+        # F39 event-log viewer — four narrations cover the full
+        # open / walk / edit / replay loop so a blind user hears
+        # each state transition. ``settings_chime`` doubles as the
+        # "introspection surface opened" cue so it's already
+        # familiar from the settings editor.
+        EventBinding(
+            id="event_log_opened",
+            event_type=EventType.EVENT_LOG_OPENED.value,
+            voice_id="system",
+            sound_id="settings_chime",
+            say_template="event log, {count} entries",
+            priority=220,
+        ),
+        EventBinding(
+            id="event_log_closed",
+            event_type=EventType.EVENT_LOG_CLOSED.value,
+            voice_id="system",
+            sound_id="menu_close",
+            say_template="event log closed",
+            priority=200,
+        ),
+        EventBinding(
+            id="event_log_focused",
+            event_type=EventType.EVENT_LOG_FOCUSED.value,
+            voice_id="narrator",
+            sound_id="nav_blip",
+            say_template="{narration}",
+            priority=150,
+        ),
+        EventBinding(
+            id="event_log_quick_edit_committed",
+            event_type=EventType.EVENT_LOG_QUICK_EDIT_COMMITTED.value,
+            voice_id="system",
+            sound_id="tick",
+            say_template="{field} set to {value}",
+            priority=200,
+        ),
+        EventBinding(
+            id="event_log_replayed",
+            event_type=EventType.EVENT_LOG_REPLAYED.value,
+            voice_id="system",
+            sound_id="soft_tick",
+            say_template="replayed {event_type}",
+            priority=150,
         ),
     )

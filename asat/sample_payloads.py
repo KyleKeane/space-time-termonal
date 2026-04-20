@@ -220,4 +220,27 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "body": "133;A",
         "category": "prompt_start",
     },
+    EventType.EVENT_LOG_OPENED: {
+        "count": 7,
+        "focus_index": 6,
+        "summary": "event log, 7 entries, latest: audio spoken",
+    },
+    EventType.EVENT_LOG_CLOSED: {"count": 7},
+    EventType.EVENT_LOG_FOCUSED: {
+        "index": 6,
+        "total": 7,
+        "narration": "audio spoken, binding command_completed",
+        "event_type": "audio.spoken",
+        "binding_id": "command_completed",
+    },
+    EventType.EVENT_LOG_QUICK_EDIT_COMMITTED: {
+        "binding_id": "command_completed",
+        "field": "say_template",
+        "value": "done, exit {exit_code}",
+    },
+    EventType.EVENT_LOG_REPLAYED: {
+        "event_type": "command.completed",
+        "binding_id": "command_completed",
+        "narration": "command completed, exit 0",
+    },
 }

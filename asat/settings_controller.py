@@ -105,6 +105,19 @@ class SettingsController:
         self._edit_buffer = ""
         return self._editor
 
+    def open_at_binding(self, binding_id: str) -> bool:
+        """Open the editor and jump directly to ``binding_id``.
+
+        Used by the event-log viewer's "Enter jumps to the binding that
+        fired this event" affordance (F39). Returns True when the
+        binding was located and the cursor parked on it; False when no
+        such binding exists in the live bank — the session is still
+        opened on the default landing spot so the user isn't dropped
+        back to INPUT mode silently.
+        """
+        editor = self.open()
+        return editor.focus_binding(binding_id)
+
     def close(self) -> None:
         """Close the session, preserving any edits in the cached bank."""
         if self._editor is None:

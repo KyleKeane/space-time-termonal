@@ -37,6 +37,8 @@ from asat.default_bank import default_sound_bank
 from asat.error_tail import StderrTailAnnouncer
 from asat.completion_alert import CompletionFocusWatcher
 from asat.event_bus import EventBus, publish_event
+from asat.event_log import EventLogViewer
+from asat.event_log_file import EventLogFile
 from asat.events import Event, EventType
 from asat.execution_worker import ExecutionWorker
 from asat.input_router import InputRouter, default_bindings
@@ -93,6 +95,8 @@ class Application:
     output_playback: Optional[OutputPlaybackDriver] = None
     onboarding: Optional[OnboardingCoordinator] = None
     event_logger: Optional[JsonlEventLogger] = None
+    event_log_viewer: Optional[EventLogViewer] = None
+    event_log_file: Optional[EventLogFile] = None
     session_path: Optional[Path] = None
     # F50: when an Application is opened from a workspace, this holds
     # the Workspace handle so meta-commands (`:workspace`,
@@ -150,6 +154,7 @@ class Application:
         tts: Optional[TTSEngine] = None,
         show_outline: bool = False,
         show_trace: bool = True,
+        event_log_dir: Optional[Path | str] = None,
     ) -> "Application":
         """Wire every collaborator with sensible defaults.
 
@@ -246,6 +251,26 @@ class Application:
             bus=bus,
         )
         action_menu = ActionMenu(bus, action_catalog)
+        resolved_sink: AudioSink = sink if sink is not None else MemorySink()
+        sound_engine = SoundEngine(bus, resolved_bank, resolved_sink, tts=tts)
+        # F39: the viewer subscribes to `*` up front so every event
+        # from here on — including the launch banner — lands in its
+        # ring buffer. Constructing it before the InputRouter lets the
+        # router wire Ctrl+E / :log to a real collaborator.
+        event_log_viewer = EventLogViewer(bus, sound_engine)
+        # F63: the grouped text file logger writes under
+        # `<workspace>/.asat/log/` when a workspace is attached, or
+        # `event_log_dir` when the CLI asked for one explicitly. No
+        # directory configured → no file logger (tests / one-shot
+        # scripts stay silent on disk).
+        resolved_event_log_dir = _resolve_event_log_dir(
+            workspace, event_log_dir
+        )
+        event_log_file = (
+            EventLogFile(bus, resolved_event_log_dir)
+            if resolved_event_log_dir is not None
+            else None
+        )
         router = InputRouter(
             cursor,
             bus,
@@ -254,9 +279,8 @@ class Application:
             settings_controller=settings_controller,
             action_menu=action_menu,
             output_recorder=recorder,
+            event_log_viewer=event_log_viewer,
         )
-        resolved_sink: AudioSink = sink if sink is not None else MemorySink()
-        sound_engine = SoundEngine(bus, resolved_bank, resolved_sink, tts=tts)
         # PromptContext must subscribe BEFORE TerminalRenderer so that
         # when the user transitions into INPUT mode post-command, the
         # PROMPT_REFRESH event it publishes reaches the renderer in
@@ -294,6 +318,7 @@ class Application:
                     if show_outline
                     else None
                 ),
+                event_log_viewer=event_log_viewer,
             )
         onboarding = onboarding_factory(bus) if onboarding_factory is not None else None
         if async_execution:
@@ -325,6 +350,8 @@ class Application:
             output_playback=output_playback,
             onboarding=onboarding,
             event_logger=event_logger,
+            event_log_viewer=event_log_viewer,
+            event_log_file=event_log_file,
             session_path=Path(session_path) if session_path is not None else None,
             execution_worker=execution_worker,
             workspace=workspace,
@@ -466,6 +493,8 @@ class Application:
             runner_close()
         if self.event_logger is not None:
             self.event_logger.close()
+        if self.event_log_file is not None:
+            self.event_log_file.close()
 
     def _on_action_invoked(self, event: Event) -> None:
         """Capture cell submissions and meta-commands for the driver."""
@@ -954,6 +983,24 @@ class Application:
             },
             source="app",
         )
+
+
+def _resolve_event_log_dir(
+    workspace: Optional[Workspace], explicit: Optional[Path | str]
+) -> Optional[Path]:
+    """Pick the directory the grouped event-log file (F63) should use.
+
+    Precedence: an explicit ``event_log_dir`` wins; else
+    ``<workspace.root>/.asat/log`` when a workspace is attached; else
+    None (no file logger). The directory is created by the
+    ``EventLogFile`` constructor, so callers don't have to ensure it
+    exists before calling.
+    """
+    if explicit is not None:
+        return Path(explicit)
+    if workspace is not None:
+        return workspace.root / ".asat" / "log"
+    return None
 
 
 _TTS_CLASS_TO_ID: dict[str, str] = {

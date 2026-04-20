@@ -218,6 +218,12 @@ class EventType(str, Enum):
     OUTPUT_PLAYBACK_STARTED = "output.playback.started"
     OUTPUT_PLAYBACK_STOPPED = "output.playback.stopped"
 
+    EVENT_LOG_OPENED = "event_log.opened"
+    EVENT_LOG_CLOSED = "event_log.closed"
+    EVENT_LOG_FOCUSED = "event_log.focused"
+    EVENT_LOG_QUICK_EDIT_COMMITTED = "event_log.quick_edit.committed"
+    EVENT_LOG_REPLAYED = "event_log.replayed"
+
 
 @dataclass(frozen=True)
 class Event:
