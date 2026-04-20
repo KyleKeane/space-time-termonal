@@ -94,19 +94,22 @@ implementations:
 |-------------------------|------------------------------------------------------|
 | `MemorySink`            | Default under `--check`, piped stdout, or when no live player is available. Buffers are kept in memory for tests and CI. |
 | `WavFileSink`           | Selected by `--wav-dir DIR`. Every buffer writes one `.wav` in the directory — handy for offline review. |
-| `WindowsLiveAudioSink`  | Windows default. Pipes PCM WAV into `winsound.PlaySound` on a background thread. |
-| `PosixLiveAudioSink`    | Linux / macOS default. Probes `paplay` → `aplay` → `afplay` in priority order and pipes WAV into the first one it finds. |
+| `SoundDeviceSink`       | Default on every platform when the `sounddevice` pip dep can open a PortAudio output device. Ships audible audio after a plain `pip install asat` with zero system packages. |
+| `WindowsLiveAudioSink`  | Windows fallback when sounddevice can't open a device. Pipes PCM WAV into `winsound.PlaySound` on a background thread. |
+| `PosixLiveAudioSink`    | POSIX fallback when sounddevice can't open a device. Probes `paplay` → `aplay` → `afplay` in priority order and pipes WAV into the first one it finds. |
 
-`pick_live_sink()` (`asat/audio_sink.py`) returns the right sink for
-the host and raises `LiveAudioUnavailable` with an install hint when no
-live player exists. The CLI catches that and falls back to
-`MemorySink` with the hint printed to stderr — audio will be buffered
-silently, but the session still starts.
+`pick_live_sink()` (`asat/audio_sink.py`) tries `SoundDeviceSink`
+first, then falls back to the platform-native fallbacks, and raises
+`LiveAudioUnavailable` only when none work. The CLI catches that and
+falls back to `MemorySink` with a diagnostic printed to stderr — audio
+will be buffered silently, but the session still starts.
 
-On Linux the most common fix is `sudo apt install pulseaudio-utils`
-(for `paplay`) or `sudo apt install alsa-utils` (for `aplay`). On
-macOS `afplay` ships in the base system, so the POSIX sink works
-without any install.
+Because `sounddevice` is a declared dependency in `pyproject.toml`,
+`pip install asat` pulls a PortAudio wheel that works on Linux,
+macOS, and Windows out of the box. No `apt install`, no Homebrew, no
+user config. The `aplay` / `paplay` / `afplay` / `winsound` paths
+only matter when sounddevice can't open a device (headless VM with
+no audio server, unusual libc, etc.), so most users never touch them.
 
 ---
 

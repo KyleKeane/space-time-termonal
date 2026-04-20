@@ -118,18 +118,20 @@ comes out of real speakers on a real user's machine.
 ## Outstanding manual smoke (before tagging 1.0)
 
 1. **Fresh-VM install, Linux.** Spin up a clean Ubuntu or Fedora
-   VM, `pip install pyttsx3`, `apt install espeak-ng alsa-utils`,
-   remove `~/.asat/first-run-done`, run `python -m asat`. Confirm:
-   (a) audible welcome chime, (b) spoken tour, (c) visible outline
-   pane, (d) `Ctrl+E` opens the viewer and narrates entries,
-   (e) `:quit` exits cleanly. Same VM: `python -m asat --check`
-   must exit 0.
-2. **Fresh-VM install, macOS.** Same flow on a stock macOS box;
-   `say` and `afplay` ship by default, so no extra install. Confirm
-   items (a)-(e).
-3. **Fresh install, Windows.** On a stock Windows host with SAPI,
-   run `python -m asat`. Confirm items (a)-(e); `winsound` should
-   still drive the live sink.
+   VM, `pip install .` from the repo (which pulls `sounddevice`,
+   `pyttsx3`, and `numpy` automatically), remove
+   `~/.asat/first-run-done`, run `python -m asat`. Confirm: (a)
+   audible welcome chime via sounddevice, (b) spoken tour (requires
+   system `espeak` for pyttsx3 narration; without it, tones-only
+   fallback is still audible), (c) visible outline pane, (d)
+   `Ctrl+E` opens the viewer and narrates entries, (e) `:quit`
+   exits cleanly. Same VM: `python -m asat --check` must exit 0.
+2. **Fresh-VM install, macOS.** `pip install .` on a stock macOS
+   box — `say` + sounddevice handle everything, no extra install.
+   Confirm items (a)-(e).
+3. **Fresh install, Windows.** `pip install .` on a stock Windows
+   host — SAPI (via pyttsx3) + sounddevice drive the live sink.
+   Confirm items (a)-(e).
 4. **TTS engine swap.** On each platform: `:tts list` speaks
    available engines; `:tts use <id>` switches live; the next
    narration uses the new voice; `:tts set rate 200` changes speed
@@ -168,11 +170,14 @@ changed.
   code path in `Application.build` owns cell seeding; tests pin
   this behaviour (`test_welcome_meta_command_replays_every_scripted
   _beat`).
-- **`pick_live_sink()` raises on POSIX only if no player is
-  installed.** The hosts that ship `aplay` / `paplay` /
-  `afplay` unconditionally are most distros + macOS; a Docker
-  `python:3.12-slim` image has none. `--no-live` on such hosts is
-  legitimate, not a bug.
+- **`pick_live_sink()` prefers sounddevice first.** The `pip install`
+  path pulls `sounddevice` with bundled PortAudio wheels, so the
+  default sink works on Linux / macOS / Windows without any system
+  packages. The `aplay` / `paplay` / `afplay` / `winsound` fallbacks
+  still resolve on hosts where sounddevice can't open a device
+  (headless VMs with no audio server, unusual libc, etc.). A true
+  "no live audio" failure only happens when *neither* path works —
+  at which point the CLI drops to `MemorySink` with a diagnostic.
 - **Git / PR workflow in this repo.** The user creates and merges
   PRs manually from the pushed branch; the assistant pushes and
   provides a PR-creation URL. MCP GitHub integration has been

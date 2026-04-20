@@ -28,13 +28,17 @@ stdout that mirrors what the audio is saying.
 
 ## What ASAT actually delivers today
 
-- **Cross-platform live audio on launch.** A pluggable TTS registry
-  (`pyttsx3` preferred, `espeak-ng` / macOS `say` / Windows SAPI as
-  native fallbacks, tone generator as the deterministic floor)
-  combined with a POSIX live sink (`aplay` / `paplay` / `afplay`) +
-  the existing Windows `winsound` path means `python -m asat` speaks
-  on the first launch on Linux, macOS, and Windows. `:tts list` /
-  `:tts use <id>` / `:tts set <param> <value>` swap engines live.
+- **Cross-platform live audio on launch, zero system packages.** A
+  pluggable TTS registry (`pyttsx3` preferred, `espeak-ng` / macOS
+  `say` / Windows SAPI as native fallbacks, tone generator as the
+  deterministic floor) combined with a `sounddevice`-backed live
+  sink (PortAudio wheels ship in the pip install) means
+  `python -m asat` speaks on the first launch after `pip install`
+  on Linux, macOS, and Windows — no `apt install`, no Homebrew, no
+  user config. `:tts list` / `:tts use <id>` / `:tts set <param>
+  <value>` swap engines live. The legacy `aplay` / `paplay` /
+  `afplay` + `winsound` paths are retained as fallbacks for hosts
+  where sounddevice can't open an output device.
 - **An on-screen outline pane.** The renderer subscribes to
   `FOCUS_CHANGED` / `CELL_*` events and paints an indented tree of
   heading cells with a `>` arrow on the focused cell. `]` / `[`
@@ -100,7 +104,8 @@ an optional accelerator for measured HRTFs only).
 ```
 git clone https://github.com/KyleKeane/space-time-termonal
 cd space-time-termonal
-python -m unittest discover -s tests -t .   # confirm the suite passes
+pip install .                                # pulls sounddevice + pyttsx3 + numpy
+python -m unittest discover -s tests -t .    # confirm the suite passes
 ```
 
 ### Launching a session
@@ -116,16 +121,20 @@ python -m asat --check              # run the diagnostic self-test on every cove
 python -m asat --version            # print the version string and exit
 ```
 
-Per-platform audio prerequisites (the CLI names the missing binary
-if none are found; the tone fallback keeps the pipeline moving):
+`pip install` ships every runtime dependency ASAT needs to produce
+audible output on a fresh machine: `sounddevice` (bundles PortAudio
+wheels for Linux / macOS / Windows) handles playback, and `pyttsx3`
+provides speech on Windows (SAPI) and macOS (NSSpeechSynthesizer)
+without any system packages. On Linux, `pyttsx3` still delegates to
+`espeak` under the hood; if `espeak` isn't installed the pipeline
+falls back to the built-in tone engine so you still get audible
+event cues through sounddevice — install `espeak-ng` via your
+package manager to unlock narration. The legacy `aplay` / `paplay` /
+`afplay` sink is preserved as a fallback for the rare host where
+sounddevice can't open an output device.
 
-- **Linux:** `pip install pyttsx3` **or** `apt install espeak-ng`,
-  plus `alsa-utils` (for `aplay`) or `pulseaudio-utils` (for
-  `paplay`).
-- **macOS:** ships working out of the box — `say` is built-in and
-  `afplay` is on PATH.
-- **Windows:** ships working out of the box via SAPI + `winsound`;
-  `pip install pyttsx3` gives you extra voices.
+**ASAT needs an interactive terminal** — if stdin is not a TTY the
+CLI exits with `[asat] cannot start: …` and returns code 2.
 
 **ASAT needs an interactive terminal** — if stdin is not a TTY the
 CLI exits with `[asat] cannot start: …` and returns code 2.
@@ -207,7 +216,7 @@ engine voices it.
 | `terminal.py`              | Text trace + outline-pane renderer (ANSI-clear redraw on TTY, append-only when piped). |
 | `outline.py`               | Pure `render_outline(cells, focus_cell_id, max_width)`; scope + enclosing-heading helpers. |
 | `audio.py`                 | Core audio data types (AudioBuffer, sample-rate constants).               |
-| `audio_sink.py`            | Sinks: `MemorySink`, `WavFileSink`, `WindowsLiveAudioSink`, `PosixLiveAudioSink` (aplay / paplay / afplay), `pick_live_sink()`. |
+| `audio_sink.py`            | Sinks: `MemorySink`, `WavFileSink`, `SoundDeviceSink` (pure-pip PortAudio), `WindowsLiveAudioSink`, `PosixLiveAudioSink` (aplay / paplay / afplay), `pick_live_sink()`. |
 | `sound_engine.py`          | Subscribes to events, renders cues + narrations, hands buffers to a sink. |
 | `sound_bank.py`            | The bank model: `Voice`, `SoundRecipe`, `EventBinding` records.           |
 | `sound_bank_schema.json`   | JSON schema for an on-disk bank file.                                     |
