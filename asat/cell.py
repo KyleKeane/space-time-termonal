@@ -56,13 +56,16 @@ class CellKind(str, Enum):
 
     COMMAND cells are the executable input/output units the notebook
     was originally built around. HEADING cells are structural
-    landmarks that anchor NVDA-style heading navigation (F61). Future
-    kinds (pure-input, pure-output, terminal) plug in here without
-    rewriting the session/cursor/render layers.
+    landmarks that anchor NVDA-style heading navigation (F61). TEXT
+    cells carry prose inside a notebook — the "we train for ten
+    epochs because earlier runs overfit" annotation that the heading
+    work couldn't hold (F27). Future kinds (terminal, rich-media)
+    plug in here without rewriting the session/cursor/render layers.
     """
 
     COMMAND = "command"
     HEADING = "heading"
+    TEXT = "text"
 
 
 MIN_HEADING_LEVEL = 1
@@ -93,6 +96,7 @@ class Cell:
     kind: CellKind = CellKind.COMMAND
     heading_level: Optional[int] = None
     heading_title: Optional[str] = None
+    text: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.kind is CellKind.HEADING:
@@ -110,6 +114,12 @@ class Cell:
                 raise ValueError(
                     "heading_level / heading_title only apply to HEADING cells"
                 )
+        if self.kind is CellKind.TEXT:
+            if self.text is None or not self.text.strip():
+                raise ValueError("text cell requires a non-empty text body")
+        else:
+            if self.text is not None:
+                raise ValueError("text only applies to TEXT cells")
 
     @classmethod
     def new(cls, command: str, parent_id: Optional[str] = None) -> "Cell":
@@ -126,6 +136,27 @@ class Cell:
             created_at=now,
             updated_at=now,
             parent_id=parent_id,
+        )
+
+    @classmethod
+    def new_text(cls, text: str) -> "Cell":
+        """Create a fresh prose/text cell (F27).
+
+        Text cells carry narrative alongside a notebook's commands and
+        headings. They are non-executable (`is_executable` returns
+        False) so the kernel, worker, and auto-advance paths skip them.
+        """
+        if not text.strip():
+            raise ValueError("text cell requires a non-empty body")
+        now = utcnow()
+        return cls(
+            cell_id=new_id(),
+            command="",
+            created_at=now,
+            updated_at=now,
+            status=CellStatus.COMPLETED,
+            kind=CellKind.TEXT,
+            text=text,
         )
 
     @classmethod
@@ -152,6 +183,10 @@ class Cell:
     @property
     def is_heading(self) -> bool:
         return self.kind is CellKind.HEADING
+
+    @property
+    def is_text(self) -> bool:
+        return self.kind is CellKind.TEXT
 
     @property
     def is_executable(self) -> bool:
@@ -203,6 +238,15 @@ class Cell:
         self.status = CellStatus.PENDING
         self.updated_at = utcnow()
 
+    def update_text(self, new_text: str) -> None:
+        """Edit the prose of a text cell in place."""
+        if not self.is_text:
+            raise ValueError("update_text only applies to text cells")
+        if not new_text.strip():
+            raise ValueError("text cell requires a non-empty body")
+        self.text = new_text
+        self.updated_at = utcnow()
+
     def update_heading(self, level: int, title: str) -> None:
         """Edit the level/title of a heading cell in place."""
         if not self.is_heading:
@@ -239,6 +283,7 @@ class Cell:
             kind=self.kind,
             heading_level=self.heading_level,
             heading_title=self.heading_title,
+            text=self.text,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -254,8 +299,9 @@ class Cell:
     def from_dict(cls, data: dict[str, Any]) -> "Cell":
         """Rebuild a Cell from a dictionary previously produced by to_dict.
 
-        Missing `kind` / `heading_level` / `heading_title` default to a
-        COMMAND cell so sessions written before F61 load cleanly.
+        Missing `kind` / `heading_level` / `heading_title` / `text`
+        default to a COMMAND cell so sessions written before F61 /
+        F27 load cleanly.
         """
         return cls(
             cell_id=data["cell_id"],
@@ -271,4 +317,5 @@ class Cell:
             kind=CellKind(data.get("kind", CellKind.COMMAND.value)),
             heading_level=data.get("heading_level"),
             heading_title=data.get("heading_title"),
+            text=data.get("text"),
         )

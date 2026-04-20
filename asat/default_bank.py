@@ -626,6 +626,15 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             priority=120,
         ),
         EventBinding(
+            id="focus_changed_text",
+            event_type=EventType.FOCUS_CHANGED.value,
+            voice_id="narrator",
+            sound_id="nav_blip",
+            say_template="text, {text}",
+            predicate="transition == cell and kind == 'text'",
+            priority=115,
+        ),
+        EventBinding(
             id="focus_changed_cell",
             event_type=EventType.FOCUS_CHANGED.value,
             voice_id="narrator",

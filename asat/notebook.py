@@ -182,6 +182,27 @@ class NotebookCursor:
         )
         return cell
 
+    def new_text_cell(self, text: str) -> Cell:
+        """Append a prose/text cell, focus it, and stay in NOTEBOOK mode.
+
+        Text cells carry narrative the heading and command kinds can't
+        (F27). Like headings they are non-executable and live in
+        NOTEBOOK mode as read-only landmarks.
+        """
+        cell = Cell.new_text(text)
+        self._session.add_cell(cell)
+        self._session.set_active(cell.cell_id)
+        self._publish_cell_created(cell, len(self._session.cells) - 1)
+        self._transition(
+            FocusState(
+                mode=FocusMode.NOTEBOOK,
+                cell_id=cell.cell_id,
+                input_buffer="",
+                cursor_position=0,
+            )
+        )
+        return cell
+
     def move_to_next_heading(self, level: Optional[int] = None) -> Optional[Cell]:
         """Jump forward to the next heading. None level = any level.
 
@@ -284,6 +305,9 @@ class NotebookCursor:
             assert source.heading_level is not None
             assert source.heading_title is not None
             duplicate = Cell.new_heading(source.heading_level, source.heading_title)
+        elif source.is_text:
+            assert source.text is not None
+            duplicate = Cell.new_text(source.text)
         else:
             duplicate = Cell.new(source.command)
         target_index = self._session.index_of(cell_id) + 1
@@ -766,6 +790,7 @@ class NotebookCursor:
         kind_value = CellKind.COMMAND.value
         heading_level: Optional[int] = None
         heading_title: Optional[str] = None
+        text: Optional[str] = None
         if new_state.cell_id is not None:
             try:
                 focused = self._session.get_cell(new_state.cell_id)
@@ -773,6 +798,7 @@ class NotebookCursor:
                 kind_value = focused.kind.value
                 heading_level = focused.heading_level
                 heading_title = focused.heading_title
+                text = focused.text
             except SessionError:
                 command = ""
         publish_event(
@@ -789,6 +815,7 @@ class NotebookCursor:
                 "kind": kind_value,
                 "heading_level": heading_level,
                 "heading_title": heading_title,
+                "text": text,
             },
             source=self.SOURCE,
         )

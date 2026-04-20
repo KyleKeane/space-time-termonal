@@ -1920,6 +1920,43 @@ class HeadingMetaCommandTests(unittest.TestCase):
         self.assertIn("toc", AMBIENT_META_COMMANDS)
 
 
+class TextMetaCommandTests(unittest.TestCase):
+    """F27: `:text <prose>` appends a prose cell."""
+
+    def _type_meta(self, router, cursor, text: str) -> None:
+        cursor.enter_input_mode()
+        router.handle_key(Key.combo("u", Modifier.CTRL))
+        for ch in text:
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+
+    def test_text_meta_creates_text_cell(self) -> None:
+        _bus, session, cursor, router, _ = _build(["ls"])
+        self._type_meta(router, cursor, ":text A prose note.")
+        last = session.cells[-1]
+        self.assertTrue(last.is_text)
+        self.assertEqual(last.text, "A prose note.")
+        self.assertEqual(cursor.focus.cell_id, last.cell_id)
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+
+    def test_text_meta_rejects_blank_body(self) -> None:
+        bus, session, cursor, router, _ = _build(["ls"])
+        rec = _Recorder(bus)
+        initial_count = len(session.cells)
+        self._type_meta(router, cursor, ":text   ")
+        self.assertEqual(len(session.cells), initial_count)
+        for cell in session.cells:
+            self.assertFalse(cell.is_text)
+        help_events = rec.types_of(EventType.HELP_REQUESTED)
+        self.assertTrue(help_events)
+        self.assertIn(":text", "\n".join(help_events[-1].payload["lines"]))
+
+    def test_text_meta_is_not_ambient(self) -> None:
+        """`:text` behaves like `:heading` — transitions INPUT -> NOTEBOOK."""
+        from asat.input_router import AMBIENT_META_COMMANDS
+        self.assertNotIn("text", AMBIENT_META_COMMANDS)
+
+
 class ParseHeadingArgumentTests(unittest.TestCase):
     """F61: `:heading <level> <title>` argument parser."""
 
