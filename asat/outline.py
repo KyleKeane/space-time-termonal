@@ -104,3 +104,69 @@ def enclosing_heading_index(cells: Sequence[Cell], index: int) -> int | None:
             return j
         j -= 1
     return None
+
+
+_FOCUS_ARROW = "> "
+_FOCUS_GAP = "  "
+
+
+def render_outline(
+    cells: Sequence[Cell],
+    focus_cell_id: str | None,
+    max_width: int = 80,
+) -> list[str]:
+    """Return one line per visible cell describing the outline.
+
+    Heading cells are indented by ``(level - 1) * 2`` spaces and show
+    as ``H{level} {title}``; a collapsed heading is suffixed with
+    ``[collapsed]``. Non-heading cells live under their enclosing
+    heading and indent one level deeper; commands render as
+    ``$ {command}`` (or ``$ (empty)`` while the user has not typed
+    anything), text cells render as ``"{first-line}"``.
+
+    The cell whose id matches ``focus_cell_id`` is prefixed with
+    ``"> "``; every other line is prefixed with ``"  "`` so columns
+    line up. Cells hidden by a collapsed ancestor (see
+    ``visible_indices``) are omitted. ``max_width`` truncates long
+    lines with a trailing ``…`` so a narrow terminal never wraps.
+    ``max_width`` values smaller than a handful of columns simply
+    round up to a minimum of 8 to keep the arrow + ellipsis
+    legible.
+    """
+    effective_width = max(max_width, 8)
+    visible = visible_indices(cells)
+    out: list[str] = []
+    for index in visible:
+        cell = cells[index]
+        body = _format_outline_body(cells, index, cell)
+        prefix = _FOCUS_ARROW if cell.cell_id == focus_cell_id else _FOCUS_GAP
+        line = prefix + body
+        if len(line) > effective_width:
+            keep = max(effective_width - 1, 1)
+            line = line[:keep] + "\u2026"
+        out.append(line)
+    return out
+
+
+def _format_outline_body(
+    cells: Sequence[Cell], index: int, cell: Cell
+) -> str:
+    """Return the indent + label portion of one outline line."""
+    if cell.kind is CellKind.HEADING:
+        assert cell.heading_level is not None
+        assert cell.heading_title is not None
+        indent = "  " * (cell.heading_level - 1)
+        suffix = " [collapsed]" if cell.collapsed else ""
+        return f"{indent}H{cell.heading_level} {cell.heading_title}{suffix}"
+    parent = enclosing_heading_index(cells, index)
+    if parent is None:
+        indent = ""
+    else:
+        parent_level = cells[parent].heading_level or 1
+        indent = "  " * parent_level
+    if cell.kind is CellKind.TEXT:
+        first_line = (cell.text or "").splitlines()[0] if cell.text else ""
+        return f'{indent}"{first_line}"'
+    command = cell.command if cell.command else "(empty)"
+    first_line = command.splitlines()[0] if command else "(empty)"
+    return f"{indent}$ {first_line}"

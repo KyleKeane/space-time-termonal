@@ -121,6 +121,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     # `SESSION_CREATED`/`FOCUS_CHANGED`, so the launch banner and the
     # first `[input #…]` line reach the user.
     trace_stream = None if args.quiet or args.check else sys.stdout
+    view_mode = _resolve_view_mode(args)
+    show_trace_pane = view_mode in ("trace", "both")
+    show_outline_pane = view_mode in ("outline", "both")
     # A user who asked for `--live` or `--wav-dir` has told us where
     # audio goes; anything else is the silent MemorySink path F41
     # guards against.
@@ -149,6 +152,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         async_execution=async_execution,
         workspace=workspace,
         tts=tts_engine,
+        show_trace=show_trace_pane,
+        show_outline=show_outline_pane,
     )
     if args.check:
         exit_code = _print_check_report(app, args)
@@ -297,6 +302,19 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         "--quiet",
         action="store_true",
         help="Suppress the text trace on stdout. Audio output is unaffected.",
+    )
+    parser.add_argument(
+        "--view",
+        choices=("trace", "outline", "both"),
+        default=None,
+        help=(
+            "Pick which text pane(s) to draw on stdout. `trace` is the "
+            "original line-by-line event log; `outline` is an indented "
+            "tree of cells with a `>` arrow marking the focused one; "
+            "`both` stacks the outline under the trace. Defaults to "
+            "`both` when stdout is a TTY and `trace` otherwise. Ignored "
+            "under --quiet / --check."
+        ),
     )
     parser.add_argument(
         "--bank",
@@ -566,6 +584,28 @@ def _resolve_tts(
     if engine_id is None:
         return registry.select_default()
     return registry.build(engine_id)
+
+
+def _resolve_view_mode(args: argparse.Namespace) -> str:
+    """Pick which text pane(s) to attach to stdout.
+
+    Explicit ``--view`` wins. Without the flag, a real TTY defaults to
+    ``"both"`` (the outline reads well when rendered alongside the
+    trace); piped or captured stdout drops back to ``"trace"`` because
+    the outline's repeated re-renders would be noise in a log file.
+    ``--quiet`` and ``--check`` disable the renderer entirely upstream,
+    so the return value does not matter in those modes; we still
+    answer ``"trace"`` to keep the downstream branch predictable.
+    """
+    if args.view is not None:
+        return args.view
+    if args.quiet or args.check:
+        return "trace"
+    try:
+        is_tty = bool(sys.stdout.isatty())
+    except (AttributeError, ValueError):
+        is_tty = False
+    return "both" if is_tty else "trace"
 
 
 def _resolve_live_preference(args: argparse.Namespace) -> bool:

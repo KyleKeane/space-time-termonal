@@ -20,6 +20,8 @@ python -m asat                      # interactive session, text trace on stdout
 python -m asat --live               # play audio on the speaker (Windows today)
 python -m asat --wav-dir /tmp/asat  # also write every rendered buffer to WAV
 python -m asat --quiet              # suppress the text trace, audio only
+python -m asat --view outline       # show only the indented cell outline
+python -m asat --view both          # default on a TTY: trace + outline panes
 python -m asat --bank mybank.json   # start from a saved SoundBank
 python -m asat --session s.json     # resume an existing session; saved on exit
 python -m asat --log events.jsonl   # write one JSON line per event to disk
@@ -99,6 +101,21 @@ The moment the binary starts:
 If neither the chime nor the banner appear, the session did not
 start cleanly — see the troubleshooting table at the end of this
 file.
+
+### The outline pane
+
+When stdout is a real terminal the renderer also paints an indented
+outline of every cell in the notebook. Headings indent two spaces
+per level and render as `H{level} {title}`; commands and text cells
+sit one level deeper than their enclosing heading, prefixed with
+`$ ` or wrapped in quotes respectively. The cell that currently has
+focus is marked with a `> ` arrow at the start of the line —
+pressing `]` / `[` (heading jump) or `j` / `k` (cell move) audibly
+moves the cursor and visibly slides the arrow at the same time.
+Collapsed headings (`z`) are flagged `[collapsed]` and their
+children disappear from the outline until you press `z` again. Pass
+`--view trace` to suppress the outline, `--view outline` to keep
+only the outline, or `--view both` (the TTY default) for both panes.
 
 ### First-run onboarding
 

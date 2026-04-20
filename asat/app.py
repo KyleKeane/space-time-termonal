@@ -148,6 +148,8 @@ class Application:
         async_execution: bool = False,
         workspace: Optional[Workspace] = None,
         tts: Optional[TTSEngine] = None,
+        show_outline: bool = False,
+        show_trace: bool = True,
     ) -> "Application":
         """Wire every collaborator with sensible defaults.
 
@@ -282,7 +284,17 @@ class Application:
         output_playback = OutputPlaybackDriver(bus, output_cursor)
         output_playback.start_background_ticker()
         if text_trace is not None:
-            TerminalRenderer(bus, stream=text_trace)
+            TerminalRenderer(
+                bus,
+                stream=text_trace,
+                show_trace=show_trace,
+                show_outline=show_outline,
+                cells_provider=(
+                    (lambda: resolved_session.cells)
+                    if show_outline
+                    else None
+                ),
+            )
         onboarding = onboarding_factory(bus) if onboarding_factory is not None else None
         if async_execution:
             execution_worker: Optional[ExecutionWorker] = ExecutionWorker(
