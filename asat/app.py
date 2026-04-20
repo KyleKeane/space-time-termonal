@@ -48,6 +48,7 @@ from asat.notebook import FocusMode, NotebookCursor
 from asat.onboarding import OnboardingCoordinator
 from asat.output_buffer import OutputRecorder
 from asat.output_cursor import OutputCursor
+from asat.output_playback import OutputPlaybackDriver
 from asat.prompt_context import PromptContext
 from asat.session import Session
 from asat.settings_controller import SettingsController
@@ -87,6 +88,7 @@ class Application:
     error_tail: StderrTailAnnouncer
     completion_watcher: CompletionFocusWatcher
     streaming_monitor: Optional[StreamingMonitor] = None
+    output_playback: Optional[OutputPlaybackDriver] = None
     onboarding: Optional[OnboardingCoordinator] = None
     event_logger: Optional[JsonlEventLogger] = None
     session_path: Optional[Path] = None
@@ -110,6 +112,7 @@ class Application:
         """Wire subscriptions that need the fully-constructed Application."""
         self._pending: list[str] = []
         self.bus.subscribe(EventType.ACTION_INVOKED, self._on_action_invoked)
+        self.bus.subscribe(EventType.FOCUS_CHANGED, self._on_focus_changed)
 
     @classmethod
     def build(
@@ -261,6 +264,11 @@ class Application:
         # `check()` with an injected clock and never observe the ticker.
         streaming_monitor = StreamingMonitor(bus)
         streaming_monitor.start_background_ticker()
+        # F24 continuous playback: one driver per Application, bound to
+        # the singleton `output_cursor`. The background ticker is a
+        # daemon so tests that never tap playback never see a thread.
+        output_playback = OutputPlaybackDriver(bus, output_cursor)
+        output_playback.start_background_ticker()
         if text_trace is not None:
             TerminalRenderer(bus, stream=text_trace)
         onboarding = onboarding_factory(bus) if onboarding_factory is not None else None
@@ -290,6 +298,7 @@ class Application:
             error_tail=error_tail,
             completion_watcher=completion_watcher,
             streaming_monitor=streaming_monitor,
+            output_playback=output_playback,
             onboarding=onboarding,
             event_logger=event_logger,
             session_path=Path(session_path) if session_path is not None else None,
@@ -412,6 +421,8 @@ class Application:
             self.execution_worker.close()
         if self.streaming_monitor is not None:
             self.streaming_monitor.close()
+        if self.output_playback is not None:
+            self.output_playback.close()
         if self.session_path is not None:
             self.session.save(self.session_path)
             publish_event(
@@ -436,11 +447,24 @@ class Application:
         """Capture cell submissions and meta-commands for the driver."""
         payload = event.payload
         action = payload.get("action")
+        # F24: any action other than the toggle itself stops playback.
+        # The action is still dispatched — stopping only cancels the
+        # auto-advance timer, letting the user's keystroke run its
+        # normal course (e.g. Up / Down still move the line cursor).
+        if (
+            self.output_playback is not None
+            and self.output_playback.active
+            and action != "output_playback_toggle"
+        ):
+            self.output_playback.stop(reason="cancelled")
         if action == "repeat_last_narration":
             self.sound_engine.replay_last_narration()
             return
         if action == "cancel_command":
             self._cancel_running_command()
+            return
+        if action == "output_playback_toggle":
+            self._toggle_output_playback()
             return
         if action == "submit":
             cell_id = payload.get("cell_id")
@@ -488,6 +512,38 @@ class Application:
             )
             return
         self.kernel.cancel(cell_id)
+
+    def _toggle_output_playback(self) -> None:
+        """`p` / `Space` in OUTPUT mode — F24 continuous playback.
+
+        Toggles the `OutputPlaybackDriver`. Starting forwards the
+        currently focused cell id so the STARTED / STOPPED events
+        carry enough context for a binding to narrate "playing output
+        for cell two". When the driver refuses to start (buffer empty
+        or cursor already on the last line), we surface a
+        `HELP_REQUESTED` hint so the user hears why nothing happened.
+        """
+        if self.output_playback is None:
+            return
+        if self.output_playback.active:
+            self.output_playback.stop(reason="cancelled")
+            return
+        cell_id = self.cursor.focus.cell_id
+        if not self.output_playback.start(cell_id):
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": ["Nothing to play — output is empty or at the end."]},
+                source="app",
+            )
+
+    def _on_focus_changed(self, event: Event) -> None:
+        """Stop playback when focus leaves OUTPUT mode — F24."""
+        if self.output_playback is None or not self.output_playback.active:
+            return
+        new_mode = event.payload.get("new_mode")
+        if new_mode != FocusMode.OUTPUT.value:
+            self.output_playback.stop(reason="focus_changed")
 
     def _replay_welcome(self) -> None:
         """Re-invoke the onboarding tour on `:welcome` (F44).

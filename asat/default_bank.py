@@ -101,6 +101,8 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.BOOKMARK_REMOVED,
     EventType.VERBOSITY_CHANGED,
     EventType.BANK_RELOADED,
+    EventType.OUTPUT_PLAYBACK_STARTED,
+    EventType.OUTPUT_PLAYBACK_STOPPED,
     EventType.ANSI_OSC_RECEIVED,
 })
 
@@ -410,6 +412,31 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             sound_id="soft_tick",
             say_template="bank reloaded from disk",
             priority=175,
+            verbosity="minimal",
+        ),
+
+        # F24 continuous output playback. Both events sit at "minimal"
+        # verbosity because they are only emitted in response to an
+        # explicit user gesture — staying silent would leave the user
+        # unsure whether the tap registered. Individual line speech is
+        # carried by the existing `output_line_focused` binding, so the
+        # start / stop cues deliberately stay terse.
+        EventBinding(
+            id="output_playback_started",
+            event_type=EventType.OUTPUT_PLAYBACK_STARTED.value,
+            voice_id="system",
+            sound_id="soft_tick",
+            say_template="playing output",
+            priority=170,
+            verbosity="minimal",
+        ),
+        EventBinding(
+            id="output_playback_stopped",
+            event_type=EventType.OUTPUT_PLAYBACK_STOPPED.value,
+            voice_id="system",
+            sound_id="soft_tick",
+            say_template="playback stopped",
+            priority=170,
             verbosity="minimal",
         ),
 
