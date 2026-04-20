@@ -2100,6 +2100,109 @@ class TextMetaCommandTests(unittest.TestCase):
         self.assertNotIn("text", AMBIENT_META_COMMANDS)
 
 
+class TextInputBindingTests(unittest.TestCase):
+    """F27 `i` flow: NOTEBOOK `i` begins TEXT_INPUT; Enter creates; Escape abandons."""
+
+    def test_i_from_notebook_enters_text_input_mode(self) -> None:
+        _bus, _session, cursor, router, _cells = _build(["ls"])
+        action = router.handle_key(Key.printable("i"))
+        self.assertEqual(action, "begin_text_input")
+        self.assertEqual(cursor.focus.mode, FocusMode.TEXT_INPUT)
+        self.assertEqual(cursor.focus.input_buffer, "")
+
+    def test_printables_in_text_input_mode_insert_into_buffer(self) -> None:
+        _bus, _session, cursor, router, _cells = _build(["ls"])
+        router.handle_key(Key.printable("i"))
+        for ch in "note":
+            router.handle_key(Key.printable(ch))
+        self.assertEqual(cursor.focus.input_buffer, "note")
+        self.assertEqual(cursor.focus.cursor_position, 4)
+
+    def test_enter_in_text_input_submits_and_creates_text_cell(self) -> None:
+        _bus, session, cursor, router, cells = _build(["ls", "pwd"])
+        # Anchor on the first cell so the new text cell should slot in at index 1.
+        cursor.focus_cell(cells[0].cell_id)
+        router.handle_key(Key.printable("i"))
+        for ch in "between":
+            router.handle_key(Key.printable(ch))
+        action = router.handle_key(ENTER)
+        self.assertEqual(action, "submit_text_input")
+        self.assertEqual(len(session.cells), 3)
+        new_cell = session.cells[1]
+        self.assertTrue(new_cell.is_text)
+        self.assertEqual(new_cell.text, "between")
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertEqual(cursor.focus.cell_id, new_cell.cell_id)
+
+    def test_escape_in_text_input_abandons_without_creating_cell(self) -> None:
+        _bus, session, cursor, router, cells = _build(["ls"])
+        initial = len(session.cells)
+        router.handle_key(Key.printable("i"))
+        for ch in "draft":
+            router.handle_key(Key.printable(ch))
+        action = router.handle_key(ESCAPE)
+        self.assertEqual(action, "abandon_text_input")
+        self.assertEqual(len(session.cells), initial)
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertEqual(cursor.focus.cell_id, cells[0].cell_id)
+
+    def test_buffer_editing_bindings_work_in_text_input(self) -> None:
+        _bus, _session, cursor, router, _cells = _build(["ls"])
+        router.handle_key(Key.printable("i"))
+        for ch in "abc":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(BACKSPACE)
+        self.assertEqual(cursor.focus.input_buffer, "ab")
+        router.handle_key(HOME)
+        self.assertEqual(cursor.focus.cursor_position, 0)
+        router.handle_key(END)
+        self.assertEqual(cursor.focus.cursor_position, 2)
+        router.handle_key(LEFT)
+        self.assertEqual(cursor.focus.cursor_position, 1)
+        router.handle_key(DELETE)
+        self.assertEqual(cursor.focus.input_buffer, "a")
+
+    def test_empty_submit_in_text_input_creates_nothing(self) -> None:
+        bus, session, cursor, router, _cells = _build(["ls"])
+        rec = _Recorder(bus)
+        router.handle_key(Key.printable("i"))
+        router.handle_key(ENTER)
+        self.assertEqual(len(session.cells), 1)
+        self.assertEqual(cursor.focus.mode, FocusMode.NOTEBOOK)
+        # ACTION_INVOKED payload should indicate no cell was created.
+        actions = rec.types_of(EventType.ACTION_INVOKED)
+        submit_events = [e for e in actions if e.payload.get("action") == "submit_text_input"]
+        self.assertTrue(submit_events)
+        self.assertEqual(submit_events[-1].payload.get("created"), False)
+
+    def test_submit_payload_carries_cell_id_and_text(self) -> None:
+        bus, _session, _cursor, router, _cells = _build(["ls"])
+        rec = _Recorder(bus)
+        router.handle_key(Key.printable("i"))
+        for ch in "hello":
+            router.handle_key(Key.printable(ch))
+        router.handle_key(ENTER)
+        actions = rec.types_of(EventType.ACTION_INVOKED)
+        submit_events = [e for e in actions if e.payload.get("action") == "submit_text_input"]
+        self.assertEqual(submit_events[-1].payload["created"], True)
+        self.assertIn("cell_id", submit_events[-1].payload)
+        self.assertEqual(submit_events[-1].payload["text"], "hello")
+
+    def test_i_is_ignored_in_input_mode(self) -> None:
+        _bus, _session, cursor, router, _cells = _build(["ls"])
+        cursor.enter_input_mode()
+        router.handle_key(Key.printable("i"))
+        # In INPUT mode `i` is a plain printable char.
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertTrue(cursor.focus.input_buffer.endswith("i"))
+
+    def test_text_input_mode_bindings_exist_in_default_map(self) -> None:
+        bindings = default_bindings()
+        self.assertIn(FocusMode.TEXT_INPUT, bindings)
+        self.assertEqual(bindings[FocusMode.TEXT_INPUT][ENTER], "submit_text_input")
+        self.assertEqual(bindings[FocusMode.TEXT_INPUT][ESCAPE], "abandon_text_input")
+
+
 class ParseHeadingArgumentTests(unittest.TestCase):
     """F61: `:heading <level> <title>` argument parser."""
 

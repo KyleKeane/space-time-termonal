@@ -30,6 +30,7 @@ Each row is one binding. The `Action` column is the handler name `InputRouter._a
 | `[` | `prev_heading` |
 | `]` | `next_heading` |
 | `d` | `delete_cell` |
+| `i` | `begin_text_input` |
 | `y` | `duplicate_cell` |
 | `z` | `toggle_fold_heading` |
 | `{` | `prev_parent_heading` |
@@ -58,6 +59,27 @@ Each row is one binding. The `Action` column is the handler name `InputRouter._a
 | `Left` | `cursor_left` |
 | `Right` | `cursor_right` |
 | `Up` | `history_previous` |
+
+## TEXT_INPUT mode
+
+| Keystroke | Action |
+|-----------|--------|
+| `Backspace` | `backspace` |
+| `Ctrl+.` | `open_action_menu` |
+| `Ctrl+A` | `cursor_home` |
+| `Ctrl+E` | `cursor_end` |
+| `Ctrl+K` | `delete_to_end` |
+| `Ctrl+R` | `repeat_last_narration` |
+| `Ctrl+U` | `delete_to_start` |
+| `Ctrl+W` | `delete_word_left` |
+| `Delete` | `delete_forward` |
+| `End` | `cursor_end` |
+| `Enter` | `submit_text_input` |
+| `Escape` | `abandon_text_input` |
+| `F2` | `open_action_menu` |
+| `Home` | `cursor_home` |
+| `Left` | `cursor_left` |
+| `Right` | `cursor_right` |
 
 ## OUTPUT mode
 

@@ -56,15 +56,24 @@ class RunSelfCheckHappyPathTests(unittest.TestCase):
         slugs = [payload["step"] for payload in captured]
         self.assertEqual(
             slugs,
-            ["bank_validates", "voices_speak", "event_cues", "live_playback"],
+            [
+                "bank_validates",
+                "tts_engine",
+                "voices_speak",
+                "event_cues",
+                "live_playback",
+            ],
         )
         for payload in captured:
             self.assertEqual(payload["status"], "pass", payload)
             self.assertIn("detail", payload)
-            self.assertEqual(payload["total"], 4)
-        self.assertEqual([payload["index"] for payload in captured], [1, 2, 3, 4])
+            self.assertEqual(payload["total"], 5)
+        self.assertEqual(
+            [payload["index"] for payload in captured], [1, 2, 3, 4, 5]
+        )
         text = stdout.getvalue()
         self.assertIn("PASS bank_validates", text)
+        self.assertIn("PASS tts_engine", text)
         self.assertIn("PASS voices_speak", text)
         self.assertIn("PASS event_cues", text)
         self.assertIn("PASS live_playback", text)
@@ -164,10 +173,10 @@ class SelfCheckEventEmissionTests(unittest.TestCase):
 
         run_self_check(default_sound_bank(), sink, bus=bus, stdout=io.StringIO())
 
-        self.assertEqual(len(captured), 4)
+        self.assertEqual(len(captured), 5)
         for index, payload in enumerate(captured, start=1):
             self.assertEqual(payload["index"], index)
-            self.assertEqual(payload["total"], 4)
+            self.assertEqual(payload["total"], 5)
             self.assertIn(payload["status"], {"pass", "fail", "skip"})
             self.assertIsInstance(payload["step"], str)
             self.assertIsInstance(payload["detail"], str)

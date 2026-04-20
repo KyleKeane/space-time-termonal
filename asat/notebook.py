@@ -35,6 +35,11 @@ class FocusMode(str, Enum):
 
     NOTEBOOK: arrow keys navigate between cells.
     INPUT: keystrokes edit the focused cell's command buffer.
+    TEXT_INPUT: keystrokes compose a new prose body that will become a
+        TEXT cell inserted after the current focus when submitted (F27
+        `i` keybinding). Buffer editing primitives are shared with
+        INPUT, but submission creates a cell instead of writing back
+        into an existing one, and there is no history recall.
     OUTPUT: keystrokes walk through lines of the focused cell's
         output. Reserved for a future phase; included here so code
         can already branch on it safely.
@@ -45,6 +50,7 @@ class FocusMode(str, Enum):
 
     NOTEBOOK = "notebook"
     INPUT = "input"
+    TEXT_INPUT = "text_input"
     OUTPUT = "output"
     SETTINGS = "settings"
 
@@ -55,13 +61,15 @@ class FocusState:
 
     mode: current focus mode.
     cell_id: id of the cell being looked at, or None if the session
-        is empty and nothing is focused.
-    input_buffer: the text currently being typed when in INPUT mode.
-        Empty in other modes.
+        is empty and nothing is focused. In TEXT_INPUT mode this is
+        the "anchor" cell — the new text cell will be inserted
+        immediately after it on submit (or appended if None).
+    input_buffer: the text currently being typed when in INPUT or
+        TEXT_INPUT mode. Empty in other modes.
     cursor_position: the caret offset into input_buffer (0 == before
         the first character, len(buffer) == after the last). Only
-        meaningful in INPUT mode; kept at 0 in other modes. Always
-        satisfies 0 <= cursor_position <= len(input_buffer).
+        meaningful in INPUT / TEXT_INPUT; kept at 0 in other modes.
+        Always satisfies 0 <= cursor_position <= len(input_buffer).
     """
 
     mode: FocusMode = FocusMode.NOTEBOOK
@@ -612,6 +620,105 @@ class NotebookCursor:
         )
         return self._state
 
+    def _composing_text(self) -> bool:
+        """Return True when the cursor is composing into ``input_buffer``.
+
+        True in INPUT and TEXT_INPUT — both modes share the buffer /
+        caret primitives (insert, backspace, cursor_left, …). INPUT
+        additionally supports history recall and commits on submit;
+        TEXT_INPUT has no history and creates a fresh text cell on
+        submit. Callers that must distinguish check the mode directly.
+        """
+        return self._state.mode in (FocusMode.INPUT, FocusMode.TEXT_INPUT)
+
+    def begin_text_input(self) -> Optional[FocusState]:
+        """Enter TEXT_INPUT mode to compose a prose body in-place (F27).
+
+        The currently focused cell becomes the "anchor" for insertion:
+        when the buffer is submitted, a new text cell is spliced in
+        immediately after it. On an empty session the anchor is None
+        and the text cell is simply appended. Legal only from NOTEBOOK
+        mode; silent no-op elsewhere so accidentally pressing `i` in
+        INPUT / OUTPUT / SETTINGS does not shred the user's context.
+        """
+        if self._state.mode != FocusMode.NOTEBOOK:
+            return None
+        self._transition(
+            FocusState(
+                mode=FocusMode.TEXT_INPUT,
+                cell_id=self._state.cell_id,
+                input_buffer="",
+                cursor_position=0,
+            )
+        )
+        return self._state
+
+    def submit_text_input(self) -> Optional[Cell]:
+        """Commit the TEXT_INPUT buffer as a new text cell.
+
+        An empty / whitespace-only buffer is treated as abandonment:
+        no cell is created, the cursor returns to NOTEBOOK on the
+        anchor. Otherwise a fresh TEXT cell is inserted immediately
+        after the anchor (or appended when the anchor is None / no
+        longer in the session), focus lands on the new cell, and
+        CELL_CREATED is published. Returns the new cell, or None if
+        called outside TEXT_INPUT or when nothing was created.
+        """
+        if self._state.mode != FocusMode.TEXT_INPUT:
+            return None
+        body = self._state.input_buffer.strip()
+        anchor_id = self._state.cell_id
+        if not body:
+            self._transition(
+                FocusState(
+                    mode=FocusMode.NOTEBOOK,
+                    cell_id=anchor_id,
+                    input_buffer="",
+                    cursor_position=0,
+                )
+            )
+            return None
+        cell = Cell.new_text(body)
+        position: Optional[int]
+        if anchor_id is None:
+            position = None
+        else:
+            try:
+                position = self._session.index_of(anchor_id) + 1
+            except (ValueError, SessionError):
+                position = None
+        self._session.add_cell(cell, position=position)
+        new_index = self._session.index_of(cell.cell_id)
+        self._publish_cell_created(cell, new_index)
+        self._session.set_active(cell.cell_id)
+        self._transition(
+            FocusState(
+                mode=FocusMode.NOTEBOOK,
+                cell_id=cell.cell_id,
+                input_buffer="",
+                cursor_position=0,
+            )
+        )
+        return cell
+
+    def abandon_text_input(self) -> Optional[FocusState]:
+        """Exit TEXT_INPUT mode without creating a cell.
+
+        Returns to NOTEBOOK on the anchor cell (or None focus when the
+        anchor went away mid-edit). Silent no-op outside TEXT_INPUT.
+        """
+        if self._state.mode != FocusMode.TEXT_INPUT:
+            return None
+        self._transition(
+            FocusState(
+                mode=FocusMode.NOTEBOOK,
+                cell_id=self._state.cell_id,
+                input_buffer="",
+                cursor_position=0,
+            )
+        )
+        return self._state
+
     def reset_input_buffer(self) -> None:
         """Clear the input buffer while staying in INPUT mode.
 
@@ -633,8 +740,10 @@ class NotebookCursor:
         """Insert a character at the current caret position.
 
         The caret advances by one so subsequent inserts chain naturally.
+        Accepts either INPUT (editing a command) or TEXT_INPUT
+        (composing a new prose cell) mode.
         """
-        if self._state.mode != FocusMode.INPUT:
+        if not self._composing_text():
             return
         if len(character) != 1:
             raise ValueError("insert_character expects exactly one character")
@@ -648,7 +757,7 @@ class NotebookCursor:
 
     def backspace(self) -> None:
         """Delete the character immediately before the caret."""
-        if self._state.mode != FocusMode.INPUT:
+        if not self._composing_text():
             return
         position = self._state.cursor_position
         if position == 0:
@@ -662,7 +771,7 @@ class NotebookCursor:
 
     def cursor_left(self) -> None:
         """Move the caret one character to the left; clamp at start."""
-        if self._state.mode != FocusMode.INPUT:
+        if not self._composing_text():
             return
         if self._state.cursor_position == 0:
             return
@@ -670,7 +779,7 @@ class NotebookCursor:
 
     def cursor_right(self) -> None:
         """Move the caret one character to the right; clamp at end."""
-        if self._state.mode != FocusMode.INPUT:
+        if not self._composing_text():
             return
         if self._state.cursor_position >= len(self._state.input_buffer):
             return
@@ -678,7 +787,7 @@ class NotebookCursor:
 
     def cursor_home(self) -> None:
         """Jump the caret to the start of the input buffer."""
-        if self._state.mode != FocusMode.INPUT:
+        if not self._composing_text():
             return
         if self._state.cursor_position == 0:
             return
@@ -686,7 +795,7 @@ class NotebookCursor:
 
     def cursor_end(self) -> None:
         """Jump the caret to the end of the input buffer."""
-        if self._state.mode != FocusMode.INPUT:
+        if not self._composing_text():
             return
         end = len(self._state.input_buffer)
         if self._state.cursor_position == end:
@@ -695,7 +804,7 @@ class NotebookCursor:
 
     def delete_forward(self) -> None:
         """Delete the character at the caret (Delete key)."""
-        if self._state.mode != FocusMode.INPUT:
+        if not self._composing_text():
             return
         position = self._state.cursor_position
         buffer = self._state.input_buffer
@@ -707,7 +816,7 @@ class NotebookCursor:
 
     def delete_word_left(self) -> None:
         """Delete the whitespace-delimited word preceding the caret."""
-        if self._state.mode != FocusMode.INPUT:
+        if not self._composing_text():
             return
         position = self._state.cursor_position
         if position == 0:
@@ -727,7 +836,7 @@ class NotebookCursor:
 
     def delete_to_start(self) -> None:
         """Delete everything from the start of the buffer up to the caret."""
-        if self._state.mode != FocusMode.INPUT:
+        if not self._composing_text():
             return
         position = self._state.cursor_position
         if position == 0:
@@ -738,7 +847,7 @@ class NotebookCursor:
 
     def delete_to_end(self) -> None:
         """Delete everything from the caret to the end of the buffer."""
-        if self._state.mode != FocusMode.INPUT:
+        if not self._composing_text():
             return
         position = self._state.cursor_position
         buffer = self._state.input_buffer

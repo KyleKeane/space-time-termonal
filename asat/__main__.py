@@ -1,17 +1,22 @@
 """Launch the Accessible Spatial Audio Terminal from the command line.
 
 `python -m asat` assembles an Application with sensible defaults and
-drives it from real keystrokes. By default the session narrates to an
-in-memory sink (so every platform starts cleanly) and prints a small
-text trace to stdout (so sighted viewers and anyone debugging can
-follow along). The flags below switch the two knobs:
+drives it from real keystrokes. When stdout is a terminal and no
+audio flag was passed, the CLI opts into live audio automatically
+(``--live``) so a first-time user hears speech without reading any
+docs. Piped / captured output keeps the safe ``MemorySink`` default.
 
-    --live          play audio through the platform live-speaker sink
-                    (Windows today; POSIX falls back to MemorySink
-                    with an explanation).
-    --wav-dir DIR   additionally write every rendered buffer to a
-                    numbered WAV file under DIR.
-    --quiet         suppress the text trace on stdout (audio only).
+    --live / --no-live  explicitly opt into or out of the platform
+                        live-speaker sink. ``--live`` on a host with
+                        no backend falls back to MemorySink with an
+                        explanation.
+    --wav-dir DIR       additionally write every rendered buffer to a
+                        numbered WAV file under DIR.
+    --tts ENGINE_ID     pick a TTS backend by id (``pyttsx3``,
+                        ``espeak-ng``, ``say``, ``tone``). Omit to
+                        auto-select the first available engine in
+                        priority order. Tests pin ``tone``.
+    --quiet             suppress the text trace on stdout (audio only).
 
 Exit with the `:quit` meta-command (type `:quit` in INPUT mode then
 press Enter) or by sending EOF (Ctrl+D on POSIX, Ctrl+Z then Enter on
@@ -45,6 +50,8 @@ from asat.self_check import run_self_check
 from asat.session import Session
 from asat.shell_backend import shell_backend_or_none
 from asat.sound_bank import SoundBank
+from asat.tts import TTSEngine
+from asat.tts_registry import TTSEngineRegistry, TTSRegistryError
 from asat.workspace import (
     WORKSPACE_NOTEBOOK_EXTENSION,
     Workspace,
@@ -74,20 +81,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             )
             return 2
         args.session = workspace_session_path
-    sink = _make_sink(args.wav_dir, args.live, quiet=args.quiet)
+    registry = TTSEngineRegistry.default()
+    try:
+        tts_engine = _resolve_tts(registry, args.tts)
+    except TTSRegistryError as exc:
+        print(f"[asat] --tts: {exc}", file=sys.stderr)
+        return 2
+    effective_live = _resolve_live_preference(args)
+    sink = _make_sink(args.wav_dir, effective_live, quiet=args.quiet)
     if (
         not args.quiet
         and not args.check
         and not args.live
         and args.wav_dir is None
+        and isinstance(sink, MemorySink)
     ):
         # Tell first-time users why they are hearing silence without
-        # forcing them to read the docs. Suppressed once any audio
-        # destination is requested explicitly, and when --check is
+        # forcing them to read the docs. Suppressed when --live was
+        # requested (the `--live unavailable` line already explained
+        # why audio isn't reaching speakers) or when --check is
         # printing its own diagnostic report.
         print(
             "[asat] audio is going to the in-memory sink. Pass --live "
-            "(Windows) or --wav-dir DIR to hear or capture it.",
+            "or --wav-dir DIR to hear or capture it. "
+            "On Linux install a player (apt install pulseaudio-utils OR "
+            "alsa-utils) and a TTS engine (pip install pyttsx3 OR "
+            "apt install espeak-ng).",
             file=sys.stderr,
         )
     try:
@@ -129,6 +148,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         runner=runner,
         async_execution=async_execution,
         workspace=workspace,
+        tts=tts_engine,
     )
     if args.check:
         exit_code = _print_check_report(app, args)
@@ -160,11 +180,13 @@ def _print_check_report(app: Application, args: argparse.Namespace) -> int:
     case where the user passed ``--live`` but the host had no live
     backend, when ``MemorySink`` ends up active despite the request).
     """
+    tts_name = type(app.sound_engine.tts).__name__
     lines = [
         f"asat {__version__}",
         f"platform       {sys.platform}",
         f"stdin tty      {sys.stdin.isatty()}",
         f"sink           {type(app.sink).__name__}",
+        f"tts            {tts_name}",
         f"runner         {type(app.runner).__name__}",
         f"bank path      {args.bank if args.bank is not None else '(built-in default)'}",
         f"session path   {args.session if args.session is not None else '(fresh)'}",
@@ -235,9 +257,30 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
         "--live",
         action="store_true",
         help=(
-            "Play audio on the platform live-speaker sink. Today this "
-            "means winsound on Windows; POSIX hosts fall back to the "
-            "in-memory sink with an explanation."
+            "Play audio on the platform live-speaker sink. Windows "
+            "uses winsound; Linux/macOS use whichever of paplay, aplay, "
+            "or afplay is installed. On a TTY this is the default — "
+            "pass --no-live to override."
+        ),
+    )
+    parser.add_argument(
+        "--no-live",
+        action="store_true",
+        help=(
+            "Opt out of the auto-live default when stdout is a TTY. "
+            "The session falls back to MemorySink (or --wav-dir DIR "
+            "if provided) so audio never reaches the speakers."
+        ),
+    )
+    parser.add_argument(
+        "--tts",
+        default=None,
+        help=(
+            "Pick the TTS engine by id (pyttsx3, espeak-ng, say, tone). "
+            "Omit to auto-select the first available engine in priority "
+            "order. Tests and scripts that need deterministic output "
+            "pass `--tts tone`. Respect ASAT_TTS_ENGINE env var as the "
+            "user-level default when this flag is absent."
         ),
     )
     parser.add_argument(
@@ -509,6 +552,44 @@ def _load_session(path: Optional[Path]) -> Optional[Session]:
     if path is None or not path.exists():
         return None
     return Session.load(path)
+
+
+def _resolve_tts(
+    registry: TTSEngineRegistry, engine_id: Optional[str]
+) -> TTSEngine:
+    """Build a TTS engine: explicit id if given, else registry default.
+
+    Explicit flags always win over auto-selection so scripts and
+    tests can pin a deterministic engine. A missing engine id raises
+    ``TTSRegistryError`` which the caller surfaces as a friendly exit.
+    """
+    if engine_id is None:
+        return registry.select_default()
+    return registry.build(engine_id)
+
+
+def _resolve_live_preference(args: argparse.Namespace) -> bool:
+    """Decide whether the sink-builder should try the live backend.
+
+    Explicit wins over implicit: ``--no-live`` always returns False,
+    ``--live`` always returns True. Otherwise auto-live engages when
+    we are attached to a real TTY and the user hasn't asked for
+    ``--quiet`` or ``--check``. Piped / captured runs keep the safe
+    MemorySink default, which is what the test suite relies on.
+    """
+    if args.no_live:
+        return False
+    if args.live:
+        return True
+    if args.quiet or args.check or args.wav_dir is not None:
+        return False
+    # Gate on stdout.isatty so pytest runs with mocked StringIO stdout
+    # stay deterministic. An interactive shell passes this check and
+    # gets live audio out of the box.
+    try:
+        return bool(sys.stdout.isatty())
+    except (AttributeError, ValueError):
+        return False
 
 
 def _make_sink(

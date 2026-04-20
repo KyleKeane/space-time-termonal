@@ -1023,5 +1023,151 @@ class CursorCommandHistoryTests(unittest.TestCase):
         self.assertEqual(self.session.command_history, ["one", "two", "three"])
 
 
+class TextInputModeTests(unittest.TestCase):
+    """F27 `i` flow: begin / submit / abandon in-place text composition."""
+
+    def setUp(self) -> None:
+        self.bus = EventBus()
+        self.session, self.cells = _session_with(["ls", "pwd", "whoami"])
+        self.cursor = NotebookCursor(self.session, self.bus)
+        # Focus the middle cell so "after anchor" is easy to reason about.
+        self.cursor.focus_cell(self.cells[1].cell_id)
+
+    def test_begin_text_input_enters_text_input_mode(self) -> None:
+        result = self.cursor.begin_text_input()
+        assert result is not None
+        self.assertEqual(self.cursor.focus.mode, FocusMode.TEXT_INPUT)
+        self.assertEqual(self.cursor.focus.cell_id, self.cells[1].cell_id)
+        self.assertEqual(self.cursor.focus.input_buffer, "")
+        self.assertEqual(self.cursor.focus.cursor_position, 0)
+
+    def test_begin_text_input_is_noop_outside_notebook(self) -> None:
+        self.cursor.enter_input_mode()
+        self.assertEqual(self.cursor.focus.mode, FocusMode.INPUT)
+        self.assertIsNone(self.cursor.begin_text_input())
+        self.assertEqual(self.cursor.focus.mode, FocusMode.INPUT)
+
+    def test_buffer_editing_works_in_text_input_mode(self) -> None:
+        self.cursor.begin_text_input()
+        for ch in "hello":
+            self.cursor.insert_character(ch)
+        self.assertEqual(self.cursor.focus.input_buffer, "hello")
+        self.assertEqual(self.cursor.focus.cursor_position, 5)
+        self.cursor.backspace()
+        self.assertEqual(self.cursor.focus.input_buffer, "hell")
+        self.cursor.cursor_home()
+        self.assertEqual(self.cursor.focus.cursor_position, 0)
+        self.cursor.cursor_end()
+        self.assertEqual(self.cursor.focus.cursor_position, 4)
+        self.cursor.delete_to_end()
+        # At end, nothing to delete forward.
+        self.assertEqual(self.cursor.focus.input_buffer, "hell")
+
+    def test_submit_text_input_inserts_after_anchor(self) -> None:
+        self.cursor.begin_text_input()
+        for ch in "hello world":
+            self.cursor.insert_character(ch)
+        cell = self.cursor.submit_text_input()
+        assert cell is not None
+        self.assertEqual(cell.kind, CellKind.TEXT)
+        self.assertEqual(cell.text, "hello world")
+        # Anchor was cells[1] (index 1); new cell lives at index 2.
+        self.assertEqual(self.session.index_of(cell.cell_id), 2)
+        self.assertEqual(self.cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertEqual(self.cursor.focus.cell_id, cell.cell_id)
+        self.assertEqual(self.cursor.focus.input_buffer, "")
+
+    def test_submit_text_input_publishes_cell_created_and_focus_changed(self) -> None:
+        created: list[Event] = []
+        focused: list[Event] = []
+        self.bus.subscribe(EventType.CELL_CREATED, created.append)
+        self.bus.subscribe(EventType.FOCUS_CHANGED, focused.append)
+        self.cursor.begin_text_input()
+        self.cursor.insert_character("x")
+        cell = self.cursor.submit_text_input()
+        assert cell is not None
+        self.assertEqual(len(created), 1)
+        self.assertEqual(created[0].payload["cell_id"], cell.cell_id)
+        self.assertEqual(created[0].payload["index"], 2)
+        modes_seen = [event.payload["new_mode"] for event in focused]
+        self.assertIn("text_input", modes_seen)
+        self.assertEqual(focused[-1].payload["new_mode"], "notebook")
+        self.assertEqual(focused[-1].payload["kind"], CellKind.TEXT.value)
+        self.assertEqual(focused[-1].payload["text"], "x")
+
+    def test_submit_empty_buffer_creates_nothing(self) -> None:
+        created: list[Event] = []
+        self.bus.subscribe(EventType.CELL_CREATED, created.append)
+        self.cursor.begin_text_input()
+        cell = self.cursor.submit_text_input()
+        self.assertIsNone(cell)
+        self.assertEqual(created, [])
+        self.assertEqual(self.cursor.focus.mode, FocusMode.NOTEBOOK)
+        # Focus returns to anchor.
+        self.assertEqual(self.cursor.focus.cell_id, self.cells[1].cell_id)
+
+    def test_submit_whitespace_only_buffer_creates_nothing(self) -> None:
+        self.cursor.begin_text_input()
+        for ch in "   ":
+            self.cursor.insert_character(ch)
+        self.assertIsNone(self.cursor.submit_text_input())
+        # Session cell count unchanged (no text cell appended).
+        self.assertEqual(len(self.session.cells), 3)
+
+    def test_abandon_text_input_discards_buffer(self) -> None:
+        self.cursor.begin_text_input()
+        for ch in "draft":
+            self.cursor.insert_character(ch)
+        result = self.cursor.abandon_text_input()
+        assert result is not None
+        self.assertEqual(self.cursor.focus.mode, FocusMode.NOTEBOOK)
+        self.assertEqual(self.cursor.focus.cell_id, self.cells[1].cell_id)
+        self.assertEqual(self.cursor.focus.input_buffer, "")
+        self.assertEqual(len(self.session.cells), 3)
+
+    def test_abandon_text_input_is_noop_outside_text_input(self) -> None:
+        self.assertIsNone(self.cursor.abandon_text_input())
+        self.cursor.enter_input_mode()
+        self.assertIsNone(self.cursor.abandon_text_input())
+
+    def test_submit_text_input_is_noop_outside_text_input(self) -> None:
+        self.assertIsNone(self.cursor.submit_text_input())
+
+    def test_text_input_on_empty_session_appends(self) -> None:
+        bus = EventBus()
+        session = Session.new()
+        cursor = NotebookCursor(session, bus)
+        cursor.begin_text_input()
+        for ch in "first prose":
+            cursor.insert_character(ch)
+        cell = cursor.submit_text_input()
+        assert cell is not None
+        self.assertEqual(session.cells[-1].cell_id, cell.cell_id)
+        self.assertEqual(cell.text, "first prose")
+
+    def test_history_and_submit_ignored_in_text_input(self) -> None:
+        self.session.command_history.extend(["old"])
+        self.cursor.begin_text_input()
+        # history_previous is INPUT-only; should do nothing in TEXT_INPUT.
+        self.assertFalse(self.cursor.history_previous())
+        self.assertEqual(self.cursor.focus.input_buffer, "")
+        # submit() (the command submit) should also no-op in TEXT_INPUT.
+        self.assertIsNone(self.cursor.submit())
+        self.assertEqual(self.cursor.focus.mode, FocusMode.TEXT_INPUT)
+
+    def test_anchor_removed_mid_edit_falls_back_to_append(self) -> None:
+        self.cursor.begin_text_input()
+        anchor_id = self.cursor.focus.cell_id
+        assert anchor_id is not None
+        # Delete the anchor from the session while we're still composing.
+        self.session.remove_cell(anchor_id)
+        for ch in "tail":
+            self.cursor.insert_character(ch)
+        cell = self.cursor.submit_text_input()
+        assert cell is not None
+        # Appended to the end since anchor is gone.
+        self.assertEqual(self.session.cells[-1].cell_id, cell.cell_id)
+
+
 if __name__ == "__main__":
     unittest.main()

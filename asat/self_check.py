@@ -43,6 +43,7 @@ from asat.events import EventType
 from asat.sample_payloads import SAMPLE_PAYLOADS
 from asat.sound_bank import SoundBank
 from asat.sound_engine import SoundEngine
+from asat.tts_registry import TTSEngineRegistry
 
 
 @dataclass(frozen=True)
@@ -62,6 +63,7 @@ class SelfCheckStep:
 
 _SLUGS = (
     "bank_validates",
+    "tts_engine",
     "voices_speak",
     "event_cues",
     "live_playback",
@@ -90,6 +92,7 @@ def run_self_check(
     steps: list[SelfCheckStep] = []
     steps.append(_step_bank_validates(bank))
     bank_ok = steps[-1].status == "pass"
+    steps.append(_step_tts_engine())
     # Only build the engine when the bank is structurally sound;
     # ``SoundEngine.__init__`` calls ``bank.validate()`` and would
     # raise on a broken bank, taking the diagnostic down with it.
@@ -141,6 +144,34 @@ def _step_bank_validates(bank: SoundBank) -> SelfCheckStep:
             f"{len(bank.voices)} voices, {len(bank.sounds)} sounds, "
             f"{len(bank.bindings)} bindings"
         ),
+    )
+
+
+def _step_tts_engine() -> SelfCheckStep:
+    """Step 2: report which TTS engine the default registry resolves to.
+
+    The resolved engine is the one ``__main__`` will instantiate when
+    the user runs ``python -m asat`` with no ``--tts`` flag. Reporting
+    it here tells the operator at a glance whether they are about to
+    hear pyttsx3, espeak-ng, macOS ``say``, or the deterministic tone
+    fallback — a frequent source of "why is my audio beeping?"
+    confusion. ``tone`` is always available, so this step cannot
+    ``fail`` in practice; it is effectively an informational probe.
+    """
+    registry = TTSEngineRegistry.default()
+    available = registry.available_ids()
+    resolved = registry.resolve_default_id()
+    if not available:
+        return SelfCheckStep(
+            slug="tts_engine",
+            status="fail",
+            detail="no TTS engines available (expected at least 'tone')",
+        )
+    alternatives = ", ".join(available)
+    return SelfCheckStep(
+        slug="tts_engine",
+        status="pass",
+        detail=f"resolved engine: {resolved}; available: {alternatives}",
     )
 
 
