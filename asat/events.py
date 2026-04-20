@@ -224,6 +224,10 @@ class EventType(str, Enum):
     EVENT_LOG_QUICK_EDIT_COMMITTED = "event_log.quick_edit.committed"
     EVENT_LOG_REPLAYED = "event_log.replayed"
 
+    FIRST_RUN_TOUR_EVENT_LOG_PREVIEW = "first_run.tour.event_log_preview"
+    FIRST_RUN_TOUR_LOG_PATH = "first_run.tour.log_path"
+    FIRST_RUN_TOUR_COMPLETED = "first_run.tour.completed"
+
 
 @dataclass(frozen=True)
 class Event:

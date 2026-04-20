@@ -341,10 +341,13 @@ Producer: `asat.onboarding.OnboardingCoordinator` (`source="onboarding"`).
 file) when ASAT launches for the first time, and again on demand via
 the `:welcome` meta-command with `replay=True`.
 
-| EventType              | Payload keys                                         |
-|------------------------|------------------------------------------------------|
-| `FIRST_RUN_DETECTED`   | `lines`, `sentinel_path`, `replay`                   |
-| `FIRST_RUN_TOUR_STEP`  | `command`, `lines`                                   |
+| EventType                           | Payload keys                                         |
+|-------------------------------------|------------------------------------------------------|
+| `FIRST_RUN_DETECTED`                | `lines`, `sentinel_path`, `replay`                   |
+| `FIRST_RUN_TOUR_STEP`               | `command`, `lines`, `replay`                         |
+| `FIRST_RUN_TOUR_EVENT_LOG_PREVIEW`  | `lines`, `replay`                                    |
+| `FIRST_RUN_TOUR_LOG_PATH`           | `path`, `lines`, `replay`                            |
+| `FIRST_RUN_TOUR_COMPLETED`          | `lines`, `replay`                                    |
 
 `replay` is `True` when the event is a `:welcome` re-invocation and
 `False` on the genuine first run; a binding that wants to sound
@@ -354,6 +357,19 @@ different on replay can key off it.
 `FIRST_RUN_DETECTED` on a first launch. `command` is the pre-populated
 first-cell command (default `echo hello, ASAT`); `lines` is a short
 spoken prompt telling the user Enter runs it and Escape clears it.
+
+The PR 4 scripted tour adds three post-welcome beats that fire in
+order: `FIRST_RUN_TOUR_EVENT_LOG_PREVIEW` teaches the Ctrl+E
+keystroke; `FIRST_RUN_TOUR_LOG_PATH` announces the on-disk grouped
+event log (with `path=""` when no file logger is attached — the
+default binding's `path != ''` predicate gates the narration so no
+empty announcement ever fires); `FIRST_RUN_TOUR_COMPLETED` is the
+terminator so subscribers and tests can wait for the tour to
+finish without sleeping. All four beats (including
+`FIRST_RUN_TOUR_STEP`) re-fire on `:welcome` with `replay=True`,
+but the three seed cells are NOT re-seeded on replay — overwriting
+the user's notebook would violate the F20 once-per-machine
+contract.
 
 ## Workspace
 

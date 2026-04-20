@@ -243,4 +243,25 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "binding_id": "command_completed",
         "narration": "command completed, exit 0",
     },
+    EventType.FIRST_RUN_TOUR_EVENT_LOG_PREVIEW: {
+        "lines": [
+            "Press Control E any time to open the event log.",
+            "Up and Down walk recent events; press t to replay one.",
+        ],
+        "replay": False,
+    },
+    EventType.FIRST_RUN_TOUR_LOG_PATH: {
+        "path": "/tmp/proj/.asat/log/events-2026-04-20.log",
+        "lines": [
+            "Every event is also written to a grouped text log on disk.",
+        ],
+        "replay": False,
+    },
+    EventType.FIRST_RUN_TOUR_COMPLETED: {
+        "lines": [
+            "First-run tour complete.",
+            "Press Enter to run your first command, or colon h e l p for more.",
+        ],
+        "replay": False,
+    },
 }
