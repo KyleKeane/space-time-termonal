@@ -1841,6 +1841,97 @@ class HeadingNavigationBindingTests(unittest.TestCase):
         self.assertEqual(invoked[-1].payload["level"], 1)
 
 
+class ParentScopeNavigationBindingTests(unittest.TestCase):
+    """F27: `{` / `}` walk to parent-scope (shallower) headings from NOTEBOOK."""
+
+    def _build(self):
+        # Index: 0=H1 Intro, 1=cmd, 2=H2 Setup, 3=cmd, 4=H3 Fixtures,
+        # 5=cmd, 6=H2 Training, 7=cmd, 8=H1 Runs
+        bus = EventBus()
+        session = Session.new()
+        session.add_cell(Cell.new_heading(1, "Intro"))
+        session.add_cell(Cell.new("ls"))
+        session.add_cell(Cell.new_heading(2, "Setup"))
+        session.add_cell(Cell.new("pip install"))
+        session.add_cell(Cell.new_heading(3, "Fixtures"))
+        session.add_cell(Cell.new("make fixtures"))
+        session.add_cell(Cell.new_heading(2, "Training"))
+        session.add_cell(Cell.new("train"))
+        session.add_cell(Cell.new_heading(1, "Runs"))
+        cursor = NotebookCursor(session, bus)
+        router = InputRouter(cursor, bus)
+        return bus, session, cursor, router
+
+    def test_right_brace_from_h3_jumps_out_to_next_h2(self) -> None:
+        _bus, session, cursor, router = self._build()
+        cursor.focus_cell(session.cells[4].cell_id)  # H3 Fixtures
+        action = router.handle_key(Key.printable("}"))
+        self.assertEqual(action, "next_parent_heading")
+        # Shallower than H3 is H2 Training at index 6.
+        self.assertEqual(cursor.focus.cell_id, session.cells[6].cell_id)
+
+    def test_left_brace_from_h3_jumps_back_to_containing_h2(self) -> None:
+        _bus, session, cursor, router = self._build()
+        cursor.focus_cell(session.cells[4].cell_id)  # H3 Fixtures
+        action = router.handle_key(Key.printable("{"))
+        self.assertEqual(action, "prev_parent_heading")
+        # Shallower-than-H3 behind us is H2 Setup at index 2.
+        self.assertEqual(cursor.focus.cell_id, session.cells[2].cell_id)
+
+    def test_right_brace_from_plain_cell_uses_enclosing_heading(self) -> None:
+        """A non-heading cell's scope is the preceding heading."""
+        _bus, session, cursor, router = self._build()
+        cursor.focus_cell(session.cells[3].cell_id)  # cmd under H2 Setup
+        router.handle_key(Key.printable("}"))
+        # Scope H2 → next shallower is H1 Runs at index 8.
+        self.assertEqual(cursor.focus.cell_id, session.cells[8].cell_id)
+
+    def test_right_brace_at_h1_reports_no_match(self) -> None:
+        bus, session, cursor, router = self._build()
+        rec = _Recorder(bus)
+        cursor.focus_cell(session.cells[0].cell_id)  # H1 Intro
+        router.handle_key(Key.printable("}"))
+        invoked = [e for e in rec.types_of(EventType.ACTION_INVOKED)
+                   if e.payload["action"] == "next_parent_heading"]
+        self.assertFalse(invoked[-1].payload["matched"])
+        # Cursor stays put.
+        self.assertEqual(cursor.focus.cell_id, session.cells[0].cell_id)
+
+    def test_parent_nav_no_enclosing_heading_is_noop(self) -> None:
+        """A cell before any heading has no scope — { / } do nothing."""
+        bus = EventBus()
+        session = Session.new()
+        session.add_cell(Cell.new("preamble"))
+        session.add_cell(Cell.new_heading(1, "First"))
+        cursor = NotebookCursor(session, bus)
+        cursor.focus_cell(session.cells[0].cell_id)
+        router = InputRouter(cursor, bus)
+        rec = _Recorder(bus)
+        router.handle_key(Key.printable("}"))
+        router.handle_key(Key.printable("{"))
+        invoked = rec.types_of(EventType.ACTION_INVOKED)
+        self.assertTrue(all(not e.payload["matched"] for e in invoked))
+        self.assertEqual(cursor.focus.cell_id, session.cells[0].cell_id)
+
+    def test_parent_nav_payload_includes_level(self) -> None:
+        bus, session, cursor, router = self._build()
+        rec = _Recorder(bus)
+        cursor.focus_cell(session.cells[4].cell_id)  # H3
+        router.handle_key(Key.printable("}"))
+        invoked = [e for e in rec.types_of(EventType.ACTION_INVOKED)
+                   if e.payload["action"] == "next_parent_heading"]
+        self.assertEqual(invoked[-1].payload["level"], 2)
+
+    def test_parent_nav_ignored_in_input_mode(self) -> None:
+        _bus, session, cursor, router = self._build()
+        cursor.focus_cell(session.cells[3].cell_id)  # cmd
+        cursor.enter_input_mode()
+        router.handle_key(Key.printable("}"))
+        # `}` is printable in INPUT mode — falls through as text.
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertTrue(cursor.focus.input_buffer.endswith("}"))
+
+
 class HeadingMetaCommandTests(unittest.TestCase):
     """F61: `:heading <level> <title>` and `:toc`."""
 

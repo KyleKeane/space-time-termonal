@@ -184,6 +184,8 @@ def default_bindings() -> BindingMap:
             Key.special("down", Modifier.ALT): "move_cell_down",
             Key.printable("]"): "next_heading",
             Key.printable("["): "prev_heading",
+            Key.printable("}"): "next_parent_heading",
+            Key.printable("{"): "prev_parent_heading",
             Key.printable("1"): "next_heading_1",
             Key.printable("2"): "next_heading_2",
             Key.printable("3"): "next_heading_3",
@@ -326,6 +328,7 @@ HELP_LINES: tuple[str, ...] = (
     "NOTEBOOK:  Up/Down walk cells, Enter type, Ctrl+N new, Ctrl+O output, Ctrl+, settings.",
     "           d delete, y duplicate, Alt+Up/Down reorder.",
     "           ] / [ next / prev heading; 1..6 next heading of that level.",
+    "           } / { next / prev heading shallower than current scope (parent).",
     "INPUT:     Enter submits, Escape leaves without running.",
     "           Backspace/Delete cut, Left/Right walk, Home/End jump (or Ctrl+A/E).",
     "           Up/Down walk command history (Down past newest restores your draft).",
@@ -1333,6 +1336,8 @@ class InputRouter:
             "next_heading_4": self._next_heading_action(4),
             "next_heading_5": self._next_heading_action(5),
             "next_heading_6": self._next_heading_action(6),
+            "next_parent_heading": self._parent_heading_action(direction=+1),
+            "prev_parent_heading": self._parent_heading_action(direction=-1),
         }
 
     def _input_handlers(self) -> dict[str, ActionHandler]:
@@ -1465,6 +1470,21 @@ class InputRouter:
                 payload["level"] = level
             if cell is not None:
                 payload["cell_id"] = cell.cell_id
+            return payload
+        return handler
+
+    def _parent_heading_action(self, direction: int) -> ActionHandler:
+        """F27: `{` / `}` jump to the prev/next heading shallower than scope."""
+        def handler() -> Optional[dict[str, object]]:
+            if direction > 0:
+                cell = self._cursor.move_to_next_parent_heading()
+            else:
+                cell = self._cursor.move_to_previous_parent_heading()
+            payload: dict[str, object] = {"matched": cell is not None}
+            if cell is not None:
+                payload["cell_id"] = cell.cell_id
+                if cell.heading_level is not None:
+                    payload["level"] = cell.heading_level
             return payload
         return handler
 

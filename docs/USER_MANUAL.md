@@ -569,6 +569,7 @@ Every key you need, one table.
 | NOTEBOOK   | F2 / Ctrl+.       | Open actions menu                     |
 | NOTEBOOK   | `]` / `[`         | Next / previous heading (any level)   |
 | NOTEBOOK   | `1`..`6`          | Next heading of that level (F61)      |
+| NOTEBOOK   | `}` / `{`         | Next / prev parent-scope heading (F27)|
 | INPUT      | Enter             | Submit command                        |
 | INPUT      | Backspace         | Delete char before caret              |
 | INPUT      | Delete            | Delete char under caret               |

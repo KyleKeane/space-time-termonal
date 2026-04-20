@@ -674,6 +674,80 @@ class HeadingNavigationTests(unittest.TestCase):
             self.assertEqual(cell_id, self.session.cells[i].cell_id)
 
 
+class ParentScopeNavigationTests(unittest.TestCase):
+    """F27: move_to_{next,previous}_parent_heading jump to shallower scopes."""
+
+    def setUp(self) -> None:
+        self.bus = EventBus()
+        self.session = Session.new()
+        # Outline:
+        #   [0] H1 Intro
+        #   [1] cmd ls
+        #   [2] H2 Setup
+        #   [3] cmd install
+        #   [4] H3 Fixtures
+        #   [5] cmd make
+        #   [6] H2 Training
+        #   [7] cmd train
+        #   [8] H1 Runs
+        self.session.add_cell(Cell.new_heading(1, "Intro"))
+        self.session.add_cell(Cell.new("ls"))
+        self.session.add_cell(Cell.new_heading(2, "Setup"))
+        self.session.add_cell(Cell.new("install"))
+        self.session.add_cell(Cell.new_heading(3, "Fixtures"))
+        self.session.add_cell(Cell.new("make"))
+        self.session.add_cell(Cell.new_heading(2, "Training"))
+        self.session.add_cell(Cell.new("train"))
+        self.session.add_cell(Cell.new_heading(1, "Runs"))
+        self.cursor = NotebookCursor(self.session, self.bus)
+
+    def test_next_parent_from_h3_finds_next_shallower(self) -> None:
+        self.cursor.focus_cell(self.session.cells[4].cell_id)
+        landed = self.cursor.move_to_next_parent_heading()
+        assert landed is not None
+        self.assertEqual(landed.heading_title, "Training")
+
+    def test_prev_parent_from_h3_finds_preceding_shallower(self) -> None:
+        self.cursor.focus_cell(self.session.cells[4].cell_id)
+        landed = self.cursor.move_to_previous_parent_heading()
+        assert landed is not None
+        self.assertEqual(landed.heading_title, "Setup")
+
+    def test_next_parent_from_plain_cell_uses_enclosing_scope(self) -> None:
+        self.cursor.focus_cell(self.session.cells[3].cell_id)  # under Setup (H2)
+        landed = self.cursor.move_to_next_parent_heading()
+        assert landed is not None
+        self.assertEqual(landed.heading_title, "Runs")  # next H1
+
+    def test_next_parent_at_top_level_returns_none(self) -> None:
+        self.cursor.focus_cell(self.session.cells[0].cell_id)  # H1
+        before = self.cursor.focus.cell_id
+        self.assertIsNone(self.cursor.move_to_next_parent_heading())
+        self.assertEqual(self.cursor.focus.cell_id, before)
+
+    def test_prev_parent_at_top_level_returns_none(self) -> None:
+        self.cursor.focus_cell(self.session.cells[-1].cell_id)  # H1 Runs
+        before = self.cursor.focus.cell_id
+        self.assertIsNone(self.cursor.move_to_previous_parent_heading())
+        self.assertEqual(self.cursor.focus.cell_id, before)
+
+    def test_no_enclosing_scope_returns_none(self) -> None:
+        bus = EventBus()
+        session = Session.new()
+        session.add_cell(Cell.new("preamble"))
+        session.add_cell(Cell.new_heading(1, "First"))
+        cursor = NotebookCursor(session, bus)
+        cursor.focus_cell(session.cells[0].cell_id)
+        self.assertIsNone(cursor.move_to_next_parent_heading())
+        self.assertIsNone(cursor.move_to_previous_parent_heading())
+
+    def test_parent_nav_noop_outside_notebook_mode(self) -> None:
+        self.cursor.focus_cell(self.session.cells[3].cell_id)
+        self.cursor.enter_input_mode()
+        self.assertIsNone(self.cursor.move_to_next_parent_heading())
+        self.assertIsNone(self.cursor.move_to_previous_parent_heading())
+
+
 class HeadingCreationTests(unittest.TestCase):
     """new_heading_cell adds a landmark without entering INPUT mode."""
 
