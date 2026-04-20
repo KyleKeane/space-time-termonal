@@ -26,7 +26,7 @@ from typing import Optional
 from asat.cell import Cell, CellKind
 from asat.event_bus import EventBus, publish_event
 from asat.events import EventType
-from asat.outline import enclosing_heading_index, scope_range
+from asat.outline import enclosing_heading_index, scope_range, visible_indices
 from asat.session import Session, SessionError
 
 
@@ -285,6 +285,51 @@ class NotebookCursor:
                 return cand.heading_level
             j -= 1
         return None
+
+    def toggle_fold_focused_heading(self) -> Optional[bool]:
+        """Collapse / expand the focused heading (F27).
+
+        Legal only from NOTEBOOK mode on a heading cell. Returns the
+        new `collapsed` value (True = just folded, False = just
+        unfolded) or None if the focus is not a foldable heading.
+        Publishes `OUTLINE_FOLDED` or `OUTLINE_UNFOLDED` with the
+        heading's metadata and the count of hidden cells.
+        """
+        if self._state.mode != FocusMode.NOTEBOOK:
+            return None
+        cell_id = self._state.cell_id
+        if cell_id is None:
+            return None
+        cells = self._session.cells
+        try:
+            index = self._session.index_of(cell_id)
+        except ValueError:
+            return None
+        target = cells[index]
+        if target.kind is not CellKind.HEADING or target.heading_level is None:
+            return None
+        start, end = scope_range(cells, index)
+        # A heading with no body (unit span) has nothing to fold or
+        # unfold; skip the toggle so the state and events stay
+        # meaningful.
+        if end - start <= 1:
+            return None
+        target.collapsed = not target.collapsed
+        event_type = (
+            EventType.OUTLINE_FOLDED if target.collapsed else EventType.OUTLINE_UNFOLDED
+        )
+        publish_event(
+            self._bus,
+            event_type,
+            {
+                "cell_id": target.cell_id,
+                "heading_level": target.heading_level,
+                "heading_title": target.heading_title,
+                "cell_count": end - start - 1,
+            },
+            source="cursor",
+        )
+        return target.collapsed
 
     def select_heading_scope(self) -> Optional[list[Cell]]:
         """Return the cells that belong to the focused cell's heading scope (F27).
@@ -824,19 +869,35 @@ class NotebookCursor:
         self._history_pre_browse = ""
 
     def _move(self, delta: int) -> Optional[Cell]:
-        """Move the cursor by a signed offset within the cell list."""
+        """Move the cursor by a signed offset within the cell list.
+
+        Cells hidden by a collapsed heading (F27) are skipped — pressing
+        Up/Down from the collapsed heading lands on the next visible
+        cell, not on the children hidden inside the scope.
+        """
         if self._state.mode != FocusMode.NOTEBOOK:
             return None
-        if not self._session.cells:
+        cells = self._session.cells
+        if not cells:
             return None
         current_id = self._state.cell_id
         if current_id is None:
             return None
         current_index = self._session.index_of(current_id)
-        target_index = current_index + delta
-        if target_index < 0 or target_index >= len(self._session.cells):
+        visible = visible_indices(cells)
+        if current_index in visible:
+            pos = visible.index(current_index)
+        else:
+            # Focus is hidden inside a collapsed scope — snap to the
+            # enclosing heading, then apply the delta from there.
+            heading_idx = enclosing_heading_index(cells, current_index)
+            if heading_idx is None or heading_idx not in visible:
+                return None
+            pos = visible.index(heading_idx)
+        target_pos = pos + delta
+        if target_pos < 0 or target_pos >= len(visible):
             return None
-        return self.focus_cell(self._session.cells[target_index].cell_id)
+        return self.focus_cell(cells[visible[target_pos]].cell_id)
 
     def _commit_buffer_to_cell(self) -> Cell:
         """Write the current input buffer to the focused cell."""

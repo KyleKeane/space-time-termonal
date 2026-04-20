@@ -151,6 +151,8 @@ class EventType(str, Enum):
     OUTPUT_STREAM_BEAT = "output.stream.beat"
 
     FOCUS_CHANGED = "focus.changed"
+    OUTLINE_FOLDED = "outline.folded"
+    OUTLINE_UNFOLDED = "outline.unfolded"
     KEY_PRESSED = "input.key"
     ACTION_INVOKED = "input.action"
 

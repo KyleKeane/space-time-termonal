@@ -5,7 +5,7 @@ from __future__ import annotations
 import unittest
 
 from asat.cell import Cell
-from asat.outline import enclosing_heading_index, scope_range
+from asat.outline import enclosing_heading_index, scope_range, visible_indices
 
 
 def _outline() -> list[Cell]:
@@ -120,6 +120,46 @@ class EnclosingHeadingIndexTests(unittest.TestCase):
 
     def test_empty_cells_returns_none(self) -> None:
         self.assertIsNone(enclosing_heading_index([], 0))
+
+
+class VisibleIndicesTests(unittest.TestCase):
+    """visible_indices skips cells inside collapsed heading scopes."""
+
+    def test_uncollapsed_session_returns_every_index(self) -> None:
+        cells = _outline()
+        self.assertEqual(visible_indices(cells), list(range(len(cells))))
+
+    def test_collapsed_heading_hides_its_children(self) -> None:
+        cells = _outline()
+        cells[2].collapsed = True  # H2 Setup [2, 6)
+        # Indices 3, 4, 5 are hidden; the H2 itself stays visible.
+        self.assertEqual(visible_indices(cells), [0, 1, 2, 6, 7, 8, 9])
+
+    def test_collapsed_h1_absorbs_nested_headings(self) -> None:
+        cells = _outline()
+        cells[0].collapsed = True  # H1 Intro [0, 8)
+        # Only the collapsed H1, the trailing H1, and its body survive.
+        self.assertEqual(visible_indices(cells), [0, 8, 9])
+
+    def test_nested_collapses_yield_each_index_once(self) -> None:
+        cells = _outline()
+        cells[0].collapsed = True  # H1 Intro
+        cells[2].collapsed = True  # H2 Setup (nested inside H1)
+        # H2 is hidden by H1; only the H1 heading, the trailing H1,
+        # and its body are visible.
+        self.assertEqual(visible_indices(cells), [0, 8, 9])
+
+    def test_heading_without_body_does_not_hide_anything(self) -> None:
+        cells = [
+            Cell.new_heading(1, "A"),
+            Cell.new_heading(1, "B"),
+            Cell.new("x"),
+        ]
+        cells[0].collapsed = True  # span is [0, 1) — nothing to hide
+        self.assertEqual(visible_indices(cells), [0, 1, 2])
+
+    def test_empty_cells_returns_empty_list(self) -> None:
+        self.assertEqual(visible_indices([]), [])
 
 
 if __name__ == "__main__":  # pragma: no cover

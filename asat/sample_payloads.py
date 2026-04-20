@@ -203,6 +203,18 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "cell_id": "c1",
         "reason": "end",
     },
+    EventType.OUTLINE_FOLDED: {
+        "cell_id": "c1",
+        "heading_level": 2,
+        "heading_title": "Setup",
+        "cell_count": 4,
+    },
+    EventType.OUTLINE_UNFOLDED: {
+        "cell_id": "c1",
+        "heading_level": 2,
+        "heading_title": "Setup",
+        "cell_count": 4,
+    },
     EventType.ANSI_OSC_RECEIVED: {
         "cell_id": "c1",
         "body": "133;A",

@@ -433,6 +433,22 @@ every `interval_sec` seconds. Each tick publishes the usual
 | `OUTPUT_PLAYBACK_STARTED`   | `cell_id`, `interval_sec`         |
 | `OUTPUT_PLAYBACK_STOPPED`   | `cell_id`, `reason`               |
 
+## Outline fold / collapse
+
+Producer: `asat.notebook.NotebookCursor.toggle_fold_focused_heading`
+(`source="cursor"`). Pressing `z` on a heading flips its `collapsed`
+flag and publishes `OUTLINE_FOLDED` (now collapsed) or
+`OUTLINE_UNFOLDED` (now expanded). Cells whose nearest enclosing
+heading is collapsed are skipped by `move_up` / `move_down` — the
+heading itself stays visible so the user can toggle it back. The
+`cell_count` payload field is the number of hidden cells
+(`scope_range.end - scope_range.start - 1`).
+
+| EventType            | Payload keys                                                      |
+|----------------------|-------------------------------------------------------------------|
+| `OUTLINE_FOLDED`     | `cell_id`, `heading_level`, `heading_title`, `cell_count`         |
+| `OUTLINE_UNFOLDED`   | `cell_id`, `heading_level`, `heading_title`, `cell_count`         |
+
 ## Self-check
 
 Producer: `asat.self_check.run_self_check` (`source="self_check"`),

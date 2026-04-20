@@ -61,6 +61,31 @@ def scope_range(cells: Sequence[Cell], heading_index: int) -> tuple[int, int]:
     return heading_index, end
 
 
+def visible_indices(cells: Sequence[Cell]) -> list[int]:
+    """Return the indices of cells that are not hidden by a collapsed heading.
+
+    A collapsed heading (Cell with `kind is HEADING and collapsed is True`)
+    is itself visible, but every cell inside its scope is hidden until
+    the scope ends. Nested collapsed headings are absorbed by the outer
+    scope — `visible_indices` yields each visible index exactly once.
+    """
+    hide_until: int = 0
+    out: list[int] = []
+    for idx, cell in enumerate(cells):
+        if idx < hide_until:
+            continue
+        out.append(idx)
+        if (
+            cell.kind is CellKind.HEADING
+            and cell.collapsed
+            and cell.heading_level is not None
+        ):
+            _, end = scope_range(cells, idx)
+            if end > hide_until:
+                hide_until = end
+    return out
+
+
 def enclosing_heading_index(cells: Sequence[Cell], index: int) -> int | None:
     """Walk backward from `index` to find the scope's heading.
 
