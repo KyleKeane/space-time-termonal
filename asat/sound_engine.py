@@ -159,6 +159,26 @@ class SoundEngine:
         return self._bank
 
     @property
+    def tts(self) -> TTSEngine:
+        """Return the TTS engine the pipeline is currently rendering through.
+
+        Exposed so ``--check`` and the ``:tts`` meta-command can name
+        the live backend. Read-only — swap engines by constructing a
+        new ``SoundEngine`` or via ``set_tts`` (below).
+        """
+        return self._tts
+
+    def set_tts(self, tts: TTSEngine) -> None:
+        """Hot-swap the TTS engine live (``:tts use <id>``).
+
+        The new engine takes effect on the next ``AUDIO_SPOKEN``
+        render. Existing narration history is kept so
+        ``repeat_last_narration`` still works and will replay through
+        the *new* engine's voice.
+        """
+        self._tts = tts
+
+    @property
     def narration_history(self) -> tuple[NarrationHistoryEntry, ...]:
         """Return the ring buffer of recently-spoken phrases (oldest first)."""
         return tuple(self._history)
