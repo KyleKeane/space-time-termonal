@@ -7,10 +7,13 @@ and is bound to a spoken phrase or a spatialised tone. Keyboard
 only, standard library only, no mouse, no screen coordinates.
 
 > **Status.** Pre-1.0 (current `pyproject.toml` says `0.7.0`). The
-> Windows audio path, the notebook surface, and the POSIX shared-shell
-> backend are usable end-to-end; the POSIX live audio sink and cell
-> hierarchy are tracked as feature requests (see "What is not here
-> yet" below).
+> four MVP surfaces — live audio on Linux / macOS / Windows, an
+> on-screen outline pane, an interactive event-log viewer, and a
+> scripted first-run tour — are all usable end-to-end after the
+> 2026-04 MVP stabilization roadmap. Remaining gaps are catalogued in
+> [docs/FEATURE_REQUESTS.md](docs/FEATURE_REQUESTS.md); a hands-on
+> handoff snapshot of what's verified-by-tests vs. pending manual
+> smoke lives in [docs/HANDOFF.md](docs/HANDOFF.md).
 
 ## Who this is for
 
@@ -25,6 +28,30 @@ stdout that mirrors what the audio is saying.
 
 ## What ASAT actually delivers today
 
+- **Cross-platform live audio on launch.** A pluggable TTS registry
+  (`pyttsx3` preferred, `espeak-ng` / macOS `say` / Windows SAPI as
+  native fallbacks, tone generator as the deterministic floor)
+  combined with a POSIX live sink (`aplay` / `paplay` / `afplay`) +
+  the existing Windows `winsound` path means `python -m asat` speaks
+  on the first launch on Linux, macOS, and Windows. `:tts list` /
+  `:tts use <id>` / `:tts set <param> <value>` swap engines live.
+- **An on-screen outline pane.** The renderer subscribes to
+  `FOCUS_CHANGED` / `CELL_*` events and paints an indented tree of
+  heading cells with a `>` arrow on the focused cell. `]` / `[`
+  moves both the audio cursor and the visual marker. `--view
+  {trace,outline,both}` picks which panes show on a TTY.
+- **An interactive event-log viewer.** `Ctrl+E` opens a narrated
+  ring of the last 200 events; Up/Down walks entries, `Enter` jumps
+  to the binding's field in the SETTINGS editor, `e` quick-edits the
+  `say_template`, and `t` replays the event through the live
+  pipeline. Every event is also written to a grouped text log at
+  `<workspace>/.asat/log/events-YYYY-MM-DD.log` (or `--log-events
+  DIR`).
+- **A scripted first-run tour.** A five-beat tour seeds a
+  `H1 + H2 + command` demo notebook so the outline pane has
+  something to render, narrates the `Ctrl+E` keystroke, announces
+  the event-log file path, and lands in INPUT mode. `:welcome`
+  replays every beat without re-seeding.
 - A **session of editable cells**, each with its own command,
   captured stdout/stderr, and exit code; saved as JSON via
   `--session file.json` and resumable.
@@ -41,27 +68,29 @@ stdout that mirrors what the audio is saying.
 - **Four focus modes** — NOTEBOOK (walk cells), INPUT (type a
   command), OUTPUT (step line-by-line through one cell's captured
   output, with `/` search and `g` goto), SETTINGS (live editor for
-  every voice / sound / binding without restarting).
+  every voice / sound / binding without restarting), plus the
+  `EVENT_LOG` overlay introduced by the viewer.
 - A **live audio engine**: HRTF spatialisation on stdlib audio,
   three TTS voices, a per-event SoundBank you can edit and save.
 - An **F2 actions menu** for context-sensitive copy / navigate
   affordances.
 - **Meta-commands** (`:help`, `:state`, `:pwd`, `:save`, `:quit`,
-  `:welcome`, `:reset bank`, …) with case-insensitive matching and
-  did-you-mean hints on typos.
-- **First-run onboarding** that introduces the keystroke vocabulary
-  the first time you launch on a machine.
+  `:welcome`, `:reset bank`, `:tts …`, `:log`, …) with
+  case-insensitive matching and did-you-mean hints on typos.
 
 What is **not** here yet, with the docs grounding the gap:
 
-- No cell hierarchy / sections / folds —
-  [F61](docs/FEATURE_REQUESTS.md#f61--cell-hierarchy-sections-folds-and-grouping).
 - No PTY inside a cell, so `vim` / `less` / curses programs do not
   run inside one — see
   [docs/USER_MANUAL.md § What a cell is](docs/USER_MANUAL.md#what-a-cell-is-and-is-not-today).
-- No live POSIX speaker sink (Windows works today; POSIX renders
-  to WAV files) —
-  [F6](docs/FEATURE_REQUESTS.md#f6--live-speaker-audio-sink-posix).
+- No Ctrl+R reverse-incremental command-history search (Up / Down
+  recall ships today) — [F4](docs/FEATURE_REQUESTS.md#f4--command-history).
+- No settings-editor record create / delete — [F2](docs/FEATURE_REQUESTS.md#f2--settings-editor-create--delete-records).
+- No tab completion inside INPUT — [F23](docs/FEATURE_REQUESTS.md#f23--tab-completion).
+- Cross-platform smoke on the four new surfaces has only been run
+  inside the dev sandbox; see
+  [docs/HANDOFF.md](docs/HANDOFF.md) for the outstanding manual
+  checks before tagging 1.0.
 
 ## Install and run
 
@@ -77,31 +106,48 @@ python -m unittest discover -s tests -t .   # confirm the suite passes
 ### Launching a session
 
 ```
-python -m asat --live               # play audio on the speaker (Windows today)
-python -m asat --wav-dir /tmp/asat  # write each rendered buffer to WAV (any platform)
-python -m asat --live --wav-dir DIR # Windows: speaker + capture in one run
+python -m asat                      # live audio on any TTY platform (POSIX + Windows)
+python -m asat --wav-dir /tmp/asat  # also capture each rendered buffer to WAV
+python -m asat --no-live            # opt out of the live sink (MemorySink only)
+python -m asat --view trace         # suppress the outline pane (text trace only)
+python -m asat --view outline       # suppress the text trace (outline pane only)
 python -m asat --quiet              # suppress the text trace, audio only
-python -m asat --check              # run the four-step diagnostic self-test, exit
+python -m asat --check              # run the diagnostic self-test on every covered event, exit
 python -m asat --version            # print the version string and exit
 ```
 
-Bare `python -m asat` runs silently (audio goes to an in-memory
-sink) and prints a one-line stderr hint. **ASAT needs an
-interactive terminal** — if stdin is not a TTY the CLI exits with
-`[asat] cannot start: …` and returns code 2.
+Per-platform audio prerequisites (the CLI names the missing binary
+if none are found; the tone fallback keeps the pipeline moving):
+
+- **Linux:** `pip install pyttsx3` **or** `apt install espeak-ng`,
+  plus `alsa-utils` (for `aplay`) or `pulseaudio-utils` (for
+  `paplay`).
+- **macOS:** ships working out of the box — `say` is built-in and
+  `afplay` is on PATH.
+- **Windows:** ships working out of the box via SAPI + `winsound`;
+  `pip install pyttsx3` gives you extra voices.
+
+**ASAT needs an interactive terminal** — if stdin is not a TTY the
+CLI exits with `[asat] cannot start: …` and returns code 2.
 
 ### First five minutes
 
-1. Launch with `--live` (Windows) or `--wav-dir /tmp/asat` (POSIX).
-   You hear the session-start chime overhead and the trace prints
-   `[asat] session <id> ready. Type :help …`.
-2. Type `:help` + Enter any time for the cheat sheet (audio + text).
-3. Type a command (`echo hi`, `git status`, `python --version`),
-   press Enter. Submit cue, output narrated as it streams,
-   success or failure chord on exit.
-4. Press Escape → NOTEBOOK mode. Up/Down walks cells, Ctrl+O steps
-   through the focused cell's output, Ctrl+, opens the live
-   settings editor.
+1. Launch with bare `python -m asat`. You hear the session-start
+   chime overhead, then the scripted first-run tour: welcome →
+   three-cell demo notebook (a H1, a H2, and a pre-filled
+   `echo hello, ASAT` cell) → event-log preview → log-path
+   announcement → "press Enter to run, or colon h e l p for more".
+   The screen paints the outline pane with a `>` on the focused
+   cell.
+2. Press Enter to run the seeded command. You hear the submit cue,
+   the output narrated, and the success chord on exit.
+3. Press `Ctrl+E` to open the event log. Up / Down walks entries;
+   `Enter` jumps to the binding's field in SETTINGS; `e` quick-edits
+   the `say_template`; `t` replays the event with your new phrase.
+   `Escape` closes the viewer.
+4. Type `:help` + Enter any time for the full cheat sheet. Type
+   `:welcome` to replay the tour without re-seeding cells. Type
+   `:tts list` / `:tts use espeak-ng` to switch TTS engines live.
 5. Type `:quit` + Enter to exit.
 
 The full keystroke cheat sheet lives in
@@ -152,27 +198,36 @@ engine voices it.
 | `prompt_context.py`        | Publishes `PROMPT_REFRESH` so re-entering INPUT shows last exit + cwd.    |
 | `error_tail.py`            | Auto-narrates the last few stderr lines after a failed command.           |
 | `completion_alert.py`      | Watches focus + completion so off-focus completions still alert.          |
-| `onboarding.py`            | First-run welcome tour; sentinel under `ASAT_HOME`.                       |
+| `onboarding.py`            | First-run welcome tour coordinator; sentinel under `ASAT_HOME`; scripted PR 4 beats (tour step, event-log preview, log path, completed). |
 | `event_bus.py`             | Synchronous typed event bus; wildcard subscription.                       |
 | `events.py`                | `EventType` enum + `Event` dataclass; the contract every module uses.     |
 | `jsonl_logger.py`          | `--log` writer: one JSON line per event for diagnostics / replay.         |
-| `terminal.py`              | The text trace renderer (`[asat] …`, `[input #…]`, `$ command`, …).       |
+| `event_log.py`             | `EventLogViewer`: bounded ring, Ctrl+E overlay, quick-edit + replay.      |
+| `event_log_file.py`        | Grouped daily text log under `<workspace>/.asat/log/events-YYYY-MM-DD.log`. |
+| `terminal.py`              | Text trace + outline-pane renderer (ANSI-clear redraw on TTY, append-only when piped). |
+| `outline.py`               | Pure `render_outline(cells, focus_cell_id, max_width)`; scope + enclosing-heading helpers. |
 | `audio.py`                 | Core audio data types (AudioBuffer, sample-rate constants).               |
-| `audio_sink.py`            | Sinks: `MemorySink`, `WinMMSink` (Windows), `WavDirSink` (any platform).  |
+| `audio_sink.py`            | Sinks: `MemorySink`, `WavFileSink`, `WindowsLiveAudioSink`, `PosixLiveAudioSink` (aplay / paplay / afplay), `pick_live_sink()`. |
 | `sound_engine.py`          | Subscribes to events, renders cues + narrations, hands buffers to a sink. |
 | `sound_bank.py`            | The bank model: `Voice`, `SoundRecipe`, `EventBinding` records.           |
 | `sound_bank_schema.json`   | JSON schema for an on-disk bank file.                                     |
 | `sound_generators.py`      | Sine / chord / noise generators consumed by `SoundRecipe.kind`.           |
-| `default_bank.py`          | The shipped bank — every default cue, voice, and binding.                 |
-| `tts.py`                   | TTS adapters (`pyttsx3` on Windows, `espeak` fallback elsewhere).         |
+| `default_bank.py`          | The shipped bank — every default cue, voice, and binding; `COVERED_EVENT_TYPES` enumerates every event that must have a sample payload. |
+| `sample_payloads.py`       | Canonical one-per-event-type reference payloads; the source the coverage test and `--check` both consume. |
+| `self_check.py`            | Diagnostic self-test behind `--check` — replays every `COVERED_EVENT_TYPE` through the live engine + sink. |
+| `tts.py`                   | `TTSEngine` Protocol + adapters: `Pyttsx3Engine`, `EspeakNgEngine`, `SystemSayEngine`, `ToneTTSEngine`. |
+| `tts_registry.py`          | Registry of TTS adapters with availability probes; `select_default()` walks the priority list. |
 | `hrtf.py`                  | HRTF spatialiser; numpy-accelerated when available.                       |
-| `settings_controller.py`   | Mode-aware controller orchestrating the editor + the audio bank.          |
-| `settings_editor.py`       | The pure editor: cursor over sections / records / fields, undo/redo.     |
+| `settings_controller.py`   | Mode-aware controller orchestrating the editor + the audio bank; `open_at_binding(binding_id)` used by the event-log viewer. |
+| `settings_editor.py`       | The pure editor: cursor over sections / records / fields, undo/redo, `/` search, reset scopes. |
 | `help_topics.py`           | The `:help <topic>` registry consumed by the input router.                |
 | `ansi.py`                  | ANSI escape parser used by the screen + TUI detector.                     |
 | `screen.py`                | `VirtualScreen`: applies ANSI tokens to a 2D grid for menu detection.    |
 | `interactive.py`           | TUI menu detection over the virtual screen.                               |
 | `tui_bridge.py`            | Glue: streams a child program's bytes through ansi + screen + detector.  |
+| `output_playback.py`       | Continuous line-by-line playback of a cell's captured output.             |
+| `streaming_monitor.py`     | Gap + beat detection on live output streams.                              |
+| `workspace.py`             | Workspace discovery (`.asat/`), multi-notebook layout, `:workspace` meta-commands. |
 | `common.py`                | Tiny shared utilities (id generation, UTC clock).                         |
 
 ### `docs/` — documentation
@@ -182,11 +237,13 @@ engine voices it.
 | `USER_MANUAL.md`           | Keystrokes, modes, meta-commands, troubleshooting. Start here as a user.  |
 | `CHEAT_SHEET.md`           | Single-page reference: every binding, meta-command, and audio cue.        |
 | `SMOKE_TEST.md`            | Hands-on, keystroke-by-keystroke walkthrough with expected narrations.   |
-| `ARCHITECTURE.md`          | Module map, focus model, execution path. Read first as a contributor.     |
+| `ARCHITECTURE.md`          | Module map, focus model, execution path, sync gates, predicate DSL. Read first as a contributor. |
 | `DEVELOPER_GUIDE.md`       | Guiding principles, simplicity checklist, the PR recipe.                  |
-| `FEATURE_REQUESTS.md`      | Open gaps (F1 … F61) with code-and-doc pointers; the active roadmap.      |
+| `HANDOFF.md`               | MVP verification snapshot: per-surface status, what's test-covered vs. pending manual smoke. Read first if you're picking up the project in a fresh chat. |
+| `FEATURE_REQUESTS.md`      | Open gaps (F1 … F64) with code-and-doc pointers; the active roadmap.      |
 | `EVENTS.md`                | Every event type and its payload (kept in sync by a test).                |
-| `AUDIO.md`                 | Voices, recipes, bindings, HRTF, the spatialiser.                         |
+| `AUDIO.md`                 | Voices, recipes, bindings, HRTF, the spatialiser, TTS registry.           |
+| `BINDINGS.md`              | Auto-generated binding reference — regenerate via `python -m asat.tools.render_bindings_doc`. |
 | `CLAUDE_CODE_MODES.md`     | Sonification targets for the Claude Code TUI running inside ASAT.         |
 
 ### `tests/` — test suite
@@ -197,8 +254,14 @@ Two cross-cutting suites:
 - `tests/test_smoke_scenarios.py` — end-to-end keyboard-and-event
   scenarios mirroring the acts in `docs/SMOKE_TEST.md`.
 - `tests/test_user_manual_sync.py`, `tests/test_events_docs_sync.py`,
-  `tests/test_default_bank_orphans.py` — guards that fail when the
-  docs drift from the code.
+  `tests/test_default_bank_orphans.py`,
+  `tests/test_bindings_introspection.py` (section `BindingsDocInSyncTests`),
+  `tests/test_default_bank.py` (class `CoverageTests` — every
+  `COVERED_EVENT_TYPE` must have a `SAMPLE_PAYLOADS` entry) — guards
+  that fail when the docs drift from the code. See
+  [docs/ARCHITECTURE.md § Sync gates](docs/ARCHITECTURE.md#sync-gates)
+  for the full list and how to satisfy each one when adding a new
+  event type or binding.
 
 Run the whole suite with `python -m unittest discover -s tests -t .`.
 

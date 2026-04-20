@@ -40,12 +40,15 @@ it; the event bus is the sole backchannel.
            |  Entry point                |
            |  __main__.py  app.py        |
            |  keyboard.py  terminal.py   |
+           |  outline.py  self_check.py  |
            +---------------+-------------+
                            |
            +---------------v-------------+
            |  Presentation               |
            |  settings_controller.py     |
            |  settings_editor.py         |
+           |  event_log.py               |
+           |  onboarding.py              |
            +---------------+-------------+
                            |
            +---------------v-------------+
@@ -54,8 +57,10 @@ it; the event bus is the sole backchannel.
            |  sound_generators.py        |
            |  sound_bank.py              |
            |  default_bank.py            |
+           |  sample_payloads.py         |
            |  audio.py  audio_sink.py    |
-           |  tts.py  hrtf.py            |
+           |  tts.py  tts_registry.py    |
+           |  hrtf.py                    |
            +---------------+-------------+
                            |
            +---------------v-------------+
@@ -63,6 +68,7 @@ it; the event bus is the sole backchannel.
            |  input_router.py            |
            |  notebook.py  actions.py    |
            |  output_cursor.py           |
+           |  output_playback.py         |
            +---------------+-------------+
                            |
            +---------------v-------------+
@@ -76,13 +82,18 @@ it; the event bus is the sole backchannel.
            |  Execution kernel           |
            |  kernel.py  runner.py       |
            |  execution.py               |
+           |  execution_worker.py        |
+           |  shell_backend.py           |
+           |  streaming_monitor.py       |
            +---------------+-------------+
                            |
            +---------------v-------------+
            |  Data + bus (foundation)    |
            |  cell.py  session.py        |
            |  events.py  event_bus.py    |
+           |  event_log_file.py          |
            |  output_buffer.py           |
+           |  workspace.py               |
            |  common.py  keys.py         |
            +-----------------------------+
 ```
@@ -167,6 +178,83 @@ baseline, and `SettingsEditor` plus `SettingsController` let users
 reshape the bank live from the keyboard without restarting. See
 [AUDIO.md](AUDIO.md) for the full reference.
 
+The TTS engine is pluggable via `TTSEngineRegistry` in
+`asat/tts_registry.py`. The default priority is `pyttsx3` →
+`espeak-ng` → macOS `say` → Windows SAPI → the deterministic tone
+fallback. `:tts list` / `:tts use <id>` / `:tts set <param> <value>`
+swap engines and parameters live without restarting.
+
+## MVP surfaces (2026-04 roadmap)
+
+The four user-observable surfaces promised by the 2026-04 MVP
+stabilization roadmap are wired as follows — each one is one
+direction of a dependency edge in the diagram above.
+
+- **Live audio on launch.** `audio_sink.pick_live_sink()` returns
+  `WindowsLiveAudioSink` on Windows and `PosixLiveAudioSink` (pipes
+  WAV to `aplay` / `paplay` / `afplay`) on POSIX; `tts_registry.
+  select_default()` picks the first installed TTS adapter. `--live`
+  is the default on a TTY; `--no-live` opts out.
+- **On-screen outline pane.** `outline.render_outline()` is pure and
+  unit-tested; `terminal.TerminalRenderer` subscribes to
+  `FOCUS_CHANGED` / `CELL_*` / outline-fold events and repaints the
+  pane (ANSI-clear redraw on TTY, append-only trace when piped).
+  `--view {trace,outline,both}` picks panes.
+- **Interactive event log.** `event_log.EventLogViewer` holds a
+  bounded ring (200 entries) of wildcard-subscribed events,
+  re-narrates them on navigation, and dispatches the `e` / `t` /
+  `Enter` quick-edit / replay / jump-to-binding actions.
+  `event_log_file.EventLogFile` is a separate wildcard subscriber
+  that writes the grouped daily text log.
+- **Scripted first-run tour.** `onboarding.OnboardingCoordinator`
+  owns the five published beats; `app.Application.build` seeds the
+  three-cell demo notebook on first run and calls `_run_scripted_
+  tour(replay=False)`. `:welcome` invokes `_replay_welcome`, which
+  re-runs the tour with `replay=True` and does **not** re-seed cells.
+
+## Sync gates
+
+Several test guards fail when code and docs drift. Each new event
+type, binding, or user-visible surface must satisfy every gate that
+applies:
+
+| Gate                                                | What it checks                                                                                                        | How to satisfy when adding a new event type                                                                                   |
+|-----------------------------------------------------|-----------------------------------------------------------------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| `tests/test_events_docs_sync.py`                    | Every `EventType` member is mentioned in `docs/EVENTS.md`.                                                            | Add a row + prose under the appropriate category in `docs/EVENTS.md`.                                                         |
+| `tests/test_default_bank.py::CoverageTests`         | Every `COVERED_EVENT_TYPES` member has a reference payload in `asat/sample_payloads.py` and renders cleanly.          | Add an entry to `SAMPLE_PAYLOADS` keyed by the new `EventType`; add a binding to `default_bank.py` and list it in `COVERED_EVENT_TYPES`. |
+| `tests/test_user_manual_sync.py`                    | Keystrokes, meta-commands, and focus-mode bindings referenced in `docs/USER_MANUAL.md` match the code.                | Update the relevant table in `USER_MANUAL.md` when you change a binding.                                                      |
+| `tests/test_bindings_introspection.py::BindingsDocInSyncTests` | `docs/BINDINGS.md` matches the output of `python -m asat.tools.render_bindings_doc`.                                   | Regenerate: `python -m asat.tools.render_bindings_doc > docs/BINDINGS.md`.                                                     |
+| `tests/test_default_bank_orphans.py`                | No `EventBinding.event_type` references an `EventType` no producer emits.                                             | Wire a publisher (or delete the orphan binding).                                                                              |
+
+`asat/self_check.py` — invoked by `python -m asat --check` — replays
+one `SAMPLE_PAYLOADS` entry per `COVERED_EVENT_TYPES` member through
+the live engine and sink, so a fresh install can prove end-to-end
+that audio works before the user hits the keyboard.
+
+## Predicate DSL
+
+`EventBinding.predicate` (see `asat/sound_engine.py`,
+`DefaultPredicateEvaluator`) is a deliberately tiny string language,
+not Python. The grammar is **strictly** `key op literal`, one
+clause, no attribute access:
+
+- `key` is a top-level payload key (e.g. `exit_code`, `path`, `kind`).
+- `op` is one of `==`, `!=`, `in` (the `in` operator takes a
+  comma-separated list literal).
+- `literal` is a string (single or double quoted), a bare integer,
+  a bare float, `true` / `false`, or an unquoted token compared as a
+  string.
+
+Examples: `exit_code != 0`, `kind == 'heading'`, `path != ''`,
+`category in 'prompt_start,prompt_end'`.
+
+Things the DSL does **not** support: nested attribute access
+(`payload.path`), logical operators (`and` / `or` / `not`), numeric
+comparisons other than equality, function calls, or arbitrary Python
+expressions. Gating on a non-empty string is the `path != ''` idiom
+shown above; gating on presence of a key is not expressible — give
+the payload a well-known empty default instead.
+
 ## Testing
 
 Every module ships a matching `tests/test_<module>.py` built on
@@ -218,18 +306,25 @@ Three supporting modules round the entry point out:
   audio pipeline is the primary UI; the renderer exists so sighted
   viewers and anyone debugging have a readable mirror of the event
   stream. `--quiet` switches it off.
-* `asat/audio_sink.py::WindowsLiveAudioSink` — the first sink that
-  produces actual audio on real speakers, via `winsound.PlaySound`
-  with `SND_MEMORY | SND_ASYNC`. Selected by `--live`.
-  `pick_live_sink()` is the one place the CLI asks "what live backend
-  does this host offer?"; POSIX raises `LiveAudioUnavailable` today
-  (tracked as FEATURE_REQUESTS.md F6).
+* `asat/audio_sink.py` — `pick_live_sink()` returns
+  `WindowsLiveAudioSink` on Windows (`winsound.PlaySound` with
+  `SND_MEMORY | SND_ASYNC`) and `PosixLiveAudioSink` on Linux /
+  macOS (pipes WAV blobs to `aplay` / `paplay` / `afplay`). The CLI
+  uses the live sink by default on a TTY; `--no-live` opts out,
+  `--wav-dir DIR` captures every rendered buffer in parallel.
+  `LiveAudioUnavailable` now surfaces only when no player binary is
+  installed on POSIX, and the guard message names the binaries to
+  install.
 * `asat/app.py::Application.build` publishes `SESSION_CREATED` after
   the SoundEngine has subscribed so the startup chime actually plays
   through the sink, and emits `SESSION_LOADED` / `SESSION_SAVED` at
   the matching boundaries.
 
 Open feature requests for the next generation live in
-[FEATURE_REQUESTS.md](FEATURE_REQUESTS.md); the short version is
-Windows-native TTS, live-speaker sinks, settings-editor record
-creation, and command history.
+[FEATURE_REQUESTS.md](FEATURE_REQUESTS.md); as of the 2026-04 MVP
+stabilization roadmap the remaining gaps are settings-editor record
+create / delete (F2), Ctrl+R reverse-incremental command-history
+search (F4 deferred leg), tab completion (F23), and the polish
+items in F49's code-quality backlog. Hands-on cross-platform smoke
+of the four new MVP surfaces is still pending and lives in
+[HANDOFF.md](HANDOFF.md).
