@@ -181,6 +181,7 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
     EventType.BOOKMARK_CREATED: {"name": "setup", "cell_id": "c1"},
     EventType.BOOKMARK_JUMPED: {"name": "setup", "cell_id": "c1"},
     EventType.BOOKMARK_REMOVED: {"name": "setup", "cell_id": "c1"},
+    EventType.VERBOSITY_CHANGED: {"level": "normal", "previous": "verbose"},
     EventType.ANSI_OSC_RECEIVED: {
         "cell_id": "c1",
         "body": "133;A",

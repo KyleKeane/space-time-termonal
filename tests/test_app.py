@@ -402,6 +402,51 @@ class ApplicationMetaCommandTests(unittest.TestCase):
         app.handle_key(kc.ENTER)
         self.assertTrue(app.running)
 
+    def test_verbosity_meta_command_swaps_bank_level(self) -> None:
+        """F31: `:verbosity minimal` drops the bank ceiling and publishes
+        VERBOSITY_CHANGED so the default-bank binding can narrate the new
+        preset."""
+        app = Application.build()
+        events: list[dict] = []
+        app.bus.subscribe(
+            EventType.VERBOSITY_CHANGED,
+            lambda event: events.append(dict(event.payload)),
+        )
+        _type(app, ":verbosity minimal")
+        app.handle_key(kc.ENTER)
+        self.assertEqual(app.sound_engine.bank.verbosity_level, "minimal")
+        self.assertEqual(events, [{"level": "minimal", "previous": "normal"}])
+
+    def test_verbosity_meta_command_rejects_unknown_level(self) -> None:
+        """F31: an unknown level surfaces a HELP_REQUESTED hint rather
+        than crashing or silently swallowing the submission."""
+        app = Application.build()
+        helps: list[dict] = []
+        app.bus.subscribe(
+            EventType.HELP_REQUESTED,
+            lambda event: helps.append(dict(event.payload)),
+        )
+        _type(app, ":verbosity whisper")
+        app.handle_key(kc.ENTER)
+        self.assertEqual(app.sound_engine.bank.verbosity_level, "normal")
+        self.assertTrue(any("whisper" in " ".join(h["lines"]) for h in helps))
+
+    def test_verbosity_meta_command_without_argument_lists_levels(self) -> None:
+        """F31: a bare `:verbosity` narrates the allowed values and the
+        current setting so the user can discover the options."""
+        app = Application.build()
+        helps: list[dict] = []
+        app.bus.subscribe(
+            EventType.HELP_REQUESTED,
+            lambda event: helps.append(dict(event.payload)),
+        )
+        _type(app, ":verbosity")
+        app.handle_key(kc.ENTER)
+        self.assertEqual(app.sound_engine.bank.verbosity_level, "normal")
+        text = "\n".join(line for h in helps for line in h["lines"])
+        self.assertIn("minimal", text)
+        self.assertIn("verbose", text)
+
 
 class ApplicationRepeatNarrationTests(unittest.TestCase):
     """F30: `:repeat` and Ctrl+R replay the last narration."""

@@ -378,6 +378,17 @@ prune; the router publishes the event when the user invoked
 | `BOOKMARK_JUMPED`   | `name`, `cell_id`                                |
 | `BOOKMARK_REMOVED`  | `name`, `cell_id`                                |
 
+## Narration verbosity
+
+Producer: `asat.sound_engine.SoundEngine` (`source="sound_engine"`),
+fired when `set_verbosity_level` swaps the bank's F31 narration
+ceiling to a different level. `level` is the new ceiling
+(`minimal` / `normal` / `verbose`); `previous` is the prior ceiling.
+
+| EventType             | Payload keys          |
+|-----------------------|-----------------------|
+| `VERBOSITY_CHANGED`   | `level`, `previous`   |
+
 ## Self-check
 
 Producer: `asat.self_check.run_self_check` (`source="self_check"`),

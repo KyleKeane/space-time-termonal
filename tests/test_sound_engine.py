@@ -820,5 +820,83 @@ class SoundEngineDuckingTests(unittest.TestCase):
         self.assertEqual(peak_solo, self._peak(sink2))
 
 
+class SoundEngineVerbosityTests(unittest.TestCase):
+    """F31 — bank-level verbosity ceiling filters bindings at dispatch."""
+
+    def _tiered_bank(self, level: str) -> SoundBank:
+        return SoundBank(
+            voices=(_voice(),),
+            sounds=(_tone(),),
+            bindings=(
+                EventBinding(
+                    id="critical",
+                    event_type=EventType.CELL_CREATED.value,
+                    voice_id="narrator",
+                    sound_id="ding",
+                    say_template="boom",
+                    verbosity="minimal",
+                ),
+                EventBinding(
+                    id="chatty",
+                    event_type=EventType.CELL_CREATED.value,
+                    voice_id="narrator",
+                    sound_id="ding",
+                    say_template="details",
+                    verbosity="verbose",
+                ),
+            ),
+            verbosity_level=level,
+        )
+
+    def _spoken_binding_ids(self, bus: EventBus, sink: MemorySink) -> list[str]:
+        recorded: list[str] = []
+        bus.subscribe(
+            EventType.AUDIO_SPOKEN,
+            lambda event: recorded.append(str(event.payload.get("binding_id"))),
+        )
+        publish_event(bus, EventType.CELL_CREATED, {}, source="notebook")
+        return recorded
+
+    def test_minimal_level_silences_verbose_bindings(self) -> None:
+        bus, sink = EventBus(), MemorySink()
+        engine = SoundEngine(bus, self._tiered_bank("minimal"), sink, sample_rate=8000)
+        self.addCleanup(engine.close)
+        fired = self._spoken_binding_ids(bus, sink)
+        self.assertEqual(fired, ["critical"])
+
+    def test_verbose_level_plays_every_tier(self) -> None:
+        bus, sink = EventBus(), MemorySink()
+        engine = SoundEngine(bus, self._tiered_bank("verbose"), sink, sample_rate=8000)
+        self.addCleanup(engine.close)
+        fired = sorted(self._spoken_binding_ids(bus, sink))
+        self.assertEqual(fired, ["chatty", "critical"])
+
+    def test_set_verbosity_level_swaps_bank_and_publishes_event(self) -> None:
+        bus, sink = EventBus(), MemorySink()
+        engine = SoundEngine(bus, self._tiered_bank("verbose"), sink, sample_rate=8000)
+        self.addCleanup(engine.close)
+        observed: list[dict] = []
+        bus.subscribe(
+            EventType.VERBOSITY_CHANGED,
+            lambda event: observed.append(dict(event.payload)),
+        )
+        engine.set_verbosity_level("minimal")
+        self.assertEqual(engine.bank.verbosity_level, "minimal")
+        self.assertEqual(observed, [{"level": "minimal", "previous": "verbose"}])
+
+        # Re-setting to the current level is a no-op and publishes nothing.
+        engine.set_verbosity_level("minimal")
+        self.assertEqual(len(observed), 1)
+
+    def test_set_verbosity_level_rejects_unknown(self) -> None:
+        from asat.sound_bank import SoundBankError
+
+        bus, sink = EventBus(), MemorySink()
+        engine = SoundEngine(bus, self._tiered_bank("normal"), sink, sample_rate=8000)
+        self.addCleanup(engine.close)
+        with self.assertRaises(SoundBankError):
+            engine.set_verbosity_level("whisper")
+
+
 if __name__ == "__main__":
     unittest.main()

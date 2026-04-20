@@ -435,6 +435,8 @@ class Application:
                 self._announce_notebook_list()
             elif meta == "new-notebook":
                 self._create_notebook(str(payload.get("meta_argument", "")))
+            elif meta == "verbosity":
+                self._set_verbosity(str(payload.get("meta_argument", "")))
 
     def _cancel_running_command(self) -> None:
         """`cancel_command` (Ctrl+C in INPUT mode) — F1.
@@ -612,3 +614,39 @@ class Application:
             },
             source="app",
         )
+
+    def _set_verbosity(self, argument: str) -> None:
+        """`:verbosity <level>` — swap the bank's F31 narration ceiling.
+
+        Malformed arguments emit HELP_REQUESTED listing the allowed
+        levels instead of crashing; the engine itself publishes
+        VERBOSITY_CHANGED when the swap takes effect so the user
+        hears the new preset through the default-bank binding.
+        """
+        from asat.sound_bank import SoundBankError, VERBOSITY_LEVELS
+
+        level = argument.strip().lower()
+        if not level:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {
+                    "lines": [
+                        "`:verbosity <level>` — level is one of "
+                        + ", ".join(VERBOSITY_LEVELS)
+                        + ".",
+                        f"Currently: {self.sound_engine.bank.verbosity_level}.",
+                    ],
+                },
+                source="app",
+            )
+            return
+        try:
+            self.sound_engine.set_verbosity_level(level)
+        except SoundBankError as exc:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": [str(exc)]},
+                source="app",
+            )

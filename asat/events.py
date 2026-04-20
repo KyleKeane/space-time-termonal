@@ -187,6 +187,8 @@ class EventType(str, Enum):
 
     SELF_CHECK_STEP = "self_check.step"
 
+    VERBOSITY_CHANGED = "verbosity.changed"
+
 
 @dataclass(frozen=True)
 class Event:

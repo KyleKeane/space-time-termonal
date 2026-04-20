@@ -297,6 +297,7 @@ discarded and the cell is not modified.
 | `:unbookmark <name>` | Remove a previously registered bookmark (F35). |
 | `:bookmarks` | Narrate every bookmark and the cell index it points at (F35). |
 | `:jump <name>` | Move focus to the cell registered under `<name>` (F35). Leaves you in NOTEBOOK mode at the target cell. |
+| `:verbosity <level>` | Set the bank-wide narration ceiling to `minimal`, `normal`, or `verbose` (F31). Chattier tiers are silenced when the level drops. Plain `:verbosity` narrates the allowed values and the current setting. |
 
 Meta-command names are **case-insensitive** — `:HELP`, `:Help`, and
 `:help` all do the same thing. A single trailing argument is

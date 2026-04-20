@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from asat.events import EventType
 from asat.sound_bank import (
     EventBinding,
     SCHEMA_VERSION,
@@ -345,6 +346,130 @@ class DuckingFieldTests(unittest.TestCase):
     def test_duck_level_non_numeric_raises(self) -> None:
         with self.assertRaises(SoundBankError):
             SoundBank.from_dict({"version": SCHEMA_VERSION, "duck_level": "loud"})
+
+
+class VerbosityFieldTests(unittest.TestCase):
+    """F31 — verbosity tier on bindings + bank-wide ceiling."""
+
+    def _bank_with_tiered_bindings(self, bank_level: str) -> SoundBank:
+        voice = Voice(id="v")
+        return SoundBank(
+            voices=(voice,),
+            bindings=(
+                EventBinding(
+                    id="critical",
+                    event_type=EventType.COMMAND_FAILED.value,
+                    voice_id="v",
+                    say_template="boom",
+                    verbosity="minimal",
+                ),
+                EventBinding(
+                    id="chatty",
+                    event_type=EventType.COMMAND_FAILED.value,
+                    voice_id="v",
+                    say_template="details",
+                    verbosity="verbose",
+                ),
+            ),
+            verbosity_level=bank_level,
+        )
+
+    def test_defaults_match_spec(self) -> None:
+        bank = SoundBank()
+        self.assertEqual(bank.verbosity_level, "normal")
+        self.assertEqual(
+            EventBinding(id="b", event_type="x", say_template="t").verbosity,
+            "normal",
+        )
+
+    def test_round_trip_preserves_non_default_values(self) -> None:
+        bank = SoundBank(
+            voices=(Voice(id="v"),),
+            bindings=(
+                EventBinding(
+                    id="b",
+                    event_type=EventType.COMMAND_FAILED.value,
+                    voice_id="v",
+                    say_template="hi",
+                    verbosity="verbose",
+                ),
+            ),
+            verbosity_level="minimal",
+        )
+        restored = SoundBank.from_dict(bank.to_dict())
+        self.assertEqual(restored.verbosity_level, "minimal")
+        self.assertEqual(restored.bindings[0].verbosity, "verbose")
+
+    def test_loader_supplies_defaults_when_fields_missing(self) -> None:
+        legacy = {
+            "version": SCHEMA_VERSION,
+            "voices": [{"id": "v"}],
+            "bindings": [
+                {
+                    "id": "b",
+                    "event_type": EventType.COMMAND_FAILED.value,
+                    "voice_id": "v",
+                    "say_template": "hi",
+                }
+            ],
+        }
+        bank = SoundBank.from_dict(legacy)
+        self.assertEqual(bank.verbosity_level, "normal")
+        self.assertEqual(bank.bindings[0].verbosity, "normal")
+
+    def test_unknown_verbosity_level_raises(self) -> None:
+        with self.assertRaises(SoundBankError):
+            SoundBank.from_dict({"version": SCHEMA_VERSION, "verbosity_level": "whisper"})
+
+    def test_unknown_binding_verbosity_raises(self) -> None:
+        with self.assertRaises(SoundBankError):
+            SoundBank.from_dict(
+                {
+                    "version": SCHEMA_VERSION,
+                    "bindings": [
+                        {
+                            "id": "b",
+                            "event_type": EventType.COMMAND_FAILED.value,
+                            "say_template": "hi",
+                            "verbosity": "whisper",
+                        }
+                    ],
+                }
+            )
+
+    def test_bindings_for_filters_by_verbosity(self) -> None:
+        bank = self._bank_with_tiered_bindings("minimal")
+        ids = [b.id for b in bank.bindings_for(EventType.COMMAND_FAILED.value)]
+        self.assertEqual(ids, ["critical"])
+
+        bank = self._bank_with_tiered_bindings("normal")
+        ids = [b.id for b in bank.bindings_for(EventType.COMMAND_FAILED.value)]
+        self.assertEqual(ids, ["critical"])
+
+        bank = self._bank_with_tiered_bindings("verbose")
+        ids = sorted(b.id for b in bank.bindings_for(EventType.COMMAND_FAILED.value))
+        self.assertEqual(ids, ["chatty", "critical"])
+
+    def test_editor_view_ignores_verbosity_filter(self) -> None:
+        bank = self._bank_with_tiered_bindings("minimal")
+        ids = sorted(
+            b.id
+            for b in bank.bindings_for(
+                EventType.COMMAND_FAILED.value,
+                respect_verbosity=False,
+            )
+        )
+        self.assertEqual(ids, ["chatty", "critical"])
+
+    def test_with_verbosity_level_returns_updated_copy(self) -> None:
+        bank = SoundBank()
+        changed = bank.with_verbosity_level("verbose")
+        self.assertEqual(changed.verbosity_level, "verbose")
+        self.assertEqual(bank.verbosity_level, "normal")
+
+    def test_with_verbosity_level_rejects_unknown(self) -> None:
+        with self.assertRaises(SoundBankError):
+            SoundBank().with_verbosity_level("whisper")
 
 
 if __name__ == "__main__":

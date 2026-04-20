@@ -961,10 +961,23 @@ is left as F30b for a future sweep.
 
 ## F31 — Narration verbosity presets
 
-**Gap.** Some users want bare-minimum narration (errors + exit codes
-only), others want chatty feedback on every keystroke. Today, the
-only way to quiet a class of events is to manually disable bindings
-one-by-one in the settings editor.
+**Status: Shipped.** `EventBinding` carries `verbosity`
+(`minimal` / `normal` / `verbose`, default `normal`) and `SoundBank`
+carries a matching `verbosity_level` ceiling. `bindings_for` now
+filters by verbosity by default so the engine only sees the bindings
+the current preset allows; the editor passes `respect_verbosity=False`
+to keep surfacing every record. `:verbosity <level>` calls
+`SoundEngine.set_verbosity_level`, which swaps the bank and publishes
+`VERBOSITY_CHANGED` — the default bank binds that event at the
+`minimal` tier so the user always hears the new preset, even when
+they just dropped to `minimal`. Round-trips through JSON and the
+schema documents both fields. `Ctrl+M` cycling inside SETTINGS and a
+settings-editor row for the ceiling remain as follow-ups.
+
+**Gap (at time of shipping).** Some users want bare-minimum narration
+(errors + exit codes only), others want chatty feedback on every
+keystroke. Today, the only way to quiet a class of events is to
+manually disable bindings one-by-one in the settings editor.
 
 **Where it surfaces.** A user running a 10-minute build doesn't need
 per-line narration but does want the failure cue; today they have

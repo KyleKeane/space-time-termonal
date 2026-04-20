@@ -37,6 +37,12 @@
       "maximum": 1.0,
       "default": 0.4,
       "description": "F32: gain multiplier applied to a concurrent non-speech buffer while speech is mixing. 0.0 silences cues entirely; 1.0 disables ducking even if `ducking_enabled` is true."
+    },
+    "verbosity_level": {
+      "type": "string",
+      "enum": ["minimal", "normal", "verbose"],
+      "default": "normal",
+      "description": "F31: bank-wide narration ceiling. The engine plays a binding only when its `verbosity` rank (minimal=0 < normal=1 < verbose=2) is <= this level's rank."
     }
   },
   "additionalProperties": false,
@@ -118,6 +124,12 @@
             "azimuth": { "type": "number", "minimum": -180, "maximum": 180 },
             "elevation": { "type": "number", "minimum": -90, "maximum": 90 }
           }
+        },
+        "verbosity": {
+          "type": "string",
+          "enum": ["minimal", "normal", "verbose"],
+          "default": "normal",
+          "description": "F31: tier this binding belongs to. The engine plays the binding only when its rank is <= the bank's `verbosity_level` rank."
         }
       },
       "additionalProperties": false,

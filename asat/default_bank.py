@@ -96,6 +96,7 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.BOOKMARK_CREATED,
     EventType.BOOKMARK_JUMPED,
     EventType.BOOKMARK_REMOVED,
+    EventType.VERBOSITY_CHANGED,
     EventType.ANSI_OSC_RECEIVED,
 })
 
@@ -360,6 +361,19 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             sound_id="cancel",
             say_template="removed bookmark {name}",
             priority=160,
+        ),
+
+        # Narration verbosity presets (F31). Kept at the "minimal"
+        # tier so the user hears every preset change, including when
+        # they just dropped the bank to minimal.
+        EventBinding(
+            id="verbosity_changed",
+            event_type=EventType.VERBOSITY_CHANGED.value,
+            voice_id="system",
+            sound_id="tick",
+            say_template="verbosity {level}",
+            priority=180,
+            verbosity="minimal",
         ),
 
         # Cell lifecycle: small blips, no speech to stay quiet.
