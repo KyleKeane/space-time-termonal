@@ -7,6 +7,25 @@ the gap surfaces today, and a sketch of what the fix would look like.
 This file is descriptive, not prescriptive: priorities and scheduling
 live in the PR queue.
 
+## 2026-04 MVP stabilization roadmap — status
+
+Four focused PRs (see [HANDOFF.md](HANDOFF.md) for the snapshot)
+flipped the four MVP surfaces that used to be hollow:
+
+- **PR 1** — cross-platform live audio via pluggable TTS registry +
+  POSIX live sink (addresses F5, F6, F28 engine leg).
+- **PR 2** — on-screen outline pane (addresses F27 render leg, F40
+  user-facing leg, F61 render leg).
+- **PR 3** — interactive event-log viewer + grouped text log file
+  (addresses F39, F63).
+- **PR 4** — scripted first-run tour with `:welcome` replay parity
+  (addresses F43 follow-through, F44).
+
+Each affected entry below is flagged **Status: Shipped (pending
+cross-platform hands-on smoke)** or similar. Hands-on verification
+before tagging 1.0 is enumerated in [HANDOFF.md](HANDOFF.md) and is
+the remaining blocker for all four surfaces.
+
 ---
 
 ## F1 — Cancel a running command
@@ -119,55 +138,39 @@ machine mirroring the approach `SettingsEditor` already uses).
 
 ## F5 — Windows-native TTS adapter
 
-**Gap.** The shipping `ToneTTSEngine` is a parametric tone generator
-— useful as a self-contained default but not a real voice. On Windows
-the obvious target is SAPI / OneCore TTS via `pywin32` (or `ctypes`
-to avoid adding a dep).
-
-**Where it surfaces.** [ARCHITECTURE.md](ARCHITECTURE.md) phase
-history lists this as a next-generation item.
-
-**Sketch.** Implement the `TTSEngine` protocol against SAPI,
-expose a `SapiTTSEngine` class, let the user pick it via the `engine`
-field on `Voice`. Add a Voice-level routing step in `SoundEngine`
-that picks the right engine by id. Keep `ToneTTSEngine` as the
-deterministic fallback for headless tests.
+**Status: Shipped (pending cross-platform hands-on smoke).** PR 1
+of the 2026-04 MVP stabilization roadmap replaced the TTS layer with
+a pluggable registry (`asat/tts_registry.py`) covering the three
+platforms in one go. The shipping adapters — `Pyttsx3Engine`
+(cross-platform, routes to SAPI / espeak / NSSpeechSynthesizer),
+`EspeakNgEngine` (Linux `espeak-ng` subprocess), `SystemSayEngine`
+(macOS `say` subprocess) — all implement the `TTSEngine` protocol.
+`ToneTTSEngine` is retained as the deterministic fallback.
+`TTSEngineRegistry.select_default()` walks the priority list and
+returns the first `available()` engine; users swap at runtime via
+`:tts list`, `:tts use <id>`, `:tts set <param> <value>`. Still
+owed: hands-on verification that SAPI produces audible output on a
+real Windows host (see [HANDOFF.md](HANDOFF.md)).
 
 ---
 
 ## F6 — Live-speaker audio sink (POSIX)
 
-**Status.** Partially shipped. Windows live playback ships
-(`WindowsLiveAudioSink` in `asat/audio_sink.py`, selected by
-`python -m asat --live`). POSIX (macOS / Linux) is still open —
-`pick_live_sink()` raises `LiveAudioUnavailable` on those platforms
-and the CLI falls back to `MemorySink` with a spoken warning.
-
-**Gap.** On macOS and Linux, `pick_live_sink()` raises
-`LiveAudioUnavailable` and the CLI falls back to `MemorySink` with a
-message. There is no stdlib-only live audio backend on POSIX — every
-candidate (`winsound`) is Windows-only, and `subprocess`-ing `aplay`
-/ `afplay` has latency and availability problems.
-
-**Where it surfaces.** `python -m asat --live` on Linux or macOS
-prints `[asat] --live unavailable: ...` and continues silently. Users
-today have to pair `--wav-dir DIR` with a WAV player, which is
-asynchronous and awkward.
-
-**Sketch.** Two reasonable paths:
-
-1. **Stdlib `subprocess` dispatch.** Write each buffer to a temp WAV
-   and invoke `/usr/bin/afplay` (macOS) or `aplay`/`paplay` (Linux).
-   Simple, no deps, but latency is ~50-150 ms per buffer — noticeable
-   for keystroke feedback.
-2. **Small C extension via `ctypes`.** Bind to CoreAudio (macOS) or
-   ALSA (Linux) directly. Better latency, no new Python deps, but
-   non-trivial to build and test.
-
-Either way the implementation goes in `asat/audio_sink.py` behind
-the same `AudioSink` protocol, and `pick_live_sink()` learns new
-branches. A queueing strategy (drop in-flight keystroke cues when a
-narration voice starts) should be designed together with this.
+**Status: Shipped (pending cross-platform hands-on smoke).** PR 1
+of the 2026-04 MVP stabilization roadmap added `PosixLiveAudioSink`
+to `asat/audio_sink.py`. The sink writes each buffer to a temp
+in-memory WAV and pipes it to the first available player binary on
+PATH — `aplay` / `paplay` (Linux via ALSA or PulseAudio /
+PipeWire), `afplay` (macOS). `pick_live_sink()` now returns a
+working live sink on every supported platform: `WindowsLiveAudioSink`
+on Windows, `PosixLiveAudioSink` on Linux / macOS. `LiveAudioUnavailable`
+surfaces only when no player binary is installed; the silent-sink
+guard then names the binaries to install. The latency trade-off
+called out in the original sketch (subprocess dispatch per buffer)
+is accepted — it's noticeable on rapid keystroke cues but acceptable
+for the MVP. Still owed: hands-on verification that audible output
+reaches real speakers on a fresh Linux and macOS box (see
+[HANDOFF.md](HANDOFF.md)).
 
 ---
 
@@ -883,6 +886,15 @@ path. F61 already ships with `Cell.kind` defaulting to
 
 ## F28 — Speech output console (programmatic + braille / screen-reader routing)
 
+**Status: Partially shipped.** PR 1 of the 2026-04 MVP
+stabilization roadmap addressed the "plug in a different engine"
+half via `asat/tts_registry.py` and the `:tts use / set` meta-
+commands — a screen-reader user can now point ASAT at their
+preferred backend without recompiling. The **capture** and
+**routing** halves below (SPEECH_RENDERED event, `SpeechConsole`
+ring, `SpeechRouter` protocol, braille / NVDA controller hooks)
+are still open.
+
 **Gap.** When a binding fires with a `say_template`, the rendered
 phrase goes straight into `SoundEngine` and out to audio. Nothing
 captures the *text* of what is being spoken in a user- or test-
@@ -1242,6 +1254,23 @@ discoverable from the cheat sheet itself.
 
 ## F39 — Interactive event log viewer (trigger → jump → edit)
 
+**Status: Shipped (pending end-to-end hands-on smoke).** PR 3 of
+the 2026-04 MVP stabilization roadmap landed every sub-PR from
+F39a through F39d in a single shot: `asat/event_log.py` holds the
+`EventLogViewer` with a bounded 200-entry ring,
+`FocusMode.EVENT_LOG` was added, `Ctrl+E` / `:log` / `:log tail`
+are wired, and every per-entry action works — `Enter` jumps to the
+binding's `say_template` field via `SettingsController.open_at_
+binding(binding_id)`, `e` cycles the four-field quick-edit,
+`t` replays the event through the live pipeline, and `Escape`
+returns to the prior focus mode. The five new events
+(`EVENT_LOG_OPENED` / `_CLOSED` / `_FOCUSED` /
+`_QUICK_EDIT_COMMITTED` / `_REPLAYED`) are in
+`COVERED_EVENT_TYPES`, `SAMPLE_PAYLOADS`, `default_bank.py`,
+`docs/EVENTS.md`, and `docs/USER_MANUAL.md`. Still owed: the
+full trigger → jump → edit → replay loop on a real user's host
+(see [HANDOFF.md](HANDOFF.md)).
+
 **Gap.** ASAT publishes rich typed events on every state change
 (`asat/events.py`), but there is no user-facing surface that shows
 the recent event stream, and no path from "I just heard a cue I
@@ -1335,6 +1364,18 @@ today: *"I heard a cue I didn't like — where do I change it?"*
 ---
 
 ## F40 — Speech viewer (programmatic + on-screen narration log)
+
+**Status: Partially shipped.** PR 3 of the 2026-04 MVP
+stabilization roadmap delivered the **user-facing** viewer half:
+the `asat/event_log.py` `EventLogViewer` surfaces every narrated
+event (each entry already holds the rendered narration string),
+Up / Down walks the ring, `t` re-reads a specific entry, and
+`Escape` exits. The F39 viewer therefore covers the scroll-back
+use-case for blind users who missed a word. Still open: the
+**programmatic** half — a dedicated `SpeechConsole` + explicit
+`SPEECH_RENDERED` event fired *before* TTS synthesis so external
+routers (braille, NVDA controller) can replace or suppress it.
+That belongs with F28's routing leg and should land as one PR.
 
 **Gap.** `SoundEngine` renders `say_template` phrases and hands
 the final text to TTS (`asat/sound_engine.py`), but nothing
@@ -1481,7 +1522,7 @@ quick-start; cross-reference from F41's silent-sink hint.
 
 ## F43 — Guided first-command tour
 
-**Status: Shipped.**
+**Status: Shipped (minimal + full scripted follow-through).**
 
 **Gap (at time of shipping).** F20 narrated a welcome and explained
 the key meta-commands but stopped there. The user was then dropped
@@ -1491,7 +1532,7 @@ the newcomer still had to invent their own first command to hear
 what `COMMAND_SUBMITTED` / `COMMAND_STARTED` / `COMMAND_COMPLETED`
 / exit-code narration sounded like.
 
-**Sketch (shipped).** `asat/onboarding.py` gained
+**Sketch (first pass).** `asat/onboarding.py` gained
 `FIRST_RUN_TOUR_COMMAND = "echo hello, ASAT"` + a short
 `FIRST_RUN_TOUR_LINES` prompt and a new
 `OnboardingCoordinator.publish_tour_step(...)` helper.
@@ -1501,12 +1542,26 @@ the build seeded a fresh session, `cursor.new_cell(...)` is called
 with the tour command so the newcomer's first Enter press exercises
 the full submit → start → complete → exit-code arc. The tour step
 fires after the welcome event so the audio order is "welcome, then
-prompt". If the user clears or rewrites the pre-filled line before
-pressing Enter, the tour is considered complete — the coordinator
-never re-inserts. A new `FIRST_RUN_TOUR_STEP` event in
-`asat/events.py` carries `command` + `lines`; the default bank
-binds it to the narrator voice. `--quiet` / `--check` skip
-onboarding entirely, which transparently skips the tour too.
+prompt". A new `FIRST_RUN_TOUR_STEP` event in `asat/events.py`
+carries `command` + `lines`; the default bank binds it to the
+narrator voice. `--quiet` / `--check` skip onboarding entirely,
+which transparently skips the tour too.
+
+**Follow-through (PR 4 of the 2026-04 MVP stabilization roadmap).**
+The tour grew from one beat to five. `OnboardingCoordinator` gained
+`publish_event_log_preview_beat`, `publish_log_path_beat`, and
+`publish_tour_completed_beat`; `publish_tour_step` gained a
+`replay: bool` kwarg. `Application.build` now seeds a
+`H1 + H2 + COMMAND` demo notebook using
+`FIRST_RUN_OUTLINE_HEADINGS` so the PR 2 outline pane has
+structure to render; `_run_scripted_tour(replay=False)` publishes
+all four scripted beats in order (tour step, event-log preview,
+log-path, completed). Three new event types —
+`FIRST_RUN_TOUR_EVENT_LOG_PREVIEW`, `FIRST_RUN_TOUR_LOG_PATH`,
+`FIRST_RUN_TOUR_COMPLETED` — carry a `replay` payload marker so the
+`:welcome` replay can be distinguished from the genuine first run.
+The log-path beat is gated by `predicate="path != ''"` so the
+narration never fires with an empty path (no file logger attached).
 
 ---
 
@@ -1535,8 +1590,13 @@ when `onboarding is None` (--quiet or --check) the meta-command
 is a harmless no-op. Tests: three new coordinator cases, two
 Application cases, one router case.
 
-F43 (guided first-command tour) follow-up: `:welcome tour` as a
-richer variant remains on the F43 entry once that lands.
+F43 (guided first-command tour) follow-up landed in PR 4 of the
+2026-04 MVP stabilization roadmap: `:welcome` now replays every
+scripted beat (welcome, tour step, event-log preview, log-path,
+completed) with `replay=True` in each payload and does **not**
+re-seed the demo cells, so the user's notebook survives the
+replay. `:welcome` without an active `OnboardingCoordinator`
+(`--quiet` / `--check`) stays a harmless no-op.
 
 ---
 
@@ -3491,12 +3551,27 @@ killing-the-shell, sentinel-prefix-mid-line) and
 
 ## F61 — Cell hierarchy: sections, folds, and grouping
 
-**Sketch (partially shipped).** The flat `Session.cells` list now
-has a polymorphic `Cell.kind: CellKind` discriminator with two
-values: `COMMAND` (the existing executable cell) and `HEADING`
-(an announce-only section header carrying `heading_level` 1-6 and
-`heading_title`). Heading cells cannot be executed (`mark_running`
-/ `update_command` guard on `is_executable`); `Application.execute`
+**Status: Shipped (render leg, pending on-screen smoke).** PR 2 of
+the 2026-04 MVP stabilization roadmap shipped the on-screen
+outline pane that the earlier partial work had been missing:
+`asat/outline.py` exposes a pure `render_outline(cells,
+focus_cell_id, max_width)` helper, `asat/terminal.TerminalRenderer`
+subscribes to `FOCUS_CHANGED` / `CELL_*` / outline-fold events and
+repaints the pane (ANSI-clear redraw on TTY, append-only trace
+when piped), and `--view {trace,outline,both}` picks which panes
+show on a TTY. The fold / collapse leg (`z` toggles,
+`OUTLINE_FOLDED` / `OUTLINE_UNFOLDED` events, scope-based
+selection) also shipped. Still owed: hands-on confirmation that
+the repaint behaves on a real user's TTY (see
+[HANDOFF.md](HANDOFF.md)).
+
+**Sketch (partially shipped earlier, now complete for the MVP).**
+The flat `Session.cells` list now has a polymorphic
+`Cell.kind: CellKind` discriminator with two values: `COMMAND`
+(the existing executable cell) and `HEADING` (an announce-only
+section header carrying `heading_level` 1-6 and `heading_title`).
+Heading cells cannot be executed (`mark_running` /
+`update_command` guard on `is_executable`); `Application.execute`
 short-circuits if the target cell is a heading. Session JSON
 gained `kind` / `heading_level` / `heading_title` fields with
 backward compatibility — a missing `kind` defaults to `COMMAND` so
@@ -3512,13 +3587,6 @@ typing). `FOCUS_CHANGED` now carries `kind` / `heading_level` /
 `heading_title`; the default sound bank branches on
 `transition == cell and kind == 'heading'` to voice "heading level
 N: title" instead of the usual `{command}` readout.
-
-**Remaining.** Parent-scope navigation (`{` / `}` jump to the
-enclosing heading), fold / collapse (`z` toggles), and scope-
-based selection (`select_heading_scope()` picks the focused
-heading plus its children through the next same-level heading)
-are still open. Those layer on top of the current flat
-implementation without rewriting it.
 
 **Forward-looking notes.**
 
@@ -3606,8 +3674,21 @@ so their deterministic ordering holds.
 
 ## F63 — Event log as an append-only text file grouped by user interaction
 
-**Gap.** F39 sketches an *interactive* event log viewer — an
-in-process ring buffer the user can walk. What's missing is the
+**Status: Shipped.** PR 3 of the 2026-04 MVP stabilization
+roadmap added `asat/event_log_file.py`, a wildcard subscriber
+that writes `<workspace>/.asat/log/events-YYYY-MM-DD.log` (one
+file per local day). Formatting follows the sketch below — every
+`KEY_PRESSED` opens a new group, every downstream event is
+indented one level and annotated with its source module. Auto-
+flush on every write, tail-safe. Auto-enabled when a workspace
+is open; otherwise the CLI takes `--log-events DIR`. The `:log
+tail` meta-command wires the file back into the interactive F39
+viewer. Silent-sink guard (F41) applies — a read-only workspace
+degrades to `stderr`.
+
+**Gap (pre-shipping).** F39 sketched an *interactive* event log
+viewer — an in-process ring buffer the user can walk. What was
+missing was the
 other half: a plain text file on disk that records every event,
 grouped so a human (or `grep`) can see which user interaction
 caused which downstream effect. Today a developer asking "what
