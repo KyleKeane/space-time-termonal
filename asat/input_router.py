@@ -192,6 +192,7 @@ def default_bindings() -> BindingMap:
             Key.printable("4"): "next_heading_4",
             Key.printable("5"): "next_heading_5",
             Key.printable("6"): "next_heading_6",
+            Key.printable("i"): "begin_text_input",
             kc.F2: "open_action_menu",
             menu_open: "open_action_menu",
             repeat_narration: "repeat_last_narration",
@@ -213,6 +214,24 @@ def default_bindings() -> BindingMap:
             Key.combo("c", Modifier.CTRL): "cancel_command",
             kc.ENTER: "submit",
             kc.ESCAPE: "exit_input",
+            kc.F2: "open_action_menu",
+            menu_open: "open_action_menu",
+            repeat_narration: "repeat_last_narration",
+        },
+        FocusMode.TEXT_INPUT: {
+            kc.BACKSPACE: "backspace",
+            kc.DELETE: "delete_forward",
+            kc.LEFT: "cursor_left",
+            kc.RIGHT: "cursor_right",
+            kc.HOME: "cursor_home",
+            kc.END: "cursor_end",
+            Key.combo("a", Modifier.CTRL): "cursor_home",
+            Key.combo("e", Modifier.CTRL): "cursor_end",
+            Key.combo("w", Modifier.CTRL): "delete_word_left",
+            Key.combo("u", Modifier.CTRL): "delete_to_start",
+            Key.combo("k", Modifier.CTRL): "delete_to_end",
+            kc.ENTER: "submit_text_input",
+            kc.ESCAPE: "abandon_text_input",
             kc.F2: "open_action_menu",
             menu_open: "open_action_menu",
             repeat_narration: "repeat_last_narration",
@@ -329,11 +348,14 @@ HELP_LINES: tuple[str, ...] = (
     "           d delete, y duplicate, Alt+Up/Down reorder.",
     "           ] / [ next / prev heading; 1..6 next heading of that level.",
     "           } / { next / prev heading shallower than current scope (parent).",
+    "           i begins an in-place text cell (Enter creates, Escape abandons).",
     "INPUT:     Enter submits, Escape leaves without running.",
     "           Backspace/Delete cut, Left/Right walk, Home/End jump (or Ctrl+A/E).",
     "           Up/Down walk command history (Down past newest restores your draft).",
     "           Ctrl+W kills word, Ctrl+U kills to start, Ctrl+K kills to end.",
     "           Ctrl+C cancels the running command (publishes COMMAND_CANCELLED).",
+    "TEXT:      Enter creates a text cell from the buffer, Escape abandons.",
+    "           Buffer editing keys match INPUT (Backspace/Delete, Left/Right, Home/End, Ctrl+A/E/W/U/K).",
     "OUTPUT:    Up/Down step lines, PageUp/PageDown page, Escape leaves.",
     "           / search (type query, Enter commits), n / N next / prev hit, g jump-to-line.",
     "SETTINGS:  Up/Down walk, Right/Enter descend, Left/Escape ascend, e edit, Ctrl+S save, Ctrl+Q close.",
@@ -441,7 +463,11 @@ class InputRouter:
         if action is not None:
             self._invoke(action, key)
             return action
-        if mode == FocusMode.INPUT and key.is_printable() and key.char is not None:
+        if (
+            mode in (FocusMode.INPUT, FocusMode.TEXT_INPUT)
+            and key.is_printable()
+            and key.char is not None
+        ):
             self._cursor.insert_character(key.char)
             self._publish_action("insert_character", key, {"char": key.char})
             return "insert_character"
@@ -615,6 +641,22 @@ class InputRouter:
         handler = self._action_handler(action)
         extra = handler() or {}
         self._publish_action(action, key, extra)
+
+    def _submit_text_input(self) -> Optional[dict[str, object]]:
+        """Commit the TEXT_INPUT buffer as a new text cell (F27 `i` flow).
+
+        Reports whether a cell was created (an empty / whitespace-only
+        buffer is treated as abandonment) and, when one was, its id and
+        body so observers can narrate the insertion.
+        """
+        cell = self._cursor.submit_text_input()
+        if cell is None:
+            return {"created": False}
+        return {
+            "created": True,
+            "cell_id": cell.cell_id,
+            "text": cell.text,
+        }
 
     def _submit(self) -> Optional[dict[str, object]]:
         """Commit the current input buffer and return submission extras.
@@ -1338,6 +1380,9 @@ class InputRouter:
             "next_heading_6": self._next_heading_action(6),
             "next_parent_heading": self._parent_heading_action(direction=+1),
             "prev_parent_heading": self._parent_heading_action(direction=-1),
+            "begin_text_input": _void(self._cursor.begin_text_input),
+            "submit_text_input": self._submit_text_input,
+            "abandon_text_input": _void(self._cursor.abandon_text_input),
         }
 
     def _input_handlers(self) -> dict[str, ActionHandler]:
