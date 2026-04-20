@@ -804,10 +804,14 @@ cells"). Cross-notebook paste falls out for free once F29 lands.
 
 ## F27 — Heading and text cells with hierarchy, navigation, and scope selection
 
-**Status.** Partially shipped as F61. Heading cells, flat outline
-navigation (`]` / `[`, `1`-`6`), `:toc`, `:heading <level>
-<title>`, and the default-bank heading voice are in (see F61).
-What is still pending from the original F27 sketch: text cells,
+**Status.** Partially shipped as F61 (headings) and an F27
+text-cell slice. Heading cells, flat outline navigation (`]` /
+`[`, `1`-`6`), `:toc`, `:heading <level> <title>`, and the
+default-bank heading voice are in (see F61). Text cells now
+exist as `CellKind.TEXT` with a `:text <prose>` INPUT
+meta-command and a dedicated `focus_changed_text` narration
+binding. What is still pending from the original F27 sketch:
+the NOTEBOOK `i` keybinding for in-place text insertion,
 parent-scope navigation (`{` / `}`), `select_heading_scope()`,
 fold / collapse, and the dedicated `asat/outline.py` scope
 helper.
@@ -828,14 +832,15 @@ type is a narrow change.
 
 **Sketch — remaining work after F61.**
 
-1. **Text cell kind.** Extend `CellKind` with `TEXT` and add a
-   `text: str` field on `Cell`; `is_executable` returns False so
-   `Application.execute` short-circuits (same guard F61 added for
-   headings). NOTEBOOK gains an `i` binding that inserts a text
-   cell below the focus; INPUT grows a `:text <prose>` meta-command
-   that writes a text cell before the next prompt. Reuses every
-   serialisation, renderer, and FOCUS_CHANGED hook the heading
-   work already proved out.
+1. **Text cell kind.** *(Text-cell slice shipped.)* `CellKind.TEXT`
+   and a `text: str` field on `Cell` are in; `is_executable`
+   returns False so `Application.execute` short-circuits (same
+   guard F61 added for headings). INPUT's `:text <prose>`
+   meta-command appends a text cell and abandons INPUT (parallels
+   `:heading`), and FOCUS_CHANGED narrates "text, {text}". Still
+   pending: the NOTEBOOK `i` binding for in-place insertion
+   (needs an in-place editor for the text body; typing-in-line
+   is not yet wired).
 2. **Parent-scope navigation.** `{` / `}` in NOTEBOOK jump to the
    previous / next heading whose `heading_level` is *shallower*
    than the current scope. Same module-level helper that F61 uses

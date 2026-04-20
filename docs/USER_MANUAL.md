@@ -288,6 +288,7 @@ discarded and the cell is not modified.
 | `:commands`  | List every available meta-command.                   |
 | `:reset bank` | Reset the whole sound bank to the built-in defaults (also `:reset all`). |
 | `:heading <level> <title>` | Append a heading landmark at level 1..6 for NVDA-style navigation (F61). |
+| `:text <prose>` | Append a non-executable prose cell carrying narrative alongside commands and headings (F27). |
 | `:toc`       | Narrate the notebook's heading outline.              |
 | `:workspace` | Re-announce the active project root and notebook count (no-op without a workspace). |
 | `:list-notebooks` | Narrate every notebook in the workspace by name. |
@@ -596,6 +597,7 @@ Every key you need, one table.
 | INPUT      | `:reset bank`⏎    | Reset the whole bank to defaults      |
 | INPUT      | `:reload-bank`⏎   | Reload the bank from disk (F3)        |
 | INPUT      | `:heading <N> <title>`⏎ | Append a level-N heading landmark |
+| INPUT      | `:text <prose>`⏎  | Append a prose/text cell (F27)        |
 | INPUT      | `:toc`⏎           | Narrate the heading outline           |
 | OUTPUT     | Up / Down         | Prev / next line                      |
 | OUTPUT     | PageUp / PageDown | Jump a page                           |

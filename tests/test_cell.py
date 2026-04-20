@@ -236,6 +236,83 @@ class CellSnapshotKindTests(unittest.TestCase):
         self.assertEqual(snap.heading_level, 2)
         self.assertEqual(snap.heading_title, "Setup")
 
+    def test_text_snapshot_preserves_body(self) -> None:
+        cell = Cell.new_text("We train for ten epochs.")
+        snap = cell.snapshot()
+        self.assertEqual(snap.kind, CellKind.TEXT)
+        self.assertEqual(snap.text, "We train for ten epochs.")
+
+
+class CellTextFactoryTests(unittest.TestCase):
+    """Cell.new_text produces structurally valid prose cells (F27)."""
+
+    def test_new_text_sets_kind_and_body(self) -> None:
+        cell = Cell.new_text("Some prose.")
+        self.assertEqual(cell.kind, CellKind.TEXT)
+        self.assertTrue(cell.is_text)
+        self.assertFalse(cell.is_executable)
+        self.assertFalse(cell.is_heading)
+        self.assertEqual(cell.text, "Some prose.")
+        self.assertEqual(cell.command, "")
+        self.assertEqual(cell.status, CellStatus.COMPLETED)
+
+    def test_new_text_rejects_blank_body(self) -> None:
+        with self.assertRaises(ValueError):
+            Cell.new_text("")
+        with self.assertRaises(ValueError):
+            Cell.new_text("   ")
+
+    def test_text_cells_are_not_executable_and_refuse_exec_mutations(self) -> None:
+        cell = Cell.new_text("prose")
+        with self.assertRaises(ValueError):
+            cell.mark_running()
+        with self.assertRaises(ValueError):
+            cell.mark_completed("", "", 0)
+        with self.assertRaises(ValueError):
+            cell.mark_cancelled()
+        with self.assertRaises(ValueError):
+            cell.update_command("echo")
+
+    def test_update_text_edits_body(self) -> None:
+        cell = Cell.new_text("first draft")
+        cell.update_text("revised")
+        self.assertEqual(cell.text, "revised")
+
+    def test_update_text_rejects_blank(self) -> None:
+        cell = Cell.new_text("prose")
+        with self.assertRaises(ValueError):
+            cell.update_text("")
+        with self.assertRaises(ValueError):
+            cell.update_text("   ")
+
+    def test_update_text_refuses_on_command_cell(self) -> None:
+        cell = Cell.new("echo")
+        with self.assertRaises(ValueError):
+            cell.update_text("nope")
+
+    def test_heading_fields_rejected_on_text_cell(self) -> None:
+        # Construction-level guard: a direct TEXT cell with a heading
+        # level should fail fast.
+        from datetime import datetime
+        with self.assertRaises(ValueError):
+            Cell(
+                cell_id="c1",
+                command="",
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+                kind=CellKind.TEXT,
+                text="prose",
+                heading_level=1,
+                heading_title="x",
+            )
+
+    def test_text_round_trips_through_to_dict(self) -> None:
+        cell = Cell.new_text("note: verify fixtures")
+        restored = Cell.from_dict(cell.to_dict())
+        self.assertEqual(restored.kind, CellKind.TEXT)
+        self.assertEqual(restored.text, "note: verify fixtures")
+        self.assertEqual(restored.cell_id, cell.cell_id)
+
 
 if __name__ == "__main__":
     unittest.main()

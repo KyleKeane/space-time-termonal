@@ -270,6 +270,7 @@ META_COMMANDS: tuple[str, ...] = (
     "repeat",
     "state",
     "heading",
+    "text",
     "toc",
     "workspace",
     "list-notebooks",
@@ -337,7 +338,7 @@ HELP_LINES: tuple[str, ...] = (
     "           Ctrl+Z undo, Ctrl+Y redo edits in the order you made them.",
     "           Ctrl+R resets to defaults at cursor scope (Enter confirms, Escape cancels).",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
-    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :state, :commands, :reset, :welcome, :repeat, :heading, :toc, :workspace, :list-notebooks, :new-notebook, :bindings, :bookmark, :unbookmark, :bookmarks, :jump, :verbosity, :reload-bank.",
+    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :state, :commands, :reset, :welcome, :repeat, :heading, :text, :toc, :workspace, :list-notebooks, :new-notebook, :bindings, :bookmark, :unbookmark, :bookmarks, :jump, :verbosity, :reload-bank.",
     "           `:help topics` lists focused tours; `:help <topic>` narrates one (navigation, cells, settings, audio, search, meta).",
     "           `:welcome` replays the first-run tour; `:repeat` (or Ctrl+R in notebook/input) re-speaks the last narration.",
     "           Meta-commands are case-insensitive and accept a trailing argument.",
@@ -690,6 +691,29 @@ class InputRouter:
             )
             return
         self._cursor.new_heading_cell(level, title)
+
+    def _handle_meta_text(self, argument: str) -> None:
+        """Append a text cell from `:text <prose>` (F27).
+
+        The entire argument string becomes the prose body. Empty
+        arguments surface a HELP_REQUESTED hint rather than creating
+        an invisible blank cell.
+        """
+        body = argument.strip()
+        if not body:
+            publish_event(
+                self._bus,
+                EventType.HELP_REQUESTED,
+                {
+                    "lines": [
+                        "`:text <prose>` — body is the remainder of the line.",
+                        "Example: `:text Training overfits past 20 epochs.`",
+                    ],
+                },
+                source=self.SOURCE,
+            )
+            return
+        self._cursor.new_text_cell(body)
 
     def _publish_bindings(self, argument: str) -> None:
         """Surface the keybinding report via HELP_REQUESTED (F64).
@@ -1557,6 +1581,7 @@ _META_HANDLERS: dict[str, Callable[["InputRouter", str], None]] = {
     "commands": lambda router, _arg: router._publish_commands(),
     "reset": lambda router, arg: router._handle_meta_reset(arg),
     "heading": lambda router, arg: router._handle_meta_heading(arg),
+    "text": lambda router, arg: router._handle_meta_text(arg),
     "toc": lambda router, _arg: router._publish_toc(),
     "bindings": lambda router, arg: router._publish_bindings(arg),
     "bookmark": lambda router, arg: router._handle_meta_bookmark(arg),
