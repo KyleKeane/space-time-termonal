@@ -465,6 +465,8 @@ class Application:
                 self._create_notebook(str(payload.get("meta_argument", "")))
             elif meta == "verbosity":
                 self._set_verbosity(str(payload.get("meta_argument", "")))
+            elif meta == "reload-bank":
+                self._reload_bank()
 
     def _cancel_running_command(self) -> None:
         """`cancel_command` (Ctrl+C in INPUT mode) — F1.
@@ -678,3 +680,69 @@ class Application:
                 {"lines": [str(exc)]},
                 source="app",
             )
+
+    def _reload_bank(self) -> None:
+        """`:reload-bank` — F3: discard in-memory edits and re-read the bank.
+
+        The live bank is swapped for whatever ``SoundBank.load()``
+        parses from the configured ``bank_path``. Any edits the user
+        made in this session that were never saved are lost.
+
+        Surfaces HELP_REQUESTED when no bank file was configured (the
+        run has nothing to reload from) or when the file cannot be
+        parsed (corrupt JSON, broken references). On success publishes
+        BANK_RELOADED so the default bank can narrate "settings
+        reloaded from disk" and tests can assert the swap happened.
+        """
+        from asat.sound_bank import SoundBankError
+
+        path = self.settings_controller.save_path
+        if path is None:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": ["No bank path configured; nothing to reload."]},
+                source="app",
+            )
+            return
+        try:
+            fresh = SoundBank.load(path)
+        except FileNotFoundError:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": [f"Bank file not found: {path}"]},
+                source="app",
+            )
+            return
+        except SoundBankError as exc:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": [f"Could not reload bank: {exc}"]},
+                source="app",
+            )
+            return
+        if self.settings_controller.is_open:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {
+                    "lines": [
+                        "Close the settings editor before reloading the bank."
+                    ]
+                },
+                source="app",
+            )
+            return
+        self.sound_engine.set_bank(fresh)
+        self.settings_controller.reload_from_disk(fresh)
+        publish_event(
+            self.bus,
+            EventType.BANK_RELOADED,
+            {
+                "path": str(path),
+                "binding_count": len(fresh.bindings),
+            },
+            source="app",
+        )

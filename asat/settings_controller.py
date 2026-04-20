@@ -335,3 +335,19 @@ class SettingsController:
             raise SettingsControllerError("no save path configured")
         self.editor.save(target)
         return target
+
+    def reload_from_disk(self, bank: SoundBank) -> None:
+        """F3: replace the cached bank after an external disk reload.
+
+        The Application is the authoritative owner of the ``bank_path``
+        → ``SoundBank.load()`` flow; this method only updates the
+        controller's cached bank so the next ``open()`` picks up the
+        fresh copy. Refuses while a session is open so uncommitted
+        edits are not silently overwritten; the caller should check
+        ``is_open`` before calling.
+        """
+        if self._editor is not None:
+            raise SettingsControllerError(
+                "cannot reload bank while a settings session is open"
+            )
+        self._bank = bank

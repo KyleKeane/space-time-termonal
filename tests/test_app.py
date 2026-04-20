@@ -518,6 +518,153 @@ class ApplicationMetaCommandTests(unittest.TestCase):
         self.assertIn("verbose", text)
 
 
+class ApplicationReloadBankTests(unittest.TestCase):
+    """F3: `:reload-bank` re-reads the on-disk bank and swaps it in."""
+
+    def _write_bank_with_voice_rate(self, path, rate: float) -> None:
+        """Persist the default bank with one voice's rate tweaked.
+
+        The test uses `system.rate` as a fingerprint so an assertion
+        can confirm the live bank was replaced with whatever was on
+        disk at reload time.
+        """
+        from dataclasses import replace
+        from asat.default_bank import default_sound_bank
+
+        bank = default_sound_bank()
+        voices = tuple(
+            v if v.id != "system" else replace(v, rate=rate)
+            for v in bank.voices
+        )
+        bank.with_replaced(voices=voices).save(path)
+
+    def test_reload_bank_swaps_live_bank_and_publishes_event(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bank_path = Path(tmp) / "bank.json"
+            self._write_bank_with_voice_rate(bank_path, rate=1.25)
+            app = Application.build(bank_path=bank_path)
+            # Precondition: live bank still has the factory-default rate.
+            self.assertNotEqual(
+                app.sound_engine.bank.voice_for("system").rate, 1.25
+            )
+            reloaded: list[dict] = []
+            app.bus.subscribe(
+                EventType.BANK_RELOADED,
+                lambda e: reloaded.append(dict(e.payload)),
+            )
+
+            _type(app, ":reload-bank")
+            app.handle_key(kc.ENTER)
+
+            self.assertEqual(
+                app.sound_engine.bank.voice_for("system").rate, 1.25
+            )
+            self.assertEqual(len(reloaded), 1)
+            self.assertEqual(reloaded[0]["path"], str(bank_path))
+            self.assertGreater(reloaded[0]["binding_count"], 0)
+
+    def test_reload_bank_without_bank_path_emits_help(self) -> None:
+        app = Application.build()  # no bank_path configured
+        helps: list[dict] = []
+        app.bus.subscribe(
+            EventType.HELP_REQUESTED,
+            lambda e: helps.append(dict(e.payload)),
+        )
+        reloaded: list[dict] = []
+        app.bus.subscribe(
+            EventType.BANK_RELOADED,
+            lambda e: reloaded.append(dict(e.payload)),
+        )
+
+        _type(app, ":reload-bank")
+        app.handle_key(kc.ENTER)
+
+        self.assertEqual(reloaded, [])
+        text = "\n".join(line for h in helps for line in h["lines"])
+        self.assertIn("No bank path configured", text)
+
+    def test_reload_bank_on_missing_file_emits_help(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bank_path = Path(tmp) / "nonexistent.json"
+            app = Application.build(bank_path=bank_path)
+            helps: list[dict] = []
+            app.bus.subscribe(
+                EventType.HELP_REQUESTED,
+                lambda e: helps.append(dict(e.payload)),
+            )
+
+            _type(app, ":reload-bank")
+            app.handle_key(kc.ENTER)
+
+            text = "\n".join(line for h in helps for line in h["lines"])
+            self.assertIn("not found", text)
+
+    def test_reload_bank_on_corrupt_file_emits_help(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bank_path = Path(tmp) / "bank.json"
+            bank_path.write_text("{ not valid json", encoding="utf-8")
+            app = Application.build(bank_path=bank_path)
+            helps: list[dict] = []
+            app.bus.subscribe(
+                EventType.HELP_REQUESTED,
+                lambda e: helps.append(dict(e.payload)),
+            )
+            reloaded: list[dict] = []
+            app.bus.subscribe(
+                EventType.BANK_RELOADED,
+                lambda e: reloaded.append(dict(e.payload)),
+            )
+
+            _type(app, ":reload-bank")
+            app.handle_key(kc.ENTER)
+
+            self.assertEqual(reloaded, [])
+            text = "\n".join(line for h in helps for line in h["lines"])
+            self.assertIn("Could not reload bank", text)
+
+    def test_reload_bank_refuses_while_settings_editor_open(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bank_path = Path(tmp) / "bank.json"
+            self._write_bank_with_voice_rate(bank_path, rate=1.5)
+            app = Application.build(bank_path=bank_path)
+            app.settings_controller.open()
+            original_rate = app.sound_engine.bank.voice_for("system").rate
+            helps: list[dict] = []
+            app.bus.subscribe(
+                EventType.HELP_REQUESTED,
+                lambda e: helps.append(dict(e.payload)),
+            )
+            reloaded: list[dict] = []
+            app.bus.subscribe(
+                EventType.BANK_RELOADED,
+                lambda e: reloaded.append(dict(e.payload)),
+            )
+
+            # Directly invoke via `_reload_bank` — typing `:reload-bank`
+            # while settings is open would be captured by the settings
+            # key map rather than the INPUT meta-command path.
+            app._reload_bank()
+
+            self.assertEqual(reloaded, [])
+            self.assertEqual(
+                app.sound_engine.bank.voice_for("system").rate, original_rate
+            )
+            text = "\n".join(line for h in helps for line in h["lines"])
+            self.assertIn("Close the settings editor", text)
+
+
 class ApplicationRepeatNarrationTests(unittest.TestCase):
     """F30: `:repeat` and Ctrl+R replay the last narration."""
 

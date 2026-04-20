@@ -298,6 +298,7 @@ discarded and the cell is not modified.
 | `:bookmarks` | Narrate every bookmark and the cell index it points at (F35). |
 | `:jump <name>` | Move focus to the cell registered under `<name>` (F35). Leaves you in NOTEBOOK mode at the target cell. |
 | `:verbosity <level>` | Set the bank-wide narration ceiling to `minimal`, `normal`, or `verbose` (F31). Chattier tiers are silenced when the level drops. Plain `:verbosity` narrates the allowed values and the current setting. |
+| `:reload-bank` | Discard any in-memory bank edits and re-read the on-disk bank from the configured `bank_path` (F3). Refuses while the settings editor is open; emits a hint when no bank path is configured or the file fails to parse. |
 
 Meta-command names are **case-insensitive** — `:HELP`, `:Help`, and
 `:help` all do the same thing. A single trailing argument is
@@ -592,6 +593,7 @@ Every key you need, one table.
 | INPUT      | `:state`⏎         | Announce focus, cell position, cwd    |
 | INPUT      | `:commands`⏎      | List every meta-command               |
 | INPUT      | `:reset bank`⏎    | Reset the whole bank to defaults      |
+| INPUT      | `:reload-bank`⏎   | Reload the bank from disk (F3)        |
 | INPUT      | `:heading <N> <title>`⏎ | Append a level-N heading landmark |
 | INPUT      | `:toc`⏎           | Narrate the heading outline           |
 | OUTPUT     | Up / Down         | Prev / next line                      |

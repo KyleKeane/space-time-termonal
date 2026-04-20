@@ -11,7 +11,7 @@ live in the PR queue.
 
 ## F1 — Cancel a running command
 
-**Status.** Shipped. **Ctrl+C** in INPUT mode cancels the running
+**Status: Shipped.** **Ctrl+C** in INPUT mode cancels the running
 cell via a new `cancel_command` action; `ExecutionKernel.cancel(cell_id)`
 signals the active runner (`ProcessRunner.terminate()` →
 SIGTERM/TerminateProcess; `ShellBackend.cancel()` → SIGINT via killpg
@@ -62,23 +62,27 @@ Defaults for a fresh record are obvious (`Voice()` neutral,
 
 ## F3 — Reload bank from disk
 
-**Gap.** Ctrl+S writes the in-memory bank to disk; there is no inverse
-that discards uncommitted edits and reloads the last saved bank.
-
-**Where it surfaces.** A user experimenting with settings can only
-undo by remembering every edit they made, or by closing the editor
-and reopening it (which does not reload from disk — the session still
-holds the live bank).
-
-**Sketch.** Add `SettingsEditor.reload(path)` that calls
-`SoundBank.load(path)` and swaps the active bank after a confirmation
-prompt. Bind to a keystroke (Ctrl+R) in SETTINGS mode.
+**Status: Shipped.** `:reload-bank` (INPUT-mode meta-command)
+re-reads the on-disk bank via `SoundBank.load()` and swaps it into
+the running `SoundEngine`. The meta-command resolves the path from
+the `bank_path` the CLI passed to `Application.build`; without one
+the command surfaces a `HELP_REQUESTED` hint instead of silently
+no-oping. Parse failures (corrupt JSON, broken references) and
+missing files surface the same way so the user hears exactly why
+the reload did not happen. `BANK_RELOADED` fires on success with
+`path` and `binding_count` so the default bank narrates "bank
+reloaded from disk". Refuses while the settings editor is open so
+in-flight edits are never silently discarded. Ctrl+R in SETTINGS
+mode stays on F21c (reset-to-defaults); the meta-command is
+reachable from the daily INPUT workflow where the user was already
+typing. Covered by `test_reload_bank_meta_command_swaps_live_bank`
+and peers in `tests/test_app.py`.
 
 ---
 
 ## F4 — Command history
 
-**Status.** Shipped (Up / Down recall). `Session` now carries a
+**Status: Shipped.** (Up / Down recall). `Session` now carries a
 `command_history: list[str]` populated at `record_command` time —
 empty / whitespace-only commands are dropped and consecutive
 duplicates collapse so the user doesn't have to walk past the same
@@ -169,7 +173,7 @@ narration voice starts) should be designed together with this.
 
 ## F7 — Default binding for OSC 133 semantic prompt
 
-**Status. Shipped.** `asat/tui_bridge.py::_classify_osc` now splits
+**Status: Shipped.** `asat/tui_bridge.py::_classify_osc` now splits
 OSC 133 by subcommand into four distinct categories — `prompt_start`
 (`133;A`), `prompt_end` (`133;B`), `command_start` (`133;C`),
 `command_end` (`133;D`) — plus a generic `prompt` for any unknown
@@ -215,7 +219,7 @@ Document the SOFA-to-stereo-WAV conversion recipe in AUDIO.md.
 
 ## F9 — Root README.md
 
-**Status.** Done — see the repo-root [README.md](../README.md).
+**Status: Shipped.** See the repo-root [README.md](../README.md).
 
 ---
 
@@ -245,7 +249,7 @@ subprocess and publishes `COMMAND_CANCELLED`; bind Ctrl+C to it.
 
 ## F11 — Auto-advance after submit
 
-**Status.** Done — `NotebookCursor.submit()` now appends a fresh
+**Status: Shipped.** `NotebookCursor.submit()` now appends a fresh
 empty cell and enters INPUT on it when the user submits a non-empty
 command from the last cell. Empty submits and submits from middle
 cells still stay on the submitted cell.
@@ -272,7 +276,16 @@ INPUT → INPUT so observers see exactly one `[input #…]` banner. See
 
 ## F12 — Shell mode + persistent session CWD
 
-**Gap.** `ExecutionMode.ARGV` is the default, so pipes, redirects,
+**Status: Shipped (superseded by F60).** F60's persistent
+`ShellBackend` handles pipes, redirects, globbing, `$VAR`
+expansion, and shell builtins (`cd`, `export`) without a separate
+ExecutionMode toggle. Session-level CWD persists across cells
+because the long-lived shell keeps its own cwd between commands.
+The CLI exposes the shared shell via `--shell` / `ShellBackend`
+construction; a dedicated `:shell on/off` toggle was not shipped
+because the backend choice is now launch-time and session-scoped.
+
+**Gap (at time of filing).** `ExecutionMode.ARGV` was the default, so pipes, redirects,
 globbing, `$VAR` expansion, and shell builtins do not work. `cd
 /tmp` fails with `No such file or directory: 'cd'` (cd is a
 builtin). There is no session-level working directory either, so
@@ -296,7 +309,7 @@ its own review.
 
 ## F13 — In-line buffer editing
 
-**Status.** Done — `FocusState` now carries `cursor_position`, and
+**Status: Shipped.** `FocusState` now carries `cursor_position`, and
 the NotebookCursor exposes `cursor_left` / `cursor_right` /
 `cursor_home` / `cursor_end` / `delete_forward` / `delete_word_left`
 / `delete_to_start` / `delete_to_end`. INPUT-mode bindings cover
@@ -323,7 +336,7 @@ etc. action names when ready.
 
 ## F14 — ActionMenu keystroke binding
 
-**Status.** Done — `Application.build()` now wires a `MemoryClipboard`,
+**Status: Shipped.** `Application.build()` now wires a `MemoryClipboard`,
 an `ActionCatalog` via `default_actions(...)`, and an `ActionMenu`.
 F2 (and Ctrl+. as a fallback) opens the menu from NOTEBOOK, INPUT,
 and OUTPUT modes. While the menu is open, Up/Down cycle items,
@@ -352,7 +365,7 @@ and `_dispatch_menu_key`.
 
 ## F15 — Cell delete / move / duplicate from keyboard
 
-**Status: Done.**
+**Status: Shipped.**
 
 **Gap.** `Session.remove_cell(cell_id)` and `Session.move_cell(...)`
 exist and are tested, but no keystroke or meta-command reaches
@@ -401,7 +414,7 @@ they don't silently dismiss the overlay.
 
 ## F17 — Richer meta-commands
 
-**Status.** Done (first pass).
+**Status: Shipped.** (first pass).
 
 **Gap.** Meta-commands are case-sensitive, take no arguments, and
 the set is small. `:Help`, `:HELP`, `:help settings`, `:save-as
@@ -440,7 +453,7 @@ cross-cutting file-system handling.
 
 ## F18 — OS clipboard adapter
 
-**Status.** Done.
+**Status: Shipped.**
 
 **Gap.** `MemoryClipboard` is the only `Clipboard` implementation.
 Even if F14 unlocked the menu, "copy output line" would store text
@@ -478,7 +491,7 @@ clipboard support automatically.
 
 ## F19 — Prompt context (exit code, CWD)
 
-**Status.** Done.
+**Status: Shipped.**
 
 **Gap.** The `[input #…]` banner that fires on entering INPUT mode
 carries no context about the prior command's exit code, the
@@ -515,7 +528,7 @@ deterministic.
 
 ## F20 — First-run onboarding
 
-**Status.** Done.
+**Status: Shipped.**
 
 **Gap.** The very first launch of ASAT on a fresh machine is
 indistinguishable from the 100th. The session banner is identical;
@@ -1059,7 +1072,7 @@ asserts the away event fires when focus has moved.
 
 ## F35 — Cell bookmarks
 
-**Status.** Shipped (`:bookmark` / `:jump` / `:bookmarks` /
+**Status: Shipped.** (`:bookmark` / `:jump` / `:bookmarks` /
 `:unbookmark`). The session now owns a `bookmarks: dict[str, str]`
 field (round-tripped in `to_dict`/`from_dict`) plus
 `add_bookmark` / `remove_bookmark` / `get_bookmark` /
@@ -1096,7 +1109,7 @@ narration. Tab-completes cleanly once F23 lands.
 
 ## F36 — Auto-read stderr tail on command failure
 
-**Status.** Shipped.
+**Status: Shipped.**
 
 **Gap.** When a command fails, the user hears the failure chord and
 the exit code, but has to manually enter OUTPUT mode and scroll to
@@ -1734,7 +1747,7 @@ the cluster in short-term context.
 
 ## F50 — Workspace directory model
 
-**Status (2026-04-19).** A minimal slice has shipped:
+**Status: Shipped (minimal slice).** A minimal slice has shipped:
 [`asat/workspace.py`](../asat/workspace.py) defines the
 `Workspace` handle, the `<root>/.asat/{config.json,log/}` +
 `<root>/notebooks/*.asatnb` layout, `init` / `load` /
@@ -3393,6 +3406,8 @@ user files a concrete motivator.
 
 ## F60 — Persistent computational backend (shared shell / REPL)
 
+**Status: Shipped.**
+
 **Sketch (shipped).** POSIX hosts now launch one long-lived
 `bash --norc --noprofile` at session start and route every cell's
 command through it via stdin (`asat/shell_backend.py`). Sentinel
@@ -3491,6 +3506,8 @@ implementation without rewriting it.
 ---
 
 ## F62 — Asynchronous execution queue
+
+**Status: Shipped.**
 
 **Sketch (shipped).** F60 introduced a persistent shell but the
 submission path stayed synchronous: `app.execute(cell_id)` blocked
@@ -3616,7 +3633,7 @@ the interactive viewer.
 
 ## F64 — Keybinding introspection: `:bindings` meta-command and generated reference
 
-**Status (2026-04-19).** Shipped. `BindingEntry`,
+**Status: Shipped.** `BindingEntry`,
 `format_key`, `binding_report`, and
 `format_bindings_markdown` live in `asat/input_router.py`;
 `:bindings` (ambient meta-command) publishes a

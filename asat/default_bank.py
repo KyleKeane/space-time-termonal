@@ -100,6 +100,7 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.BOOKMARK_JUMPED,
     EventType.BOOKMARK_REMOVED,
     EventType.VERBOSITY_CHANGED,
+    EventType.BANK_RELOADED,
     EventType.ANSI_OSC_RECEIVED,
 })
 
@@ -395,6 +396,20 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             sound_id="tick",
             say_template="verbosity {level}",
             priority=180,
+            verbosity="minimal",
+        ),
+
+        # F3 `:reload-bank`. Kept at the "minimal" tier because a
+        # reload always happens in response to the user typing an
+        # explicit meta-command, and a silent success would leave
+        # them wondering whether the file parsed.
+        EventBinding(
+            id="bank_reloaded",
+            event_type=EventType.BANK_RELOADED.value,
+            voice_id="system",
+            sound_id="soft_tick",
+            say_template="bank reloaded from disk",
+            priority=175,
             verbosity="minimal",
         ),
 

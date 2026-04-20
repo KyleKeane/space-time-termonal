@@ -401,6 +401,20 @@ ceiling to a different level. `level` is the new ceiling
 |-----------------------|-----------------------|
 | `VERBOSITY_CHANGED`   | `level`, `previous`   |
 
+## Bank reload
+
+Producer: `asat.app.Application._reload_bank` (`source="app"`), fired
+after `:reload-bank` re-reads the on-disk bank via `SoundBank.load()`
+and swaps it in via `SoundEngine.set_bank()`. Emits only on success;
+missing files, corrupt JSON, or an open settings editor emit
+`HELP_REQUESTED` instead. `path` is the configured `bank_path`
+(stringified), `binding_count` is the number of bindings in the
+freshly loaded bank so narration can confirm the swap.
+
+| EventType         | Payload keys              |
+|-------------------|---------------------------|
+| `BANK_RELOADED`   | `path`, `binding_count`   |
+
 ## Self-check
 
 Producer: `asat.self_check.run_self_check` (`source="self_check"`),
