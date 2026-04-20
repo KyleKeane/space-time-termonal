@@ -163,6 +163,13 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "lines": ["Welcome."],
         "sentinel_path": "/tmp/first-run-done",
     },
+    EventType.FIRST_RUN_TOUR_STEP: {
+        "command": "echo hello, ASAT",
+        "lines": [
+            "Your first cell is ready.",
+            "Press Enter to run it, or use Backspace to edit before running.",
+        ],
+    },
     EventType.WORKSPACE_OPENED: {
         "root": "/tmp/proj",
         "name": "proj",

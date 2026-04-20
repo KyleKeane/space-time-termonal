@@ -345,10 +345,26 @@ class Application:
                 },
                 source="app",
             )
+        # F43: on the very first launch of ASAT, pre-populate the
+        # notebook's first cell with a known-good command so the
+        # newcomer can press Enter and immediately hear the
+        # submit → start → complete → exit-code arc. We check the
+        # sentinel BEFORE `onboarding.run()` flips it, then publish
+        # the tour step AFTER the welcome fires so the audio order
+        # is: welcome → "press Enter to run your first command".
+        from asat.onboarding import FIRST_RUN_TOUR_COMMAND
+
+        first_run_tour = (
+            seeded
+            and onboarding is not None
+            and onboarding.is_first_run()
+        )
         if seeded:
-            cursor.new_cell()
+            cursor.new_cell(FIRST_RUN_TOUR_COMMAND if first_run_tour else "")
         if onboarding is not None:
             onboarding.run()
+        if first_run_tour and onboarding is not None:
+            onboarding.publish_tour_step()
         return app
 
     def handle_key(self, key: Key) -> Optional[str]:

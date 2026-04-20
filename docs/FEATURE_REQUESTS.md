@@ -1431,38 +1431,32 @@ quick-start; cross-reference from F41's silent-sink hint.
 
 ## F43 — Guided first-command tour
 
-**Gap.** F20 (shipped) narrates a welcome and explains the key
-meta-commands, but stops there. The user is then dropped into an
-empty notebook with no prompt to actually run anything, so the
-first-run experience ends on a passive "press colon h e l p" —
-the user still has to invent their own first command to hear what
-`COMMAND_SUBMITTED` / `COMMAND_STARTED` / `COMMAND_COMPLETED` /
-exit-code narration sound like.
+**Status: Shipped.**
 
-**Where it surfaces.** A brand-new user who has just finished
-onboarding knows how to invoke `:help` but has not yet heard any
-of the execution cues that define ASAT's identity. They often
-spend their first minute guessing what to type.
+**Gap (at time of shipping).** F20 narrated a welcome and explained
+the key meta-commands but stopped there. The user was then dropped
+into an empty notebook with no prompt to run anything, so the
+first-run experience ended on a passive "press colon h e l p" —
+the newcomer still had to invent their own first command to hear
+what `COMMAND_SUBMITTED` / `COMMAND_STARTED` / `COMMAND_COMPLETED`
+/ exit-code narration sounded like.
 
-**Sketch.** After `OnboardingCoordinator.run()`
-(`asat/onboarding.py`) publishes `FIRST_RUN_DETECTED` and
-commits the sentinel, queue one follow-up step: pre-populate the
-first cell with `echo hello, ASAT` and narrate *"Press Enter to
-run your first command. Press Escape to clear the line and type
-your own."* Fire a new `FIRST_RUN_TOUR_STEP` event the default
-bank binds to the narrator. The user hears the full
-submit→start→complete arc on a known-good command, learns the
-cues by association, and can replace the placeholder at will.
-
-Cleanly opt-out-able by the same `--quiet` / `--check` /
-sentinel flags as F20. If the user overwrites or clears the
-pre-filled line before pressing Enter, the tour step is
-considered complete either way — we do not re-insert.
-
-**Documentation touch points.** Extend
-`docs/USER_MANUAL.md`'s "Five-minute tour" so the first
-paragraph matches what a fresh install actually does now;
-mention the tour in `README.md` quick-start.
+**Sketch (shipped).** `asat/onboarding.py` gained
+`FIRST_RUN_TOUR_COMMAND = "echo hello, ASAT"` + a short
+`FIRST_RUN_TOUR_LINES` prompt and a new
+`OnboardingCoordinator.publish_tour_step(...)` helper.
+`Application.build()` reads `onboarding.is_first_run()` *before*
+`onboarding.run()` flips the sentinel; when it's a first run and
+the build seeded a fresh session, `cursor.new_cell(...)` is called
+with the tour command so the newcomer's first Enter press exercises
+the full submit → start → complete → exit-code arc. The tour step
+fires after the welcome event so the audio order is "welcome, then
+prompt". If the user clears or rewrites the pre-filled line before
+pressing Enter, the tour is considered complete — the coordinator
+never re-inserts. A new `FIRST_RUN_TOUR_STEP` event in
+`asat/events.py` carries `command` + `lines`; the default bank
+binds it to the narrator voice. `--quiet` / `--check` skip
+onboarding entirely, which transparently skips the tour too.
 
 ---
 

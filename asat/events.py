@@ -73,7 +73,10 @@ class EventType(str, Enum):
         PROMPT_REFRESH
 
     Onboarding:
-        FIRST_RUN_DETECTED
+        FIRST_RUN_DETECTED, FIRST_RUN_TOUR_STEP (F43: the guided first-
+        command tour event that narrates "press Enter to run your first
+        command" while the notebook's first cell is pre-populated with
+        ``echo hello, ASAT``).
 
     Workspace (F50):
         WORKSPACE_OPENED fires once on launch with the resolved
@@ -159,6 +162,7 @@ class EventType(str, Enum):
     PROMPT_REFRESH = "prompt.refresh"
 
     FIRST_RUN_DETECTED = "onboarding.first_run"
+    FIRST_RUN_TOUR_STEP = "onboarding.first_run.tour_step"
 
     WORKSPACE_OPENED = "workspace.opened"
     NOTEBOOK_OPENED = "workspace.notebook.opened"

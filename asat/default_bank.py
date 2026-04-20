@@ -91,6 +91,7 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.HELP_REQUESTED,
     EventType.PROMPT_REFRESH,
     EventType.FIRST_RUN_DETECTED,
+    EventType.FIRST_RUN_TOUR_STEP,
     EventType.WORKSPACE_OPENED,
     EventType.NOTEBOOK_OPENED,
     EventType.NOTEBOOK_CREATED,
@@ -805,6 +806,22 @@ def _default_bindings() -> tuple[EventBinding, ...]:
                 "cheat sheet."
             ),
             priority=250,
+        ),
+
+        # F43: the guided first-command tour. The notebook's first cell
+        # has just been pre-populated with `echo hello, ASAT`; this
+        # narrator beat tells the user they can press Enter to run it
+        # or Escape to clear and type their own command. Fires once,
+        # right after the F20 welcome.
+        EventBinding(
+            id="first_run_tour_step",
+            event_type=EventType.FIRST_RUN_TOUR_STEP.value,
+            voice_id="narrator",
+            say_template=(
+                "Your first cell has {command} ready to go. "
+                "Press Enter to run it."
+            ),
+            priority=245,
         ),
 
         # Prompt context: when the user lands in INPUT mode AFTER a

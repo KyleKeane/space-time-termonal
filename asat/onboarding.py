@@ -43,6 +43,18 @@ DEFAULT_ONBOARDING_LINES: tuple[str, ...] = (
 )
 
 
+# F43: after the welcome tour fires we pre-populate the first cell
+# with a known-good command so a brand-new user hears the submit →
+# start → complete → exit-code arc on their first Enter press.
+FIRST_RUN_TOUR_COMMAND: str = "echo hello, ASAT"
+
+
+FIRST_RUN_TOUR_LINES: tuple[str, ...] = (
+    "Your first cell is ready.",
+    "Press Enter to run it, or use Backspace to edit before running.",
+)
+
+
 SILENT_SINK_HINT = (
     "[asat] First-run welcome is narrating into an in-memory sink so "
     "you will not hear it. Pass --live (Windows) or --wav-dir DIR to "
@@ -126,6 +138,27 @@ class OnboardingCoordinator:
         self._sentinel_path.parent.mkdir(parents=True, exist_ok=True)
         self._sentinel_path.write_text("first-run-done\n", encoding="utf-8")
         return True
+
+    def publish_tour_step(
+        self,
+        *,
+        command: str = FIRST_RUN_TOUR_COMMAND,
+        lines: Iterable[str] = FIRST_RUN_TOUR_LINES,
+    ) -> None:
+        """Publish F43's `FIRST_RUN_TOUR_STEP` event.
+
+        Application.build calls this exactly once per first run, right
+        after pre-populating the notebook's first cell with `command`.
+        Kept here (rather than inlined in Application) so the tour's
+        command + narration live next to the rest of the onboarding
+        vocabulary and can be reused by future tour variants.
+        """
+        publish_event(
+            self._bus,
+            EventType.FIRST_RUN_TOUR_STEP,
+            {"command": command, "lines": list(lines)},
+            source=self.SOURCE,
+        )
 
     def reset(self) -> None:
         """Delete the sentinel so the next `.run()` re-fires the tour."""

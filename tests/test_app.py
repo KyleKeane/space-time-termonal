@@ -160,6 +160,72 @@ class ApplicationBuildTests(unittest.TestCase):
             self.assertLess(session_idx, welcome_idx)
             self.assertTrue(sentinel.exists())
 
+    def test_first_run_tour_prefills_cell_and_fires_tour_step(self) -> None:
+        """F43: a first-run Application.build pre-populates the seeded
+        notebook's first cell with `echo hello, ASAT` and publishes
+        FIRST_RUN_TOUR_STEP right after FIRST_RUN_DETECTED."""
+        import tempfile
+        from pathlib import Path
+
+        from asat.event_bus import EventBus
+        from asat.onboarding import FIRST_RUN_TOUR_COMMAND, OnboardingCoordinator
+
+        with tempfile.TemporaryDirectory() as td:
+            sentinel = Path(td) / "first-run-done"
+            seen: list[EventType] = []
+
+            def _factory(bus: EventBus) -> OnboardingCoordinator:
+                bus.subscribe("*", lambda e: seen.append(e.event_type))
+                return OnboardingCoordinator(bus, sentinel)
+
+            app = Application.build(onboarding_factory=_factory)
+
+            self.assertEqual(len(app.session.cells), 1)
+            self.assertEqual(
+                app.session.cells[0].command, FIRST_RUN_TOUR_COMMAND
+            )
+            welcome_idx = seen.index(EventType.FIRST_RUN_DETECTED)
+            tour_idx = seen.index(EventType.FIRST_RUN_TOUR_STEP)
+            self.assertLess(welcome_idx, tour_idx)
+
+    def test_second_run_skips_tour_prefill(self) -> None:
+        """F43: once the sentinel exists, the build must NOT pre-fill
+        the cell — a returning user would otherwise open every session
+        with a stale `echo hello, ASAT`."""
+        import tempfile
+        from pathlib import Path
+
+        from asat.event_bus import EventBus
+        from asat.onboarding import OnboardingCoordinator
+
+        with tempfile.TemporaryDirectory() as td:
+            sentinel = Path(td) / "first-run-done"
+            sentinel.write_text("done\n", encoding="utf-8")
+
+            seen: list[EventType] = []
+
+            def _factory(bus: EventBus) -> OnboardingCoordinator:
+                bus.subscribe("*", lambda e: seen.append(e.event_type))
+                return OnboardingCoordinator(bus, sentinel)
+
+            app = Application.build(onboarding_factory=_factory)
+
+            self.assertEqual(app.session.cells[0].command, "")
+            self.assertNotIn(EventType.FIRST_RUN_TOUR_STEP, seen)
+
+    def test_no_onboarding_factory_skips_tour(self) -> None:
+        """Tests and --quiet mode leave onboarding off; F43 must not
+        run in that path either."""
+        from asat.events import EventType
+
+        app = Application.build()
+
+        self.assertEqual(app.session.cells[0].command, "")
+        # No events of this kind should have fired; if the app ever
+        # subscribes to it for its own reasons we still want the cell
+        # to stay empty.
+        self.assertIsNone(app.onboarding)
+
 
 class ApplicationSharedShellTests(unittest.TestCase):
     """End-to-end check that two cells submitted through one
@@ -372,12 +438,16 @@ class ApplicationMetaCommandTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             sentinel = Path(td) / "first-run-done"
+            # Pre-seed the sentinel so Application.build takes the
+            # post-first-run path and leaves the cell empty — the F43
+            # tour pre-populates the cell on a genuine first run, and
+            # this test is only about the `:welcome` replay path.
+            sentinel.write_text("done\n", encoding="utf-8")
 
             def _factory(bus: EventBus) -> OnboardingCoordinator:
                 return OnboardingCoordinator(bus, sentinel)
 
             app = Application.build(onboarding_factory=_factory)
-            # Launch fired FIRST_RUN_DETECTED once and wrote the sentinel.
             first_mtime = sentinel.stat().st_mtime_ns
 
             replays: list[dict] = []
