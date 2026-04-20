@@ -232,6 +232,29 @@ class SoundEngine:
         self._bank = bank
         self._resubscribe()
 
+    def set_verbosity_level(self, level: str) -> SoundBank:
+        """F31: change the bank's verbosity ceiling and announce it.
+
+        Builds a new bank via `SoundBank.with_verbosity_level` (which
+        validates `level`), swaps it in via `set_bank`, then publishes
+        a `VERBOSITY_CHANGED` event carrying the previous and new
+        levels so observers (default-bank narration, future settings
+        editor) can react. Returns the new bank for callers that need
+        to chain further edits.
+        """
+        previous = self._bank.verbosity_level
+        new_bank = self._bank.with_verbosity_level(level)
+        if new_bank.verbosity_level == previous:
+            return new_bank
+        self.set_bank(new_bank)
+        publish_event(
+            self._bus,
+            EventType.VERBOSITY_CHANGED,
+            {"level": new_bank.verbosity_level, "previous": previous},
+            source=self.SOURCE,
+        )
+        return new_bank
+
     def close(self) -> None:
         """Unsubscribe from every active event type and close the sink."""
         for event_type in list(self._subscribed_types):

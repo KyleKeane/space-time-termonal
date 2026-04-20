@@ -73,7 +73,10 @@ class EventType(str, Enum):
         PROMPT_REFRESH
 
     Onboarding:
-        FIRST_RUN_DETECTED
+        FIRST_RUN_DETECTED, FIRST_RUN_TOUR_STEP (F43: the guided first-
+        command tour event that narrates "press Enter to run your first
+        command" while the notebook's first cell is pre-populated with
+        ``echo hello, ASAT``).
 
     Workspace (F50):
         WORKSPACE_OPENED fires once on launch with the resolved
@@ -128,6 +131,8 @@ class EventType(str, Enum):
 
     OUTPUT_CHUNK = "output.chunk"
     ERROR_CHUNK = "error.chunk"
+    OUTPUT_STREAM_PAUSED = "output.stream.paused"
+    OUTPUT_STREAM_BEAT = "output.stream.beat"
 
     FOCUS_CHANGED = "focus.changed"
     KEY_PRESSED = "input.key"
@@ -157,6 +162,7 @@ class EventType(str, Enum):
     PROMPT_REFRESH = "prompt.refresh"
 
     FIRST_RUN_DETECTED = "onboarding.first_run"
+    FIRST_RUN_TOUR_STEP = "onboarding.first_run.tour_step"
 
     WORKSPACE_OPENED = "workspace.opened"
     NOTEBOOK_OPENED = "workspace.notebook.opened"
@@ -186,6 +192,8 @@ class EventType(str, Enum):
     ANSI_BELL = "ansi.bell"
 
     SELF_CHECK_STEP = "self_check.step"
+
+    VERBOSITY_CHANGED = "verbosity.changed"
 
 
 @dataclass(frozen=True)

@@ -121,11 +121,17 @@ worker entirely.
 ## Output streaming
 
 Producer: `asat.kernel.ExecutionKernel` as the subprocess streams.
+`OUTPUT_STREAM_PAUSED` and `OUTPUT_STREAM_BEAT` (F37) are synthesised
+by `asat.streaming_monitor.StreamingMonitor`, which subscribes to the
+chunk stream and publishes pacing cues when the stream goes quiet or
+when a beat interval elapses.
 
-| EventType      | Payload keys               |
-|----------------|----------------------------|
-| `OUTPUT_CHUNK` | `cell_id`, `line`          |
-| `ERROR_CHUNK`  | `cell_id`, `line`          |
+| EventType              | Payload keys                      | Source              |
+|------------------------|-----------------------------------|---------------------|
+| `OUTPUT_CHUNK`         | `cell_id`, `line`                 | `kernel`            |
+| `ERROR_CHUNK`          | `cell_id`, `line`                 | `kernel`            |
+| `OUTPUT_STREAM_PAUSED` | `cell_id`, `gap_sec`              | `streaming_monitor` |
+| `OUTPUT_STREAM_BEAT`   | `cell_id`, `elapsed_sec`          | `streaming_monitor` |
 
 ## Input + focus router
 
@@ -335,13 +341,19 @@ Producer: `asat.onboarding.OnboardingCoordinator` (`source="onboarding"`).
 file) when ASAT launches for the first time, and again on demand via
 the `:welcome` meta-command with `replay=True`.
 
-| EventType            | Payload keys                                         |
-|----------------------|------------------------------------------------------|
-| `FIRST_RUN_DETECTED` | `lines`, `sentinel_path`, `replay`                   |
+| EventType              | Payload keys                                         |
+|------------------------|------------------------------------------------------|
+| `FIRST_RUN_DETECTED`   | `lines`, `sentinel_path`, `replay`                   |
+| `FIRST_RUN_TOUR_STEP`  | `command`, `lines`                                   |
 
 `replay` is `True` when the event is a `:welcome` re-invocation and
 `False` on the genuine first run; a binding that wants to sound
 different on replay can key off it.
+
+`FIRST_RUN_TOUR_STEP` (F43) fires exactly once, right after
+`FIRST_RUN_DETECTED` on a first launch. `command` is the pre-populated
+first-cell command (default `echo hello, ASAT`); `lines` is a short
+spoken prompt telling the user Enter runs it and Escape clears it.
 
 ## Workspace
 
@@ -377,6 +389,17 @@ prune; the router publishes the event when the user invoked
 | `BOOKMARK_CREATED`  | `name`, `cell_id`                                |
 | `BOOKMARK_JUMPED`   | `name`, `cell_id`                                |
 | `BOOKMARK_REMOVED`  | `name`, `cell_id`                                |
+
+## Narration verbosity
+
+Producer: `asat.sound_engine.SoundEngine` (`source="sound_engine"`),
+fired when `set_verbosity_level` swaps the bank's F31 narration
+ceiling to a different level. `level` is the new ceiling
+(`minimal` / `normal` / `verbose`); `previous` is the prior ceiling.
+
+| EventType             | Payload keys          |
+|-----------------------|-----------------------|
+| `VERBOSITY_CHANGED`   | `level`, `previous`   |
 
 ## Self-check
 

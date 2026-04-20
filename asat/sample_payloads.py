@@ -55,6 +55,8 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
     EventType.QUEUE_DRAINED: {"last_cell_id": "c1", "queue_depth": 0},
     EventType.OUTPUT_CHUNK: {"cell_id": "c1", "line": "hello"},
     EventType.ERROR_CHUNK: {"cell_id": "c1", "line": "boom"},
+    EventType.OUTPUT_STREAM_PAUSED: {"cell_id": "c1", "gap_sec": 5.2},
+    EventType.OUTPUT_STREAM_BEAT: {"cell_id": "c1", "elapsed_sec": 30.0},
     EventType.FOCUS_CHANGED: {
         "old_mode": "notebook",
         "new_mode": "input",
@@ -161,6 +163,13 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "lines": ["Welcome."],
         "sentinel_path": "/tmp/first-run-done",
     },
+    EventType.FIRST_RUN_TOUR_STEP: {
+        "command": "echo hello, ASAT",
+        "lines": [
+            "Your first cell is ready.",
+            "Press Enter to run it, or use Backspace to edit before running.",
+        ],
+    },
     EventType.WORKSPACE_OPENED: {
         "root": "/tmp/proj",
         "name": "proj",
@@ -181,6 +190,7 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
     EventType.BOOKMARK_CREATED: {"name": "setup", "cell_id": "c1"},
     EventType.BOOKMARK_JUMPED: {"name": "setup", "cell_id": "c1"},
     EventType.BOOKMARK_REMOVED: {"name": "setup", "cell_id": "c1"},
+    EventType.VERBOSITY_CHANGED: {"level": "normal", "previous": "verbose"},
     EventType.ANSI_OSC_RECEIVED: {
         "cell_id": "c1",
         "body": "133;A",

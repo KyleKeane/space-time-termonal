@@ -53,6 +53,7 @@ from asat.session import Session
 from asat.settings_controller import SettingsController
 from asat.sound_bank import SoundBank
 from asat.sound_engine import SoundEngine
+from asat.streaming_monitor import StreamingMonitor
 from asat.terminal import TerminalRenderer
 from asat.workspace import Workspace, WorkspaceError
 
@@ -85,6 +86,7 @@ class Application:
     prompt_context: PromptContext
     error_tail: StderrTailAnnouncer
     completion_watcher: CompletionFocusWatcher
+    streaming_monitor: Optional[StreamingMonitor] = None
     onboarding: Optional[OnboardingCoordinator] = None
     event_logger: Optional[JsonlEventLogger] = None
     session_path: Optional[Path] = None
@@ -252,6 +254,13 @@ class Application:
         # first focus event fires (via cursor.new_cell below) so the
         # shadow focus is never empty when a command completes (F34).
         completion_watcher = CompletionFocusWatcher(bus)
+        # streaming_monitor (F37) subscribes alongside completion_watcher
+        # so the silence / beat windows track every cell from the first
+        # COMMAND_STARTED onward. The background ticker is a daemon
+        # thread, safe to start unconditionally — tests still drive
+        # `check()` with an injected clock and never observe the ticker.
+        streaming_monitor = StreamingMonitor(bus)
+        streaming_monitor.start_background_ticker()
         if text_trace is not None:
             TerminalRenderer(bus, stream=text_trace)
         onboarding = onboarding_factory(bus) if onboarding_factory is not None else None
@@ -280,6 +289,7 @@ class Application:
             prompt_context=prompt_context,
             error_tail=error_tail,
             completion_watcher=completion_watcher,
+            streaming_monitor=streaming_monitor,
             onboarding=onboarding,
             event_logger=event_logger,
             session_path=Path(session_path) if session_path is not None else None,
@@ -335,10 +345,26 @@ class Application:
                 },
                 source="app",
             )
+        # F43: on the very first launch of ASAT, pre-populate the
+        # notebook's first cell with a known-good command so the
+        # newcomer can press Enter and immediately hear the
+        # submit → start → complete → exit-code arc. We check the
+        # sentinel BEFORE `onboarding.run()` flips it, then publish
+        # the tour step AFTER the welcome fires so the audio order
+        # is: welcome → "press Enter to run your first command".
+        from asat.onboarding import FIRST_RUN_TOUR_COMMAND
+
+        first_run_tour = (
+            seeded
+            and onboarding is not None
+            and onboarding.is_first_run()
+        )
         if seeded:
-            cursor.new_cell()
+            cursor.new_cell(FIRST_RUN_TOUR_COMMAND if first_run_tour else "")
         if onboarding is not None:
             onboarding.run()
+        if first_run_tour and onboarding is not None:
+            onboarding.publish_tour_step()
         return app
 
     def handle_key(self, key: Key) -> Optional[str]:
@@ -384,6 +410,8 @@ class Application:
         # torn-down backend.
         if self.execution_worker is not None:
             self.execution_worker.close()
+        if self.streaming_monitor is not None:
+            self.streaming_monitor.close()
         if self.session_path is not None:
             self.session.save(self.session_path)
             publish_event(
@@ -435,6 +463,8 @@ class Application:
                 self._announce_notebook_list()
             elif meta == "new-notebook":
                 self._create_notebook(str(payload.get("meta_argument", "")))
+            elif meta == "verbosity":
+                self._set_verbosity(str(payload.get("meta_argument", "")))
 
     def _cancel_running_command(self) -> None:
         """`cancel_command` (Ctrl+C in INPUT mode) — F1.
@@ -612,3 +642,39 @@ class Application:
             },
             source="app",
         )
+
+    def _set_verbosity(self, argument: str) -> None:
+        """`:verbosity <level>` — swap the bank's F31 narration ceiling.
+
+        Malformed arguments emit HELP_REQUESTED listing the allowed
+        levels instead of crashing; the engine itself publishes
+        VERBOSITY_CHANGED when the swap takes effect so the user
+        hears the new preset through the default-bank binding.
+        """
+        from asat.sound_bank import SoundBankError, VERBOSITY_LEVELS
+
+        level = argument.strip().lower()
+        if not level:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {
+                    "lines": [
+                        "`:verbosity <level>` — level is one of "
+                        + ", ".join(VERBOSITY_LEVELS)
+                        + ".",
+                        f"Currently: {self.sound_engine.bank.verbosity_level}.",
+                    ],
+                },
+                source="app",
+            )
+            return
+        try:
+            self.sound_engine.set_verbosity_level(level)
+        except SoundBankError as exc:
+            publish_event(
+                self.bus,
+                EventType.HELP_REQUESTED,
+                {"lines": [str(exc)]},
+                source="app",
+            )

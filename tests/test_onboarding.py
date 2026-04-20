@@ -11,6 +11,8 @@ from asat.event_bus import EventBus
 from asat.events import Event, EventType
 from asat.onboarding import (
     DEFAULT_ONBOARDING_LINES,
+    FIRST_RUN_TOUR_COMMAND,
+    FIRST_RUN_TOUR_LINES,
     SILENT_SINK_HINT,
     OnboardingCoordinator,
 )
@@ -221,6 +223,35 @@ class OnboardingCoordinatorTests(unittest.TestCase):
         coordinator.run(force=True)
 
         self.assertEqual(stream.getvalue(), "")
+
+    def test_publish_tour_step_fires_first_run_tour_step_event(self) -> None:
+        """F43: the coordinator publishes FIRST_RUN_TOUR_STEP with the
+        pre-filled command and the short prompt lines so the default
+        bank can narrate them."""
+        bus = EventBus()
+        recorder = _Recorder(bus)
+        coordinator = OnboardingCoordinator(bus, self.sentinel)
+
+        coordinator.publish_tour_step()
+
+        events = recorder.of(EventType.FIRST_RUN_TOUR_STEP)
+        self.assertEqual(len(events), 1)
+        payload = events[0].payload
+        self.assertEqual(payload["command"], FIRST_RUN_TOUR_COMMAND)
+        self.assertEqual(payload["lines"], list(FIRST_RUN_TOUR_LINES))
+
+    def test_publish_tour_step_accepts_custom_command(self) -> None:
+        """Callers can override the tour command for localisation or
+        environment-specific seeds (e.g. `Get-Date` on PowerShell)."""
+        bus = EventBus()
+        recorder = _Recorder(bus)
+        coordinator = OnboardingCoordinator(bus, self.sentinel)
+
+        coordinator.publish_tour_step(command="Get-Date", lines=("Press Enter.",))
+
+        payload = recorder.of(EventType.FIRST_RUN_TOUR_STEP)[0].payload
+        self.assertEqual(payload["command"], "Get-Date")
+        self.assertEqual(payload["lines"], ["Press Enter."])
 
     def test_default_lines_mention_help_and_quit(self) -> None:
         # Sanity check the welcome text a newcomer will actually hear

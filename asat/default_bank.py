@@ -66,6 +66,8 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.QUEUE_DRAINED,
     EventType.OUTPUT_CHUNK,
     EventType.ERROR_CHUNK,
+    EventType.OUTPUT_STREAM_PAUSED,
+    EventType.OUTPUT_STREAM_BEAT,
     EventType.FOCUS_CHANGED,
     EventType.OUTPUT_LINE_FOCUSED,
     EventType.ACTION_MENU_OPENED,
@@ -89,6 +91,7 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.HELP_REQUESTED,
     EventType.PROMPT_REFRESH,
     EventType.FIRST_RUN_DETECTED,
+    EventType.FIRST_RUN_TOUR_STEP,
     EventType.WORKSPACE_OPENED,
     EventType.NOTEBOOK_OPENED,
     EventType.NOTEBOOK_CREATED,
@@ -96,6 +99,7 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.BOOKMARK_CREATED,
     EventType.BOOKMARK_JUMPED,
     EventType.BOOKMARK_REMOVED,
+    EventType.VERBOSITY_CHANGED,
     EventType.ANSI_OSC_RECEIVED,
 })
 
@@ -259,6 +263,25 @@ def _default_sounds() -> tuple[SoundRecipe, ...]:
             azimuth=55.0,
             elevation=10.0,
         ),
+        # F37: pacing cues for long-running commands. `stream_paused`
+        # is a single low sine so the user hears the stream go quiet
+        # without being startled. `stream_beat` is a very short, very
+        # quiet blip so a noisy build feels like it's ticking along
+        # without the progress tick itself becoming annoying.
+        SoundRecipe(
+            id="stream_paused",
+            kind="tone",
+            params={"frequency": 196.0, "duration": 0.12, "waveform": "sine"},
+            volume=0.45,
+            elevation=-10.0,
+        ),
+        SoundRecipe(
+            id="stream_beat",
+            kind="tone",
+            params={"frequency": 1480.0, "duration": 0.02, "waveform": "sine"},
+            volume=0.25,
+            elevation=25.0,
+        ),
         # F7: short, unobtrusive blip for OSC 133 prompt-start markers.
         # Quieter and higher than `start` so a user whose shell paints
         # a prompt every command doesn't get pummelled with the same
@@ -360,6 +383,19 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             sound_id="cancel",
             say_template="removed bookmark {name}",
             priority=160,
+        ),
+
+        # Narration verbosity presets (F31). Kept at the "minimal"
+        # tier so the user hears every preset change, including when
+        # they just dropped the bank to minimal.
+        EventBinding(
+            id="verbosity_changed",
+            event_type=EventType.VERBOSITY_CHANGED.value,
+            voice_id="system",
+            sound_id="tick",
+            say_template="verbosity {level}",
+            priority=180,
+            verbosity="minimal",
         ),
 
         # Cell lifecycle: small blips, no speech to stay quiet.
@@ -502,6 +538,25 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             voice_id="alert",
             say_template="{line}",
             priority=90,
+        ),
+
+        # F37: pacing cues for long-running commands. `stream_paused`
+        # fires once per quiet window (default: five seconds with no
+        # chunk); `stream_beat` fires every thirty seconds the stream
+        # is alive. Kept at the default "normal" tier so they play out
+        # of the box — minimal banks skip them, and users who want
+        # total silence during long builds disable the bindings.
+        EventBinding(
+            id="output_stream_paused",
+            event_type=EventType.OUTPUT_STREAM_PAUSED.value,
+            sound_id="stream_paused",
+            priority=85,
+        ),
+        EventBinding(
+            id="output_stream_beat",
+            event_type=EventType.OUTPUT_STREAM_BEAT.value,
+            sound_id="stream_beat",
+            priority=70,
         ),
 
         # Navigation cues: mode changes are overhead ("system") and
@@ -751,6 +806,22 @@ def _default_bindings() -> tuple[EventBinding, ...]:
                 "cheat sheet."
             ),
             priority=250,
+        ),
+
+        # F43: the guided first-command tour. The notebook's first cell
+        # has just been pre-populated with `echo hello, ASAT`; this
+        # narrator beat tells the user they can press Enter to run it
+        # or Escape to clear and type their own command. Fires once,
+        # right after the F20 welcome.
+        EventBinding(
+            id="first_run_tour_step",
+            event_type=EventType.FIRST_RUN_TOUR_STEP.value,
+            voice_id="narrator",
+            say_template=(
+                "Your first cell has {command} ready to go. "
+                "Press Enter to run it."
+            ),
+            priority=245,
         ),
 
         # Prompt context: when the user lands in INPUT mode AFTER a

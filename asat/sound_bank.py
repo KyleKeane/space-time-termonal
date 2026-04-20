@@ -43,6 +43,15 @@ SOUND_KINDS = ("tone", "chord", "sample", "silence")
 VOICE_OVERRIDE_FIELDS = ("rate", "pitch", "volume", "azimuth", "elevation")
 SOUND_OVERRIDE_FIELDS = ("volume", "azimuth", "elevation")
 
+# F31: tiered narration. A binding's `verbosity` says how chatty it is
+# ("minimal" = critical only, "verbose" = chatty), and the bank's
+# `verbosity_level` is the user's current ceiling. The engine plays a
+# binding only when its rank <= the bank's rank, so raising the level
+# unlocks chattier tiers and lowering it silences them without losing
+# the bindings themselves.
+VERBOSITY_LEVELS: tuple[str, ...] = ("minimal", "normal", "verbose")
+VERBOSITY_RANK: dict[str, int] = {level: rank for rank, level in enumerate(VERBOSITY_LEVELS)}
+
 
 class SoundBankError(ValueError):
     """Raised when a SoundBank document fails structural validation."""
@@ -206,6 +215,12 @@ class EventBinding:
     enabled: bool = True
     voice_overrides: dict[str, float] = field(default_factory=dict)
     sound_overrides: dict[str, float] = field(default_factory=dict)
+    # F31: which verbosity tier this binding belongs to. The engine
+    # filters out bindings whose tier is stricter than the bank's
+    # current `verbosity_level` (e.g. a "verbose" keystroke cue is
+    # silent under "minimal"), but never modifies the binding itself
+    # so flipping back restores the cue without an edit.
+    verbosity: str = "normal"
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize this binding to a JSON-compatible dictionary."""
@@ -220,6 +235,7 @@ class EventBinding:
             "enabled": self.enabled,
             "voice_overrides": dict(self.voice_overrides),
             "sound_overrides": dict(self.sound_overrides),
+            "verbosity": self.verbosity,
         }
 
     @classmethod
@@ -259,6 +275,7 @@ class EventBinding:
             enabled=bool(data.get("enabled", True)),
             voice_overrides=voice_overrides,
             sound_overrides=sound_overrides,
+            verbosity=_verbosity(data.get("verbosity", "normal"), "binding.verbosity"),
         )
 
 
@@ -282,6 +299,11 @@ class SoundBank:
     # they round-trip through JSON without any custom coercion.
     ducking_enabled: bool = True
     duck_level: float = 0.4
+    # F31: bank-wide verbosity ceiling. The engine plays a binding
+    # only when its `verbosity` rank is <= this level's rank
+    # (minimal=0 < normal=1 < verbose=2). Lowering the ceiling
+    # silences chattier tiers without removing the bindings.
+    verbosity_level: str = "normal"
 
     def voice_for(self, voice_id: str) -> Optional[Voice]:
         """Return the voice with this id, or None if it is missing."""
@@ -297,20 +319,42 @@ class SoundBank:
                 return sound
         return None
 
-    def bindings_for(self, event_type: str, *, include_disabled: bool = False) -> tuple[EventBinding, ...]:
+    def bindings_for(
+        self,
+        event_type: str,
+        *,
+        include_disabled: bool = False,
+        respect_verbosity: bool = True,
+    ) -> tuple[EventBinding, ...]:
         """Return bindings matching event_type, sorted by priority desc.
 
         Enabled bindings come first by default; pass include_disabled
-        when an editor needs to surface the full list.
+        when an editor needs to surface the full list. Verbosity
+        filtering (F31) is on by default so the engine sees only the
+        bindings the current preset allows; the editor passes
+        ``respect_verbosity=False`` to surface all bindings.
         """
+        ceiling = VERBOSITY_RANK[self.verbosity_level]
         matches = [
             binding
             for binding in self.bindings
             if binding.event_type == event_type
             and (include_disabled or binding.enabled)
+            and (
+                not respect_verbosity
+                or VERBOSITY_RANK.get(binding.verbosity, VERBOSITY_RANK["normal"]) <= ceiling
+            )
         ]
         matches.sort(key=lambda b: b.priority, reverse=True)
         return tuple(matches)
+
+    def with_verbosity_level(self, level: str) -> "SoundBank":
+        """Return a copy of the bank with `verbosity_level` set to `level`.
+
+        Raises `SoundBankError` for unknown levels so callers (engine,
+        meta-command handler) get a uniform validation surface.
+        """
+        return replace(self, verbosity_level=_verbosity(level, "verbosity_level"))
 
     def validate(self) -> None:
         """Raise SoundBankError if internal references are inconsistent.
@@ -343,6 +387,7 @@ class SoundBank:
             "bindings": [binding.to_dict() for binding in self.bindings],
             "ducking_enabled": self.ducking_enabled,
             "duck_level": self.duck_level,
+            "verbosity_level": self.verbosity_level,
         }
 
     @classmethod
@@ -361,6 +406,7 @@ class SoundBank:
         )
         ducking_enabled = bool(data.get("ducking_enabled", True))
         duck_level = _unit_float(data.get("duck_level", 0.4), "duck_level")
+        verbosity_level = _verbosity(data.get("verbosity_level", "normal"), "verbosity_level")
         bank = cls(
             voices=voices,
             sounds=sounds,
@@ -368,6 +414,7 @@ class SoundBank:
             version=version,
             ducking_enabled=ducking_enabled,
             duck_level=duck_level,
+            verbosity_level=verbosity_level,
         )
         bank.validate()
         return bank
@@ -437,6 +484,17 @@ def _angle(value: Any, label: str, low: float, high: float) -> float:
     if number < low or number > high:
         raise SoundBankError(f"{label} must be in [{low}, {high}], got {number}")
     return number
+
+
+def _verbosity(value: Any, label: str) -> str:
+    """Coerce value to a known verbosity level; raise on anything else."""
+    if not isinstance(value, str):
+        raise SoundBankError(f"{label} must be a string, got {type(value).__name__}")
+    if value not in VERBOSITY_RANK:
+        raise SoundBankError(
+            f"{label} must be one of {VERBOSITY_LEVELS}, got {value!r}"
+        )
+    return value
 
 
 def _unit_float(value: Any, label: str) -> float:

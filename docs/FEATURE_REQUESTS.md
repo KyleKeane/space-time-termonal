@@ -221,10 +221,16 @@ Document the SOFA-to-stereo-WAV conversion recipe in AUDIO.md.
 
 ## F10 — Non-blocking execution + cancel keystroke
 
-**Gap.** `Application.execute(cell_id)` runs the kernel synchronously,
-so while a command is running the entry-point loop cannot read keys.
-That makes F1 (Ctrl+C cancel) impossible to implement without moving
-execution off the main thread.
+**Status: Shipped.** `ExecutionKernel` runs each cell on a worker
+thread under `_cancel_lock`/`_cancelled_cells` state, exposes
+`cancel(cell_id)` that terminates the subprocess and publishes
+`COMMAND_CANCELLED`, and the router binds Ctrl+C in INPUT mode to
+that path (the F1 entry tracks the keystroke shipping).
+
+**Gap (at time of shipping).** `Application.execute(cell_id)` ran the
+kernel synchronously, so while a command was running the entry-point
+loop could not read keys. That made F1 (Ctrl+C cancel) impossible to
+implement without moving execution off the main thread.
 
 **Where it surfaces.** Every long-running command — `pytest`, `npm
 install`, `git clone` — blocks the whole terminal until it finishes.
@@ -955,10 +961,23 @@ is left as F30b for a future sweep.
 
 ## F31 — Narration verbosity presets
 
-**Gap.** Some users want bare-minimum narration (errors + exit codes
-only), others want chatty feedback on every keystroke. Today, the
-only way to quiet a class of events is to manually disable bindings
-one-by-one in the settings editor.
+**Status: Shipped.** `EventBinding` carries `verbosity`
+(`minimal` / `normal` / `verbose`, default `normal`) and `SoundBank`
+carries a matching `verbosity_level` ceiling. `bindings_for` now
+filters by verbosity by default so the engine only sees the bindings
+the current preset allows; the editor passes `respect_verbosity=False`
+to keep surfacing every record. `:verbosity <level>` calls
+`SoundEngine.set_verbosity_level`, which swaps the bank and publishes
+`VERBOSITY_CHANGED` — the default bank binds that event at the
+`minimal` tier so the user always hears the new preset, even when
+they just dropped to `minimal`. Round-trips through JSON and the
+schema documents both fields. `Ctrl+M` cycling inside SETTINGS and a
+settings-editor row for the ceiling remain as follow-ups.
+
+**Gap (at time of shipping).** Some users want bare-minimum narration
+(errors + exit codes only), others want chatty feedback on every
+keystroke. Today, the only way to quiet a class of events is to
+manually disable bindings one-by-one in the settings editor.
 
 **Where it surfaces.** A user running a 10-minute build doesn't need
 per-line narration but does want the failure cue; today they have
@@ -1116,25 +1135,31 @@ stderr and feed both OUTPUT-mode review and the F36 announcer.
 
 ## F37 — Long-output pacing
 
-**Gap.** A command emitting thousands of lines produces a continuous
-narration stream. After thirty seconds the user has lost sense of
-progress and the per-line cues become noise. There's no silence
-detection ("it's been quiet for 10s — still running?") and no
-periodic progress beat during streaming.
+**Status: Shipped.**
 
-**Where it surfaces.** `pytest -v`, `make`, log-tailing. Also:
-commands that hang silently have no distinguishing cue from commands
-that are just slow.
+**Gap (at time of shipping).** A command emitting thousands of lines
+produced a continuous narration stream. After thirty seconds the user
+had lost sense of progress and the per-line cues became noise. There
+was no silence detection ("it's been quiet for 10s — still running?")
+and no periodic progress beat during streaming.
 
-**Sketch.** A `StreamingMonitor` subscribes to `OUTPUT_CHUNK` and
-`COMMAND_STARTED`/`_COMPLETED` for the active cell. It tracks the
-time since the last chunk; if the gap crosses `silence_threshold_sec`
-(default 5.0) it publishes `OUTPUT_STREAM_PAUSED`, and every
-`progress_beat_interval_sec` (default 30.0) while output is
-streaming it publishes `OUTPUT_STREAM_BEAT`. Both are opt-in
-bindings — the default bank binds them to subtle non-speech cues.
-Pairs with F24 (continuous playback): together they give the user a
-temporal frame for long-running output.
+**Sketch (shipped).** New `asat/streaming_monitor.py` holds a
+`StreamingMonitor` that subscribes to `COMMAND_STARTED`,
+`OUTPUT_CHUNK`, `ERROR_CHUNK`, `COMMAND_COMPLETED`/`_FAILED`/
+`_CANCELLED` and tracks per-cell streaming state. `check(now=None)`
+publishes `OUTPUT_STREAM_PAUSED` once per quiet window
+(`silence_threshold_sec`, default 5.0) and `OUTPUT_STREAM_BEAT`
+every `progress_beat_interval_sec` (default 30.0) the stream is
+alive. `Application.build` constructs the monitor, wires it onto
+the bus alongside `CompletionFocusWatcher`, and launches a daemon
+ticker via `start_background_ticker()` that polls `check()` every
+second; `Application.close` stops the ticker. The default bank
+binds both events to two new subtle cues (`stream_paused`,
+`stream_beat`) at the default "normal" verbosity tier, so they play
+out of the box — `minimal` banks skip them, and users who want
+total silence during long builds disable the bindings in settings.
+Tests inject a virtual `clock` and drive
+`check(now)` directly, so no real sleeps are ever needed.
 
 ---
 
@@ -1406,38 +1431,32 @@ quick-start; cross-reference from F41's silent-sink hint.
 
 ## F43 — Guided first-command tour
 
-**Gap.** F20 (shipped) narrates a welcome and explains the key
-meta-commands, but stops there. The user is then dropped into an
-empty notebook with no prompt to actually run anything, so the
-first-run experience ends on a passive "press colon h e l p" —
-the user still has to invent their own first command to hear what
-`COMMAND_SUBMITTED` / `COMMAND_STARTED` / `COMMAND_COMPLETED` /
-exit-code narration sound like.
+**Status: Shipped.**
 
-**Where it surfaces.** A brand-new user who has just finished
-onboarding knows how to invoke `:help` but has not yet heard any
-of the execution cues that define ASAT's identity. They often
-spend their first minute guessing what to type.
+**Gap (at time of shipping).** F20 narrated a welcome and explained
+the key meta-commands but stopped there. The user was then dropped
+into an empty notebook with no prompt to run anything, so the
+first-run experience ended on a passive "press colon h e l p" —
+the newcomer still had to invent their own first command to hear
+what `COMMAND_SUBMITTED` / `COMMAND_STARTED` / `COMMAND_COMPLETED`
+/ exit-code narration sounded like.
 
-**Sketch.** After `OnboardingCoordinator.run()`
-(`asat/onboarding.py`) publishes `FIRST_RUN_DETECTED` and
-commits the sentinel, queue one follow-up step: pre-populate the
-first cell with `echo hello, ASAT` and narrate *"Press Enter to
-run your first command. Press Escape to clear the line and type
-your own."* Fire a new `FIRST_RUN_TOUR_STEP` event the default
-bank binds to the narrator. The user hears the full
-submit→start→complete arc on a known-good command, learns the
-cues by association, and can replace the placeholder at will.
-
-Cleanly opt-out-able by the same `--quiet` / `--check` /
-sentinel flags as F20. If the user overwrites or clears the
-pre-filled line before pressing Enter, the tour step is
-considered complete either way — we do not re-insert.
-
-**Documentation touch points.** Extend
-`docs/USER_MANUAL.md`'s "Five-minute tour" so the first
-paragraph matches what a fresh install actually does now;
-mention the tour in `README.md` quick-start.
+**Sketch (shipped).** `asat/onboarding.py` gained
+`FIRST_RUN_TOUR_COMMAND = "echo hello, ASAT"` + a short
+`FIRST_RUN_TOUR_LINES` prompt and a new
+`OnboardingCoordinator.publish_tour_step(...)` helper.
+`Application.build()` reads `onboarding.is_first_run()` *before*
+`onboarding.run()` flips the sentinel; when it's a first run and
+the build seeded a fresh session, `cursor.new_cell(...)` is called
+with the tour command so the newcomer's first Enter press exercises
+the full submit → start → complete → exit-code arc. The tour step
+fires after the welcome event so the audio order is "welcome, then
+prompt". If the user clears or rewrites the pre-filled line before
+pressing Enter, the tour is considered complete — the coordinator
+never re-inserts. A new `FIRST_RUN_TOUR_STEP` event in
+`asat/events.py` carries `command` + `lines`; the default bank
+binds it to the narrator voice. `--quiet` / `--check` skip
+onboarding entirely, which transparently skips the tour too.
 
 ---
 
