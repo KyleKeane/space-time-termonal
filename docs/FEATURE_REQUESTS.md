@@ -804,17 +804,19 @@ cells"). Cross-notebook paste falls out for free once F29 lands.
 
 ## F27 — Heading and text cells with hierarchy, navigation, and scope selection
 
-**Status.** Partially shipped as F61 (headings) and an F27
-text-cell slice. Heading cells, flat outline navigation (`]` /
-`[`, `1`-`6`), `:toc`, `:heading <level> <title>`, and the
-default-bank heading voice are in (see F61). Text cells now
-exist as `CellKind.TEXT` with a `:text <prose>` INPUT
-meta-command and a dedicated `focus_changed_text` narration
-binding. What is still pending from the original F27 sketch:
-the NOTEBOOK `i` keybinding for in-place text insertion,
-parent-scope navigation (`{` / `}`), `select_heading_scope()`,
-fold / collapse, and the dedicated `asat/outline.py` scope
-helper.
+**Status.** Partially shipped as F61 (headings), an F27 text-cell
+slice, and F27 parent-scope navigation. Heading cells, flat
+outline navigation (`]` / `[`, `1`-`6`), `:toc`, `:heading
+<level> <title>`, and the default-bank heading voice are in (see
+F61). Text cells now exist as `CellKind.TEXT` with a `:text
+<prose>` INPUT meta-command and a dedicated
+`focus_changed_text` narration binding. `{` / `}` in NOTEBOOK
+walk to the previous / next heading whose level is strictly
+shallower than the current scope (enclosing heading). What is
+still pending from the original F27 sketch: the NOTEBOOK `i`
+keybinding for in-place text insertion,
+`select_heading_scope()`, fold / collapse, and the dedicated
+`asat/outline.py` scope helper.
 
 **Gap.** Every cell today is an input / output pair produced by
 `ExecutionKernel` or an announce-only heading (F61). There is no
@@ -841,11 +843,14 @@ type is a narrow change.
    pending: the NOTEBOOK `i` binding for in-place insertion
    (needs an in-place editor for the text body; typing-in-line
    is not yet wired).
-2. **Parent-scope navigation.** `{` / `}` in NOTEBOOK jump to the
-   previous / next heading whose `heading_level` is *shallower*
-   than the current scope. Same module-level helper that F61 uses
-   for `]` / `[`, parameterised by "strictly less than" instead of
-   "any heading".
+2. **Parent-scope navigation.** *(Shipped.)* `{` / `}` in NOTEBOOK
+   jump to the previous / next heading whose `heading_level` is
+   strictly shallower than the current scope.
+   `NotebookCursor.move_to_{next,previous}_parent_heading` define
+   scope as "the focused heading's level, or the nearest preceding
+   heading's level for a non-heading cell". Heading narration
+   piggy-backs on FOCUS_CHANGED; no-match falls through silently
+   like the flat `]` / `[` nav.
 3. **Scope selection + fold / collapse.** A new `asat/outline.py`
    with a pure `scope_range(cells, heading_index) -> (start,
    end)` function; `NotebookCursor.select_heading_scope()` wraps

@@ -252,6 +252,64 @@ class NotebookCursor:
                 out.append((i, cell.heading_level, cell.heading_title, cell.cell_id))
         return out
 
+    def move_to_next_parent_heading(self) -> Optional[Cell]:
+        """Jump forward to the next heading shallower than the current scope (F27).
+
+        "Current scope" is the focused heading's own level when the focus
+        is a heading, or the nearest preceding heading's level when the
+        focus is a regular cell. Returns None (cursor unchanged) when
+        there is no enclosing scope or no shallower heading ahead.
+        """
+        return self._move_to_parent_heading(direction=+1)
+
+    def move_to_previous_parent_heading(self) -> Optional[Cell]:
+        """Jump backward to the previous heading shallower than the current scope (F27)."""
+        return self._move_to_parent_heading(direction=-1)
+
+    def _current_scope_level(self) -> Optional[int]:
+        if self._state.cell_id is None:
+            return None
+        cells = self._session.cells
+        try:
+            index = self._session.index_of(self._state.cell_id)
+        except ValueError:
+            return None
+        focused = cells[index]
+        if focused.kind is CellKind.HEADING and focused.heading_level is not None:
+            return focused.heading_level
+        j = index - 1
+        while j >= 0:
+            cand = cells[j]
+            if cand.kind is CellKind.HEADING and cand.heading_level is not None:
+                return cand.heading_level
+            j -= 1
+        return None
+
+    def _move_to_parent_heading(self, direction: int) -> Optional[Cell]:
+        if self._state.mode != FocusMode.NOTEBOOK:
+            return None
+        scope_level = self._current_scope_level()
+        if scope_level is None:
+            return None
+        cells = self._session.cells
+        if not cells:
+            return None
+        if self._state.cell_id is None:
+            start_index = -1 if direction > 0 else len(cells)
+        else:
+            start_index = self._session.index_of(self._state.cell_id)
+        index = start_index + direction
+        while 0 <= index < len(cells):
+            candidate = cells[index]
+            if (
+                candidate.kind is CellKind.HEADING
+                and candidate.heading_level is not None
+                and candidate.heading_level < scope_level
+            ):
+                return self.focus_cell(candidate.cell_id)
+            index += direction
+        return None
+
     def delete_focused_cell(self) -> Optional[Cell]:
         """Remove the focused cell and land on a sensible neighbor.
 
