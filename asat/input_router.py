@@ -35,6 +35,7 @@ from typing import Callable, Optional
 from asat import keys as kc
 from asat.actions import ActionContext, ActionMenu
 from asat.event_bus import EventBus, publish_event
+from asat.event_log import EventLogError, EventLogViewer
 from asat.events import EventType
 from asat.help_topics import HELP_TOPICS, lookup as lookup_help_topic, topic_names
 from asat.keys import Key, Modifier
@@ -64,6 +65,23 @@ def _requires_settings_controller(method: Callable[..., object]) -> Callable[...
     @functools.wraps(method)
     def wrapper(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         if self._settings_controller is None:
+            return None
+        return method(self, *args, **kwargs)
+
+    return wrapper
+
+
+def _requires_event_log_viewer(method: Callable[..., object]) -> Callable[..., object]:
+    """Skip the wrapped method when no EventLogViewer is attached.
+
+    Mirrors ``_requires_settings_controller``: the EVENT_LOG focus mode
+    actions all expect the viewer, and repeating the early-return would
+    bury the actual work.
+    """
+
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if self._event_log_viewer is None:
             return None
         return method(self, *args, **kwargs)
 
@@ -178,6 +196,7 @@ def default_bindings() -> BindingMap:
             Key.combo("n", Modifier.CTRL): "new_cell",
             Key.combo("o", Modifier.CTRL): "view_output",
             Key.combo(",", Modifier.CTRL): "open_settings",
+            Key.combo("e", Modifier.CTRL): "open_event_log",
             Key.printable("d"): "delete_cell",
             Key.printable("y"): "duplicate_cell",
             Key.special("up", Modifier.ALT): "move_cell_up",
@@ -271,6 +290,15 @@ def default_bindings() -> BindingMap:
             Key.combo("y", Modifier.CTRL): "settings_redo",
             Key.combo("r", Modifier.CTRL): "settings_reset_begin",
         },
+        FocusMode.EVENT_LOG: {
+            kc.UP: "event_log_previous",
+            kc.DOWN: "event_log_next",
+            kc.ENTER: "event_log_jump_to_binding",
+            kc.ESCAPE: "event_log_close",
+            Key.printable("e"): "event_log_begin_quick_edit",
+            Key.printable("t"): "event_log_replay",
+            Key.combo("q", Modifier.CTRL): "event_log_close",
+        },
     }
 
 
@@ -305,6 +333,7 @@ META_COMMANDS: tuple[str, ...] = (
     "verbosity",
     "reload-bank",
     "tts",
+    "log",
 )
 
 # "Ambient" meta-commands do their job without taking focus away from
@@ -334,6 +363,7 @@ AMBIENT_META_COMMANDS: frozenset[str] = frozenset(
         "verbosity",
         "reload-bank",
         "tts",
+        "log",
     }
 )
 
@@ -347,7 +377,7 @@ _META_NAME_RE = re.compile(r"^:([A-Za-z][A-Za-z0-9_-]*)\s*(.*)$")
 # from the same source of truth.
 HELP_LINES: tuple[str, ...] = (
     "ASAT quick reference.",
-    "NOTEBOOK:  Up/Down walk cells, Enter type, Ctrl+N new, Ctrl+O output, Ctrl+, settings.",
+    "NOTEBOOK:  Up/Down walk cells, Enter type, Ctrl+N new, Ctrl+O output, Ctrl+, settings, Ctrl+E event log.",
     "           d delete, y duplicate, Alt+Up/Down reorder.",
     "           ] / [ next / prev heading; 1..6 next heading of that level.",
     "           } / { next / prev heading shallower than current scope (parent).",
@@ -363,11 +393,14 @@ HELP_LINES: tuple[str, ...] = (
     "OUTPUT:    Up/Down step lines, PageUp/PageDown page, Escape leaves.",
     "           / search (type query, Enter commits), n / N next / prev hit, g jump-to-line.",
     "SETTINGS:  Up/Down walk, Right/Enter descend, Left/Escape ascend, e edit, Ctrl+S save, Ctrl+Q close.",
+    "EVENT_LOG: Up/Down walk entries, Enter jumps to the binding, Escape/Ctrl+Q closes.",
+    "           e quick-edits a field on the focused binding (Enter commits, Escape cancels),",
+    "           t replays the event so the updated binding speaks.",
     "           / search (cross-section; Enter commits, Escape restores), n / N cycle matches.",
     "           Ctrl+Z undo, Ctrl+Y redo edits in the order you made them.",
     "           Ctrl+R resets to defaults at cursor scope (Enter confirms, Escape cancels).",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
-    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :state, :commands, :reset, :welcome, :repeat, :heading, :text, :toc, :workspace, :list-notebooks, :new-notebook, :bindings, :bookmark, :unbookmark, :bookmarks, :jump, :verbosity, :reload-bank, :tts.",
+    "Meta:      :help, :settings, :log, :log tail, :save, :quit, :delete, :duplicate, :pwd, :state, :commands, :reset, :welcome, :repeat, :heading, :text, :toc, :workspace, :list-notebooks, :new-notebook, :bindings, :bookmark, :unbookmark, :bookmarks, :jump, :verbosity, :reload-bank, :tts.",
     "           `:help topics` lists focused tours; `:help <topic>` narrates one (navigation, cells, settings, audio, search, meta).",
     "           `:welcome` replays the first-run tour; `:repeat` (or Ctrl+R in notebook/input) re-speaks the last narration.",
     "           Meta-commands are case-insensitive and accept a trailing argument.",
@@ -390,6 +423,7 @@ class InputRouter:
         settings_controller: Optional[SettingsController] = None,
         action_menu: Optional[ActionMenu] = None,
         output_recorder: Optional[OutputRecorder] = None,
+        event_log_viewer: Optional[EventLogViewer] = None,
     ) -> None:
         """Attach the router to a cursor, event bus, and optional cursors.
 
@@ -420,6 +454,7 @@ class InputRouter:
         self._settings_controller = settings_controller
         self._action_menu = action_menu
         self._output_recorder = output_recorder
+        self._event_log_viewer = event_log_viewer
         # F49: build the action -> handler table once at construction so
         # _invoke is a flat dict lookup. Splitting by subsystem keeps the
         # table searchable: every notebook key lives next to other
@@ -433,6 +468,7 @@ class InputRouter:
             **self._input_handlers(),
             **self._output_handlers(),
             **self._settings_handlers(),
+            **self._event_log_handlers(),
             **self._menu_handlers(),
             **self._global_handlers(),
         }
@@ -460,6 +496,8 @@ class InputRouter:
             return self._dispatch_settings_search_key(key)
         if mode == FocusMode.SETTINGS and self._settings_active_resetting():
             return self._dispatch_settings_reset_key(key)
+        if mode == FocusMode.EVENT_LOG and self._event_log_quick_editing():
+            return self._dispatch_event_log_quick_edit_key(key)
         if mode == FocusMode.OUTPUT and self._output_composing():
             return self._dispatch_output_composer_key(key)
         mode_map = self._bindings.get(mode, {})
@@ -632,6 +670,49 @@ class InputRouter:
         if key == kc.ESCAPE:
             self._invoke("settings_reset_cancel", key)
             return "settings_reset_cancel"
+        return None
+
+    def _event_log_quick_editing(self) -> bool:
+        """Return True while the viewer is composing a quick-edit value."""
+        return (
+            self._event_log_viewer is not None
+            and self._event_log_viewer.quick_edit_field is not None
+        )
+
+    def _dispatch_event_log_quick_edit_key(self, key: Key) -> Optional[str]:
+        """Route keys while the viewer's quick-edit sub-mode is active.
+
+        Enter commits the buffer to the focused binding, Escape
+        discards it, Backspace trims, and printable characters extend
+        the buffer. ``e`` while already editing rotates to the next
+        field via ``event_log_begin_quick_edit`` so the user can cycle
+        without leaving the sub-mode.
+        """
+        assert self._event_log_viewer is not None
+        if key == kc.ENTER:
+            self._invoke("event_log_quick_edit_commit", key)
+            return "event_log_quick_edit_commit"
+        if key == kc.ESCAPE:
+            self._invoke("event_log_quick_edit_cancel", key)
+            return "event_log_quick_edit_cancel"
+        if key == kc.BACKSPACE:
+            self._invoke("event_log_quick_edit_backspace", key)
+            return "event_log_quick_edit_backspace"
+        if key == Key.printable("e"):
+            self._invoke("event_log_begin_quick_edit", key)
+            return "event_log_begin_quick_edit"
+        if key.is_printable() and key.char is not None:
+            self._event_log_viewer.extend_quick_edit(key.char)
+            self._publish_action(
+                "event_log_quick_edit_extend",
+                key,
+                {
+                    "char": key.char,
+                    "field": self._event_log_viewer.quick_edit_field,
+                    "buffer": self._event_log_viewer.quick_edit_buffer,
+                },
+            )
+            return "event_log_quick_edit_extend"
         return None
 
     def _invoke(self, action: str, key: Key) -> None:
@@ -1141,6 +1222,123 @@ class InputRouter:
         self._settings_controller.open()
         self._cursor.enter_settings_mode()
 
+    @_requires_event_log_viewer
+    def _open_event_log(self) -> None:
+        """Enter EVENT_LOG mode and tell the viewer to anchor on the tail."""
+        self._event_log_viewer.open()
+        self._cursor.enter_event_log_mode()
+
+    @_requires_event_log_viewer
+    def _close_event_log(self) -> None:
+        """Leave EVENT_LOG mode, discarding any in-flight quick-edit."""
+        self._event_log_viewer.cancel_quick_edit()
+        self._event_log_viewer.close()
+        self._cursor.exit_event_log_mode()
+
+    @_requires_event_log_viewer
+    def _event_log_previous(self) -> None:
+        """Walk one entry back (toward older events)."""
+        self._event_log_viewer.focus_previous()
+
+    @_requires_event_log_viewer
+    def _event_log_next(self) -> None:
+        """Walk one entry forward (toward newer events)."""
+        self._event_log_viewer.focus_next()
+
+    @_requires_event_log_viewer
+    def _event_log_jump_to_binding(self) -> Optional[dict[str, object]]:
+        """Enter jumps to the settings editor on the binding that fired.
+
+        Returns the payload describing whether the jump landed so the
+        ACTION_INVOKED consumer (narrator, tests) can differentiate
+        "jumped to voice.command_completed" from "no binding for this
+        entry — stayed in the viewer".
+        """
+        entry = self._event_log_viewer.selected_entry()
+        if entry is None or entry.binding_id is None:
+            return {"jumped": False, "reason": "no binding on entry"}
+        if self._settings_controller is None:
+            return {"jumped": False, "reason": "no settings controller"}
+        found = self._settings_controller.open_at_binding(entry.binding_id)
+        self._event_log_viewer.close()
+        self._cursor.enter_settings_mode()
+        return {
+            "jumped": True,
+            "binding_id": entry.binding_id,
+            "matched": found,
+        }
+
+    @_requires_event_log_viewer
+    def _event_log_begin_quick_edit(self) -> Optional[dict[str, object]]:
+        """Open (or rotate within) the quick-edit sub-mode on the binding."""
+        field = self._event_log_viewer.begin_quick_edit()
+        if field is None:
+            return {"opened": False}
+        return {
+            "opened": True,
+            "field": field,
+            "buffer": self._event_log_viewer.quick_edit_buffer,
+        }
+
+    @_requires_event_log_viewer
+    def _event_log_quick_edit_commit(self) -> Optional[dict[str, object]]:
+        """Apply the quick-edit buffer to the focused binding."""
+        try:
+            updated = self._event_log_viewer.commit_quick_edit()
+        except EventLogError as exc:
+            return {"ok": False, "error": str(exc)}
+        if updated is None:
+            return {"ok": False, "error": "no binding under cursor"}
+        return {"ok": True, "binding_id": updated.id}
+
+    @_requires_event_log_viewer
+    def _event_log_quick_edit_cancel(self) -> None:
+        """Discard the quick-edit buffer without touching the bank."""
+        self._event_log_viewer.cancel_quick_edit()
+
+    @_requires_event_log_viewer
+    def _event_log_quick_edit_backspace(self) -> None:
+        """Trim one character from the quick-edit buffer."""
+        self._event_log_viewer.backspace_quick_edit()
+
+    @_requires_event_log_viewer
+    def _event_log_replay(self) -> Optional[dict[str, object]]:
+        """Re-publish the focused event so its binding speaks again."""
+        entry = self._event_log_viewer.replay_selected()
+        if entry is None:
+            return {"replayed": False}
+        return {
+            "replayed": True,
+            "event_type": entry.event_type,
+            "binding_id": entry.binding_id,
+        }
+
+    def _publish_log_tail(self) -> None:
+        """Narrate the last few event-log entries via HELP_REQUESTED.
+
+        Answers ``:log tail`` without taking focus: the user hears a
+        summary of recent activity and stays in INPUT mode so they
+        can keep typing. When the viewer is not wired up, we surface
+        an explicit HELP_REQUESTED message so the failure mode is
+        self-describing.
+        """
+        if self._event_log_viewer is None:
+            lines = ["Event log is not configured for this session."]
+        else:
+            entries = self._event_log_viewer.entries
+            if not entries:
+                lines = ["Event log is empty."]
+            else:
+                tail = entries[-5:]
+                lines = [f"Event log, last {len(tail)} of {len(entries)}:"]
+                lines.extend(f"  {entry.narration}" for entry in tail)
+        publish_event(
+            self._bus,
+            EventType.HELP_REQUESTED,
+            {"lines": lines},
+            source=self.SOURCE,
+        )
+
     @_requires_settings_controller
     def _close_settings(self) -> None:
         """Close the controller and return to NOTEBOOK mode."""
@@ -1467,6 +1665,26 @@ class InputRouter:
             "settings_reset_cancel": _void(self._settings_reset_cancel),
         }
 
+    def _event_log_handlers(self) -> dict[str, ActionHandler]:
+        """EVENT_LOG-mode navigation, quick-edit composer, replay."""
+        return {
+            "open_event_log": _void(self._open_event_log),
+            "event_log_close": _void(self._close_event_log),
+            "event_log_previous": _void(self._event_log_previous),
+            "event_log_next": _void(self._event_log_next),
+            "event_log_jump_to_binding": self._event_log_jump_to_binding,
+            "event_log_begin_quick_edit": self._event_log_begin_quick_edit,
+            "event_log_quick_edit_commit": self._event_log_quick_edit_commit,
+            "event_log_quick_edit_cancel": _void(
+                self._event_log_quick_edit_cancel
+            ),
+            "event_log_quick_edit_backspace": _void(
+                self._event_log_quick_edit_backspace
+            ),
+            "event_log_quick_edit_extend": lambda: None,
+            "event_log_replay": self._event_log_replay,
+        }
+
     def _menu_handlers(self) -> dict[str, ActionHandler]:
         """Action-menu (F2) navigation and activation."""
         return {
@@ -1648,8 +1866,18 @@ class InputRouter:
 # are intentionally absent — the Application handles them off the
 # ACTION_INVOKED payload, and a table miss is the right behaviour
 # for them on the router side.
+def _dispatch_meta_log(router: "InputRouter", argument: str) -> None:
+    """Route ``:log`` and ``:log tail`` to the viewer / tail helper."""
+    arg = argument.strip().lower()
+    if arg == "tail":
+        router._publish_log_tail()
+        return
+    router._open_event_log()
+
+
 _META_HANDLERS: dict[str, Callable[["InputRouter", str], None]] = {
     "settings": lambda router, _arg: router._open_settings(),
+    "log": _dispatch_meta_log,
     "help": lambda router, arg: router._publish_help(arg),
     "delete": lambda router, _arg: router._cursor.delete_focused_cell(),
     "duplicate": lambda router, _arg: router._cursor.duplicate_focused_cell(),

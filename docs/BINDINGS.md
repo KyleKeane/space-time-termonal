@@ -18,6 +18,7 @@ Each row is one binding. The `Action` column is the handler name `InputRouter._a
 | `Alt+Up` | `move_cell_up` |
 | `Ctrl+,` | `open_settings` |
 | `Ctrl+.` | `open_action_menu` |
+| `Ctrl+E` | `open_event_log` |
 | `Ctrl+N` | `new_cell` |
 | `Ctrl+O` | `view_output` |
 | `Ctrl+R` | `repeat_last_narration` |
@@ -120,3 +121,15 @@ Each row is one binding. The `Action` column is the handler name `InputRouter._a
 | `Up` | `settings_prev` |
 | `e` | `settings_begin_edit` |
 | `n` | `settings_search_next` |
+
+## EVENT_LOG mode
+
+| Keystroke | Action |
+|-----------|--------|
+| `Ctrl+Q` | `event_log_close` |
+| `Down` | `event_log_next` |
+| `Enter` | `event_log_jump_to_binding` |
+| `Escape` | `event_log_close` |
+| `Up` | `event_log_previous` |
+| `e` | `event_log_begin_quick_edit` |
+| `t` | `event_log_replay` |

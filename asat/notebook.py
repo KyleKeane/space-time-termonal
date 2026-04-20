@@ -46,6 +46,11 @@ class FocusMode(str, Enum):
     SETTINGS: keystrokes drive the SoundBank editor (SettingsEditor
         via SettingsController). Entered from NOTEBOOK by a dedicated
         shortcut or the `:settings` meta-command.
+    EVENT_LOG: keystrokes walk the live event-log viewer (F39).
+        Up/Down move the highlighted entry, Enter jumps to the
+        binding that produced the focused event, `e` opens a
+        quick-edit sub-mode, and `t` replays the event so the new
+        narration plays immediately.
     """
 
     NOTEBOOK = "notebook"
@@ -53,6 +58,7 @@ class FocusMode(str, Enum):
     TEXT_INPUT = "text_input"
     OUTPUT = "output"
     SETTINGS = "settings"
+    EVENT_LOG = "event_log"
 
 
 @dataclass(frozen=True)
@@ -588,6 +594,32 @@ class NotebookCursor:
     def exit_settings_mode(self) -> Optional[FocusState]:
         """Return to NOTEBOOK mode from SETTINGS mode."""
         if self._state.mode != FocusMode.SETTINGS:
+            return None
+        self._transition(
+            FocusState(
+                mode=FocusMode.NOTEBOOK,
+                cell_id=self._state.cell_id,
+                input_buffer="",
+                cursor_position=0,
+            )
+        )
+        return self._state
+
+    def enter_event_log_mode(self) -> FocusState:
+        """Switch to EVENT_LOG mode (F39 viewer). Legal from any mode."""
+        self._transition(
+            FocusState(
+                mode=FocusMode.EVENT_LOG,
+                cell_id=self._state.cell_id,
+                input_buffer="",
+                cursor_position=0,
+            )
+        )
+        return self._state
+
+    def exit_event_log_mode(self) -> Optional[FocusState]:
+        """Return to NOTEBOOK mode from EVENT_LOG mode."""
+        if self._state.mode != FocusMode.EVENT_LOG:
             return None
         self._transition(
             FocusState(

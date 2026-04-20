@@ -217,7 +217,7 @@ mode, save the session, resume it tomorrow with every cell intact.
 
 ## Focus modes
 
-You are always in exactly one of five modes. The current mode
+You are always in exactly one of six modes. The current mode
 decides what keys do.
 
 | Mode       | What you're doing                                  |
@@ -227,6 +227,7 @@ decides what keys do.
 | `TEXT_INPUT` | Composing a new prose cell in-place (F27). Press `i` in NOTEBOOK to enter; Enter creates, Escape abandons. |
 | `OUTPUT`   | Stepping line-by-line through captured output.     |
 | `SETTINGS` | Driving the live SoundBank editor.                 |
+| `EVENT_LOG` | Walking the last-N event ring (F39). Press Ctrl+E from NOTEBOOK; Escape returns. |
 
 Every mode transition announces itself: you'll hear the
 `focus_shift` cue overhead and the system voice names the new mode
@@ -355,6 +356,8 @@ discarded and the cell is not modified.
 | `:tts list` | Describe every TTS engine registered in the pluggable registry (`docs/AUDIO.md`) and mark which ones are installed on this host. |
 | `:tts use <id>` | Hot-swap the live TTS engine (`pyttsx3`, `espeak-ng`, `say`, `tone`). The next narration is rendered through the new backend without restarting ASAT. |
 | `:tts set <param> <value>` | Tune the current engine — e.g. `:tts set rate 180` or `:tts set voice en-us`. Parameter names are engine-specific; `:tts list` enumerates them. |
+| `:log`       | Toggle the event-log viewer (same as Ctrl+E). Opens on the latest entry; a second `:log` closes it. |
+| `:log tail`  | Narrate the path of the on-disk grouped event log without opening the viewer. |
 
 Meta-command names are **case-insensitive** — `:HELP`, `:Help`, and
 `:help` all do the same thing. A single trailing argument is
@@ -430,6 +433,41 @@ focused line. Stderr lines come from the alert voice on the right;
 stdout lines come from the narrator on the left — the spatial split
 tells you which stream a line came from without the narrator having
 to say "stderr:" every time.
+
+---
+
+## EVENT_LOG mode — inspecting and tuning what ASAT just said
+
+Press **Ctrl+E** from any non-editing mode (or type `:log` in INPUT)
+to open the event-log viewer. It holds the last 200 events in a ring
+buffer, formatted the way the narrator would have read them, so you
+can revisit "what just happened" and adjust the binding that
+narrated it without leaving the shell.
+
+| Key        | What it does                                              |
+|------------|-----------------------------------------------------------|
+| Up / Down  | Walk previous / next entry in the ring.                   |
+| Enter      | Open the settings editor parked on the focused entry's binding (only entries with a `binding_id` — i.e. `AUDIO_SPOKEN` rows — can jump). |
+| `e`        | Begin quick-edit on the focused binding; each press rotates through `say_template` → `voice_id` → `enabled` → `priority`. |
+| Enter (in quick-edit) | Commit the new value live to the in-memory bank. |
+| Backspace / any char | Edit the quick-edit buffer.                     |
+| Escape (in quick-edit) | Cancel without committing.                    |
+| `t`        | Replay the focused entry — its binding speaks again.      |
+| Escape / Ctrl+Q | Close the viewer and return to NOTEBOOK mode.        |
+
+New entries always land at the tail. If your cursor is parked at
+the tail the viewer follows along; if you've scrolled back, the
+tail advances silently so you don't lose your place. Opening the
+viewer is idempotent — a second Ctrl+E re-anchors on the newest
+entry.
+
+When a workspace is active, ASAT also writes a grouped text log to
+`<workspace>/.asat/log/events-YYYY-MM-DD.log`. Each new keystroke
+starts a new paragraph and subsequent events are indented under it,
+which makes the file readable with `tail -f` without a JSON viewer.
+Type `:log tail` to hear the current path without opening the
+viewer. The on-disk log exists independently of `--log PATH`
+(F10's JSONL stream); they can coexist.
 
 ---
 

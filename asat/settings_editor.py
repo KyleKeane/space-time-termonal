@@ -277,6 +277,25 @@ class SettingsEditor:
             raise SettingsEditorError("no field is focused at this level")
         return self._current_field_name()
 
+    def focus_binding(self, binding_id: str) -> bool:
+        """Park the cursor at RECORD level on the binding with ``binding_id``.
+
+        Returns True when a matching binding is found; False otherwise
+        (cursor state is left untouched in the False case so the caller
+        can decide whether to fall back to the top-level landing spot).
+        Cancels any in-flight search / reset sub-mode so the jump lands
+        in a clean state.
+        """
+        for index, binding in enumerate(self._bank.bindings):
+            if binding.id == binding_id:
+                if self._search_mode:
+                    self.cancel_search()
+                if self._reset_mode:
+                    self.cancel_reset()
+                self._goto_record_match(Section.BINDINGS, index)
+                return True
+        return False
+
     def edit(self, raw: str) -> None:
         """Parse raw against the focused field's type and apply it.
 

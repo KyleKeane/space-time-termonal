@@ -449,6 +449,33 @@ heading itself stays visible so the user can toggle it back. The
 | `OUTLINE_FOLDED`     | `cell_id`, `heading_level`, `heading_title`, `cell_count`         |
 | `OUTLINE_UNFOLDED`   | `cell_id`, `heading_level`, `heading_title`, `cell_count`         |
 
+## Event log viewer
+
+Producer: `asat.event_log.EventLogViewer`
+(`source="event_log"`). The viewer is a wildcard subscriber that
+keeps the last N events (default 200) in a ring buffer. `Ctrl+E`
+toggles it on; Up/Down navigates, Enter jumps to the bound
+record in settings, `e` rotates through quick-edit fields on the
+focused binding, and `t` replays the selected event. The
+`EVENT_LOG_*` family is not re-ingested by the viewer itself, so
+opening the log does not bloat its own tail.
+
+`EVENT_LOG_FOCUSED.binding_id` is only populated when the focused
+entry is an `AUDIO_SPOKEN` event (which carries the originating
+binding id); other entries carry `None`.
+`EVENT_LOG_QUICK_EDIT_COMMITTED.field` is one of `say_template`,
+`voice_id`, `enabled`, or `priority`.
+`EVENT_LOG_REPLAYED.narration` is the formatted string the viewer
+had displayed for the replayed entry.
+
+| EventType                         | Payload keys                                                     |
+|-----------------------------------|------------------------------------------------------------------|
+| `EVENT_LOG_OPENED`                | `count`, `focus_index`, `summary`                                |
+| `EVENT_LOG_CLOSED`                | `count`                                                          |
+| `EVENT_LOG_FOCUSED`               | `index`, `total`, `narration`, `event_type`, `binding_id`        |
+| `EVENT_LOG_QUICK_EDIT_COMMITTED`  | `binding_id`, `field`, `value`                                   |
+| `EVENT_LOG_REPLAYED`              | `event_type`, `binding_id`, `narration`                          |
+
 ## Self-check
 
 Producer: `asat.self_check.run_self_check` (`source="self_check"`),
