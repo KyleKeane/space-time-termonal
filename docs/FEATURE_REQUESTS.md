@@ -805,18 +805,22 @@ cells"). Cross-notebook paste falls out for free once F29 lands.
 ## F27 — Heading and text cells with hierarchy, navigation, and scope selection
 
 **Status.** Partially shipped as F61 (headings), an F27 text-cell
-slice, and F27 parent-scope navigation. Heading cells, flat
-outline navigation (`]` / `[`, `1`-`6`), `:toc`, `:heading
-<level> <title>`, and the default-bank heading voice are in (see
-F61). Text cells now exist as `CellKind.TEXT` with a `:text
-<prose>` INPUT meta-command and a dedicated
+slice, F27 parent-scope navigation, and the `asat/outline.py`
+scope helper with `NotebookCursor.select_heading_scope()`.
+Heading cells, flat outline navigation (`]` / `[`, `1`-`6`),
+`:toc`, `:heading <level> <title>`, and the default-bank heading
+voice are in (see F61). Text cells now exist as `CellKind.TEXT`
+with a `:text <prose>` INPUT meta-command and a dedicated
 `focus_changed_text` narration binding. `{` / `}` in NOTEBOOK
 walk to the previous / next heading whose level is strictly
-shallower than the current scope (enclosing heading). What is
-still pending from the original F27 sketch: the NOTEBOOK `i`
-keybinding for in-place text insertion,
-`select_heading_scope()`, fold / collapse, and the dedicated
-`asat/outline.py` scope helper.
+shallower than the current scope (enclosing heading).
+`asat/outline.scope_range(cells, heading_index)` returns the
+`[start, end)` span of a heading's section (children included),
+and `NotebookCursor.select_heading_scope()` returns the focused
+cell's enclosing section as a list of Cells. What is still
+pending from the original F27 sketch: the NOTEBOOK `i`
+keybinding for in-place text insertion and fold / collapse
+(`z`, `OUTLINE_FOLDED` / `OUTLINE_UNFOLDED`).
 
 **Gap.** Every cell today is an input / output pair produced by
 `ExecutionKernel` or an announce-only heading (F61). There is no
@@ -851,13 +855,17 @@ type is a narrow change.
    heading's level for a non-heading cell". Heading narration
    piggy-backs on FOCUS_CHANGED; no-match falls through silently
    like the flat `]` / `[` nav.
-3. **Scope selection + fold / collapse.** A new `asat/outline.py`
-   with a pure `scope_range(cells, heading_index) -> (start,
-   end)` function; `NotebookCursor.select_heading_scope()` wraps
-   it for F26's clipboard, and a `z` keystroke on a heading
-   toggles a `collapsed` flag so Up/Down skip the scope. Publish
-   `OUTLINE_FOLDED` / `OUTLINE_UNFOLDED` so the default bank can
-   narrate "section setup, four cells, collapsed".
+3. **Scope selection + fold / collapse.** *(Scope-selection
+   slice shipped.)* `asat/outline.py` provides the pure
+   `scope_range(cells, heading_index) -> (start, end)` function
+   and `enclosing_heading_index(cells, index)` helper.
+   `NotebookCursor.select_heading_scope()` returns the focused
+   cell's enclosing section as a list of Cells, ready for F26's
+   clipboard or any future outline-aware action. Still pending:
+   the `z` keystroke on a heading that toggles a `collapsed`
+   flag so Up/Down skip the scope, and the
+   `OUTLINE_FOLDED` / `OUTLINE_UNFOLDED` events the default bank
+   would use to narrate "section setup, four cells, collapsed".
 
 **See also.** F51 (notebook file format) persists the heading
 fields F61 added; populating `"text"` piggy-backs on the same
