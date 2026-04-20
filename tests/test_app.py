@@ -161,14 +161,20 @@ class ApplicationBuildTests(unittest.TestCase):
             self.assertTrue(sentinel.exists())
 
     def test_first_run_tour_prefills_cell_and_fires_tour_step(self) -> None:
-        """F43: a first-run Application.build pre-populates the seeded
-        notebook's first cell with `echo hello, ASAT` and publishes
+        """F43 + PR 4: a first-run Application.build seeds a three-cell
+        demo notebook (H1 + H2 + command) so the outline pane has a
+        two-level hierarchy to render, and publishes
         FIRST_RUN_TOUR_STEP right after FIRST_RUN_DETECTED."""
         import tempfile
         from pathlib import Path
 
+        from asat.cell import CellKind
         from asat.event_bus import EventBus
-        from asat.onboarding import FIRST_RUN_TOUR_COMMAND, OnboardingCoordinator
+        from asat.onboarding import (
+            FIRST_RUN_OUTLINE_HEADINGS,
+            FIRST_RUN_TOUR_COMMAND,
+            OnboardingCoordinator,
+        )
 
         with tempfile.TemporaryDirectory() as td:
             sentinel = Path(td) / "first-run-done"
@@ -180,9 +186,18 @@ class ApplicationBuildTests(unittest.TestCase):
 
             app = Application.build(onboarding_factory=_factory)
 
-            self.assertEqual(len(app.session.cells), 1)
             self.assertEqual(
-                app.session.cells[0].command, FIRST_RUN_TOUR_COMMAND
+                len(app.session.cells), len(FIRST_RUN_OUTLINE_HEADINGS) + 1
+            )
+            for cell, (level, title) in zip(
+                app.session.cells, FIRST_RUN_OUTLINE_HEADINGS
+            ):
+                self.assertEqual(cell.kind, CellKind.HEADING)
+                self.assertEqual(cell.heading_level, level)
+                self.assertEqual(cell.heading_title, title)
+            self.assertEqual(app.session.cells[-1].kind, CellKind.COMMAND)
+            self.assertEqual(
+                app.session.cells[-1].command, FIRST_RUN_TOUR_COMMAND
             )
             welcome_idx = seen.index(EventType.FIRST_RUN_DETECTED)
             tour_idx = seen.index(EventType.FIRST_RUN_TOUR_STEP)

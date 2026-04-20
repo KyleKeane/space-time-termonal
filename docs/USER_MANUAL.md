@@ -120,17 +120,34 @@ only the outline, or `--view both` (the TTY default) for both panes.
 ### First-run onboarding
 
 The **very first** time ASAT starts on a given machine you will
-also hear a short spoken welcome ("Welcome to ASAT. Type colon
-help to hear the keystroke cheat sheet.") and the text trace prints
-a four-line tour explaining the key meta-commands (`:help`,
-`:commands`, Escape, `:quit`). The tour plays from the narrator
-voice, on the left, and is spelled letter-by-letter
-(`"h, e, l, p"`) so the TTS pronounces each character.
+hear a scripted four-beat tour that proves every surface is working:
+
+1. **Welcome banner** — "Welcome to ASAT. Type colon help to hear
+   the keystroke cheat sheet." Spelled letter-by-letter
+   (`"h, e, l, p"`) so the TTS pronounces each character.
+2. **Three-cell demo notebook** — two headings (`H1 Welcome to
+   ASAT`, `H2 Your first command`) and a pre-populated command cell
+   (`echo hello, ASAT`) land in the session so the outline pane
+   renders a two-level hierarchy the moment you scroll. The narrator
+   then says "Your first cell has echo hello, ASAT ready to go.
+   Press Enter to run it."
+3. **Event log preview** — "Press Control E any time to open the
+   event log. Up and Down walk recent events; press t to replay
+   one." No focus hijack — the tour just teaches the keystroke.
+4. **Log-file path** — when a workspace is attached (or
+   `--log-events DIR` was passed), the narrator announces the
+   current grouped-log path so you know where to `tail -f`. Skipped
+   silently when no file logger is wired.
+5. **Tour complete** — the narrator hands you back the prompt with
+   one last cue: "First-run tour complete. Press Enter to run your
+   first command."
 
 A sentinel file at `~/.asat/first-run-done` records that you've
 seen the tour; subsequent launches skip it. `--quiet` and
-`--check` also skip the tour. Delete the sentinel file and re-launch
-if you ever want to hear the welcome again.
+`--check` also skip the tour. Delete the sentinel file and
+re-launch if you ever want to hear the welcome again. Type
+`:welcome` any time to replay the full tour (without re-seeding
+the demo cells, so your notebook is safe).
 
 ---
 

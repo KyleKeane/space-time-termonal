@@ -55,6 +55,42 @@ FIRST_RUN_TOUR_LINES: tuple[str, ...] = (
 )
 
 
+# PR 4: the scripted tour seeds a three-cell demo notebook so the
+# outline pane (PR 2) has something to render on first launch. Two
+# heading cells + one command cell produces a two-level hierarchy
+# the newcomer can scroll with `]` / `[`.
+FIRST_RUN_OUTLINE_HEADINGS: tuple[tuple[int, str], ...] = (
+    (1, "Welcome to ASAT"),
+    (2, "Your first command"),
+)
+
+
+# PR 4: the third tour beat introduces the event log viewer. We
+# narrate the keystroke and what pressing `t` does — enough that a
+# curious user can open it themselves without us thrashing focus.
+FIRST_RUN_EVENT_LOG_LINES: tuple[str, ...] = (
+    "Press Control E any time to open the event log.",
+    "Up and Down walk recent events; press t to replay one.",
+)
+
+
+# PR 4: fourth beat — announce the on-disk log file path so the user
+# knows where to `tail -f`. Empty lines signal "no workspace attached,
+# no file logger" so the renderer / audio bank can skip the beat.
+FIRST_RUN_LOG_PATH_LINES: tuple[str, ...] = (
+    "Every event is also written to a grouped text log on disk.",
+)
+
+
+# PR 4: final beat — tour complete; hand the user back a notebook
+# they can type into. Keeps "press Enter to run" as the final cue so
+# a first-time user has a next step they can't miss.
+FIRST_RUN_COMPLETED_LINES: tuple[str, ...] = (
+    "First-run tour complete.",
+    "Press Enter to run your first command, or colon h e l p for more.",
+)
+
+
 SILENT_SINK_HINT = (
     "[asat] First-run welcome is narrating into an in-memory sink so "
     "you will not hear it. Pass --live (Windows) or --wav-dir DIR to "
@@ -144,6 +180,7 @@ class OnboardingCoordinator:
         *,
         command: str = FIRST_RUN_TOUR_COMMAND,
         lines: Iterable[str] = FIRST_RUN_TOUR_LINES,
+        replay: bool = False,
     ) -> None:
         """Publish F43's `FIRST_RUN_TOUR_STEP` event.
 
@@ -152,11 +189,79 @@ class OnboardingCoordinator:
         Kept here (rather than inlined in Application) so the tour's
         command + narration live next to the rest of the onboarding
         vocabulary and can be reused by future tour variants.
+
+        `replay=True` marks the event so subscribers (and tests) can
+        distinguish a `:welcome` replay from the genuine first launch.
         """
         publish_event(
             self._bus,
             EventType.FIRST_RUN_TOUR_STEP,
-            {"command": command, "lines": list(lines)},
+            {"command": command, "lines": list(lines), "replay": replay},
+            source=self.SOURCE,
+        )
+
+    def publish_event_log_preview_beat(
+        self,
+        *,
+        lines: Iterable[str] = FIRST_RUN_EVENT_LOG_LINES,
+        replay: bool = False,
+    ) -> None:
+        """Third tour beat: introduce the event log viewer (F39).
+
+        Narrates the Ctrl+E keystroke and the Up/Down/`t` affordances
+        without actually pulsing the viewer — opening it under the user
+        mid-tour would thrash focus and leave them in EVENT_LOG mode
+        waiting for input. A narration-only beat teaches the keystroke
+        without hijacking the notebook.
+        """
+        publish_event(
+            self._bus,
+            EventType.FIRST_RUN_TOUR_EVENT_LOG_PREVIEW,
+            {"lines": list(lines), "replay": replay},
+            source=self.SOURCE,
+        )
+
+    def publish_log_path_beat(
+        self,
+        path: Optional[str] = None,
+        *,
+        lines: Iterable[str] = FIRST_RUN_LOG_PATH_LINES,
+        replay: bool = False,
+    ) -> None:
+        """Fourth tour beat: tell the user where the grouped log file lives.
+
+        ``path=None`` (or empty string) means no file logger is
+        attached — happens when ASAT was launched without a workspace
+        and without an explicit log directory. The event still fires
+        (so subscribers can notice the beat) but with an empty path
+        string so the default narration can skip the announcement.
+        """
+        publish_event(
+            self._bus,
+            EventType.FIRST_RUN_TOUR_LOG_PATH,
+            {
+                "path": path or "",
+                "lines": list(lines),
+                "replay": replay,
+            },
+            source=self.SOURCE,
+        )
+
+    def publish_tour_completed_beat(
+        self,
+        *,
+        lines: Iterable[str] = FIRST_RUN_COMPLETED_LINES,
+        replay: bool = False,
+    ) -> None:
+        """Final tour beat: tour complete, return the user to the prompt.
+
+        Fires exactly once per run. Tests assert on the terminator so
+        fixtures can wait for the tour to finish without sleeping.
+        """
+        publish_event(
+            self._bus,
+            EventType.FIRST_RUN_TOUR_COMPLETED,
+            {"lines": list(lines), "replay": replay},
             source=self.SOURCE,
         )
 

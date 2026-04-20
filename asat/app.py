@@ -405,14 +405,18 @@ class Application:
                 },
                 source="app",
             )
-        # F43: on the very first launch of ASAT, pre-populate the
-        # notebook's first cell with a known-good command so the
-        # newcomer can press Enter and immediately hear the
-        # submit → start → complete → exit-code arc. We check the
+        # F43 + PR 4: on the very first launch of ASAT, seed a
+        # three-cell demo notebook (H1 + H2 + command) so the outline
+        # pane renders on-screen, then run the scripted tour so a
+        # newcomer hears what each surface sounds like. We check the
         # sentinel BEFORE `onboarding.run()` flips it, then publish
-        # the tour step AFTER the welcome fires so the audio order
-        # is: welcome → "press Enter to run your first command".
-        from asat.onboarding import FIRST_RUN_TOUR_COMMAND
+        # the beats AFTER the welcome fires so the audio order is:
+        # welcome → "press Enter to run" → event log preview → log
+        # path → tour completed.
+        from asat.onboarding import (
+            FIRST_RUN_OUTLINE_HEADINGS,
+            FIRST_RUN_TOUR_COMMAND,
+        )
 
         first_run_tour = (
             seeded
@@ -420,11 +424,16 @@ class Application:
             and onboarding.is_first_run()
         )
         if seeded:
-            cursor.new_cell(FIRST_RUN_TOUR_COMMAND if first_run_tour else "")
+            if first_run_tour:
+                for level, title in FIRST_RUN_OUTLINE_HEADINGS:
+                    cursor.new_heading_cell(level, title)
+                cursor.new_cell(FIRST_RUN_TOUR_COMMAND)
+            else:
+                cursor.new_cell("")
         if onboarding is not None:
             onboarding.run()
         if first_run_tour and onboarding is not None:
-            onboarding.publish_tour_step()
+            app._run_scripted_tour(replay=False)
         return app
 
     def handle_key(self, key: Key) -> Optional[str]:
@@ -604,15 +613,43 @@ class Application:
         """Re-invoke the onboarding tour on `:welcome` (F44).
 
         Re-publishes `FIRST_RUN_DETECTED` with `replay=True` through
-        the same coordinator that ran at launch, so every existing
-        subscriber (audio bank, renderer) reacts just as it did on
-        the first boot. Silently no-ops when onboarding was
-        disabled (`--quiet`, `--check`) so the meta-command stays a
-        harmless tab-completion hit in those modes.
+        the same coordinator that ran at launch, then re-fires the
+        four PR 4 scripted beats so every existing subscriber (audio
+        bank, renderer) reacts just as it did on the first boot.
+        Seeding is NOT repeated — that would destroy the user's
+        notebook. Silently no-ops when onboarding was disabled
+        (`--quiet`, `--check`) so the meta-command stays a harmless
+        tab-completion hit in those modes.
         """
         if self.onboarding is None:
             return
         self.onboarding.run(force=True)
+        self._run_scripted_tour(replay=True)
+
+    def _run_scripted_tour(self, *, replay: bool) -> None:
+        """Publish the four post-welcome tour beats in order.
+
+        Called in two places: Application.build on a genuine first
+        run (`replay=False`) and `_replay_welcome` on `:welcome`
+        (`replay=True`). The `replay` flag is forwarded to every
+        beat so subscribers + tests can tell the two paths apart.
+
+        The event-log path beat carries the live path from
+        `event_log_file.current_path()` when a file logger is
+        attached; otherwise an empty string tells the narration to
+        skip the mention rather than invent a fictional path.
+        """
+        if self.onboarding is None:
+            return
+        self.onboarding.publish_tour_step(replay=replay)
+        self.onboarding.publish_event_log_preview_beat(replay=replay)
+        log_path = (
+            str(self.event_log_file.current_path())
+            if self.event_log_file is not None
+            else None
+        )
+        self.onboarding.publish_log_path_beat(log_path, replay=replay)
+        self.onboarding.publish_tour_completed_beat(replay=replay)
 
     def _save_session(self) -> None:
         """Persist the session to `session_path` if one was configured.

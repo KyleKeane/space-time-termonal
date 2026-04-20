@@ -111,6 +111,9 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.EVENT_LOG_FOCUSED,
     EventType.EVENT_LOG_QUICK_EDIT_COMMITTED,
     EventType.EVENT_LOG_REPLAYED,
+    EventType.FIRST_RUN_TOUR_EVENT_LOG_PREVIEW,
+    EventType.FIRST_RUN_TOUR_LOG_PATH,
+    EventType.FIRST_RUN_TOUR_COMPLETED,
 })
 
 
@@ -901,6 +904,50 @@ def _default_bindings() -> tuple[EventBinding, ...]:
                 "Press Enter to run it."
             ),
             priority=245,
+        ),
+
+        # PR 4: third tour beat introduces the event log viewer. Narrates
+        # the Ctrl+E keystroke and the Up/Down/t affordances so a new
+        # user knows how to rewind narrations without hunting through
+        # the manual.
+        EventBinding(
+            id="first_run_tour_event_log_preview",
+            event_type=EventType.FIRST_RUN_TOUR_EVENT_LOG_PREVIEW.value,
+            voice_id="narrator",
+            say_template=(
+                "Press Control E any time to open the event log. "
+                "Up and Down walk recent events; press t to replay one."
+            ),
+            priority=240,
+        ),
+
+        # PR 4: fourth tour beat — tell the user where the grouped text
+        # log is being written so they can `tail -f` it. Empty path
+        # means no file logger is attached (no workspace, no explicit
+        # directory); the predicate drops the beat in that case so the
+        # narrator doesn't announce an empty string.
+        EventBinding(
+            id="first_run_tour_log_path",
+            event_type=EventType.FIRST_RUN_TOUR_LOG_PATH.value,
+            voice_id="narrator",
+            say_template=(
+                "The grouped event log is being written to {path}."
+            ),
+            predicate="path != ''",
+            priority=235,
+        ),
+
+        # PR 4: final tour beat — tour complete. Sends the user back to
+        # the prompt with one last instruction they can act on so the
+        # audio sequence ends on a callable cue.
+        EventBinding(
+            id="first_run_tour_completed",
+            event_type=EventType.FIRST_RUN_TOUR_COMPLETED.value,
+            voice_id="narrator",
+            say_template=(
+                "First-run tour complete. Press Enter to run your first command."
+            ),
+            priority=230,
         ),
 
         # Prompt context: when the user lands in INPUT mode AFTER a
