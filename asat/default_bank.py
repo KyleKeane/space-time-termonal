@@ -66,6 +66,8 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.QUEUE_DRAINED,
     EventType.OUTPUT_CHUNK,
     EventType.ERROR_CHUNK,
+    EventType.OUTPUT_STREAM_PAUSED,
+    EventType.OUTPUT_STREAM_BEAT,
     EventType.FOCUS_CHANGED,
     EventType.OUTPUT_LINE_FOCUSED,
     EventType.ACTION_MENU_OPENED,
@@ -259,6 +261,25 @@ def _default_sounds() -> tuple[SoundRecipe, ...]:
             volume=0.95,
             azimuth=55.0,
             elevation=10.0,
+        ),
+        # F37: pacing cues for long-running commands. `stream_paused`
+        # is a single low sine so the user hears the stream go quiet
+        # without being startled. `stream_beat` is a very short, very
+        # quiet blip so a noisy build feels like it's ticking along
+        # without the progress tick itself becoming annoying.
+        SoundRecipe(
+            id="stream_paused",
+            kind="tone",
+            params={"frequency": 196.0, "duration": 0.12, "waveform": "sine"},
+            volume=0.45,
+            elevation=-10.0,
+        ),
+        SoundRecipe(
+            id="stream_beat",
+            kind="tone",
+            params={"frequency": 1480.0, "duration": 0.02, "waveform": "sine"},
+            volume=0.25,
+            elevation=25.0,
         ),
         # F7: short, unobtrusive blip for OSC 133 prompt-start markers.
         # Quieter and higher than `start` so a user whose shell paints
@@ -516,6 +537,25 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             voice_id="alert",
             say_template="{line}",
             priority=90,
+        ),
+
+        # F37: pacing cues for long-running commands. `stream_paused`
+        # fires once per quiet window (default: five seconds with no
+        # chunk); `stream_beat` fires every thirty seconds the stream
+        # is alive. Kept at the default "normal" tier so they play out
+        # of the box — minimal banks skip them, and users who want
+        # total silence during long builds disable the bindings.
+        EventBinding(
+            id="output_stream_paused",
+            event_type=EventType.OUTPUT_STREAM_PAUSED.value,
+            sound_id="stream_paused",
+            priority=85,
+        ),
+        EventBinding(
+            id="output_stream_beat",
+            event_type=EventType.OUTPUT_STREAM_BEAT.value,
+            sound_id="stream_beat",
+            priority=70,
         ),
 
         # Navigation cues: mode changes are overhead ("system") and

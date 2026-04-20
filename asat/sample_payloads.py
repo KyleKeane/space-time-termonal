@@ -55,6 +55,8 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
     EventType.QUEUE_DRAINED: {"last_cell_id": "c1", "queue_depth": 0},
     EventType.OUTPUT_CHUNK: {"cell_id": "c1", "line": "hello"},
     EventType.ERROR_CHUNK: {"cell_id": "c1", "line": "boom"},
+    EventType.OUTPUT_STREAM_PAUSED: {"cell_id": "c1", "gap_sec": 5.2},
+    EventType.OUTPUT_STREAM_BEAT: {"cell_id": "c1", "elapsed_sec": 30.0},
     EventType.FOCUS_CHANGED: {
         "old_mode": "notebook",
         "new_mode": "input",

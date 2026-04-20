@@ -121,11 +121,17 @@ worker entirely.
 ## Output streaming
 
 Producer: `asat.kernel.ExecutionKernel` as the subprocess streams.
+`OUTPUT_STREAM_PAUSED` and `OUTPUT_STREAM_BEAT` (F37) are synthesised
+by `asat.streaming_monitor.StreamingMonitor`, which subscribes to the
+chunk stream and publishes pacing cues when the stream goes quiet or
+when a beat interval elapses.
 
-| EventType      | Payload keys               |
-|----------------|----------------------------|
-| `OUTPUT_CHUNK` | `cell_id`, `line`          |
-| `ERROR_CHUNK`  | `cell_id`, `line`          |
+| EventType              | Payload keys                      | Source              |
+|------------------------|-----------------------------------|---------------------|
+| `OUTPUT_CHUNK`         | `cell_id`, `line`                 | `kernel`            |
+| `ERROR_CHUNK`          | `cell_id`, `line`                 | `kernel`            |
+| `OUTPUT_STREAM_PAUSED` | `cell_id`, `gap_sec`              | `streaming_monitor` |
+| `OUTPUT_STREAM_BEAT`   | `cell_id`, `elapsed_sec`          | `streaming_monitor` |
 
 ## Input + focus router
 

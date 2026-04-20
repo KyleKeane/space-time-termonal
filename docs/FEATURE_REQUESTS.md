@@ -1135,25 +1135,31 @@ stderr and feed both OUTPUT-mode review and the F36 announcer.
 
 ## F37 — Long-output pacing
 
-**Gap.** A command emitting thousands of lines produces a continuous
-narration stream. After thirty seconds the user has lost sense of
-progress and the per-line cues become noise. There's no silence
-detection ("it's been quiet for 10s — still running?") and no
-periodic progress beat during streaming.
+**Status: Shipped.**
 
-**Where it surfaces.** `pytest -v`, `make`, log-tailing. Also:
-commands that hang silently have no distinguishing cue from commands
-that are just slow.
+**Gap (at time of shipping).** A command emitting thousands of lines
+produced a continuous narration stream. After thirty seconds the user
+had lost sense of progress and the per-line cues became noise. There
+was no silence detection ("it's been quiet for 10s — still running?")
+and no periodic progress beat during streaming.
 
-**Sketch.** A `StreamingMonitor` subscribes to `OUTPUT_CHUNK` and
-`COMMAND_STARTED`/`_COMPLETED` for the active cell. It tracks the
-time since the last chunk; if the gap crosses `silence_threshold_sec`
-(default 5.0) it publishes `OUTPUT_STREAM_PAUSED`, and every
-`progress_beat_interval_sec` (default 30.0) while output is
-streaming it publishes `OUTPUT_STREAM_BEAT`. Both are opt-in
-bindings — the default bank binds them to subtle non-speech cues.
-Pairs with F24 (continuous playback): together they give the user a
-temporal frame for long-running output.
+**Sketch (shipped).** New `asat/streaming_monitor.py` holds a
+`StreamingMonitor` that subscribes to `COMMAND_STARTED`,
+`OUTPUT_CHUNK`, `ERROR_CHUNK`, `COMMAND_COMPLETED`/`_FAILED`/
+`_CANCELLED` and tracks per-cell streaming state. `check(now=None)`
+publishes `OUTPUT_STREAM_PAUSED` once per quiet window
+(`silence_threshold_sec`, default 5.0) and `OUTPUT_STREAM_BEAT`
+every `progress_beat_interval_sec` (default 30.0) the stream is
+alive. `Application.build` constructs the monitor, wires it onto
+the bus alongside `CompletionFocusWatcher`, and launches a daemon
+ticker via `start_background_ticker()` that polls `check()` every
+second; `Application.close` stops the ticker. The default bank
+binds both events to two new subtle cues (`stream_paused`,
+`stream_beat`) at the default "normal" verbosity tier, so they play
+out of the box — `minimal` banks skip them, and users who want
+total silence during long builds disable the bindings in settings.
+Tests inject a virtual `clock` and drive
+`check(now)` directly, so no real sleeps are ever needed.
 
 ---
 

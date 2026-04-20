@@ -128,6 +128,8 @@ class EventType(str, Enum):
 
     OUTPUT_CHUNK = "output.chunk"
     ERROR_CHUNK = "error.chunk"
+    OUTPUT_STREAM_PAUSED = "output.stream.paused"
+    OUTPUT_STREAM_BEAT = "output.stream.beat"
 
     FOCUS_CHANGED = "focus.changed"
     KEY_PRESSED = "input.key"

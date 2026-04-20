@@ -53,6 +53,7 @@ from asat.session import Session
 from asat.settings_controller import SettingsController
 from asat.sound_bank import SoundBank
 from asat.sound_engine import SoundEngine
+from asat.streaming_monitor import StreamingMonitor
 from asat.terminal import TerminalRenderer
 from asat.workspace import Workspace, WorkspaceError
 
@@ -85,6 +86,7 @@ class Application:
     prompt_context: PromptContext
     error_tail: StderrTailAnnouncer
     completion_watcher: CompletionFocusWatcher
+    streaming_monitor: Optional[StreamingMonitor] = None
     onboarding: Optional[OnboardingCoordinator] = None
     event_logger: Optional[JsonlEventLogger] = None
     session_path: Optional[Path] = None
@@ -252,6 +254,13 @@ class Application:
         # first focus event fires (via cursor.new_cell below) so the
         # shadow focus is never empty when a command completes (F34).
         completion_watcher = CompletionFocusWatcher(bus)
+        # streaming_monitor (F37) subscribes alongside completion_watcher
+        # so the silence / beat windows track every cell from the first
+        # COMMAND_STARTED onward. The background ticker is a daemon
+        # thread, safe to start unconditionally — tests still drive
+        # `check()` with an injected clock and never observe the ticker.
+        streaming_monitor = StreamingMonitor(bus)
+        streaming_monitor.start_background_ticker()
         if text_trace is not None:
             TerminalRenderer(bus, stream=text_trace)
         onboarding = onboarding_factory(bus) if onboarding_factory is not None else None
@@ -280,6 +289,7 @@ class Application:
             prompt_context=prompt_context,
             error_tail=error_tail,
             completion_watcher=completion_watcher,
+            streaming_monitor=streaming_monitor,
             onboarding=onboarding,
             event_logger=event_logger,
             session_path=Path(session_path) if session_path is not None else None,
@@ -384,6 +394,8 @@ class Application:
         # torn-down backend.
         if self.execution_worker is not None:
             self.execution_worker.close()
+        if self.streaming_monitor is not None:
+            self.streaming_monitor.close()
         if self.session_path is not None:
             self.session.save(self.session_path)
             publish_event(
