@@ -62,17 +62,21 @@ Defaults for a fresh record are obvious (`Voice()` neutral,
 
 ## F3 — Reload bank from disk
 
-**Gap.** Ctrl+S writes the in-memory bank to disk; there is no inverse
-that discards uncommitted edits and reloads the last saved bank.
-
-**Where it surfaces.** A user experimenting with settings can only
-undo by remembering every edit they made, or by closing the editor
-and reopening it (which does not reload from disk — the session still
-holds the live bank).
-
-**Sketch.** Add `SettingsEditor.reload(path)` that calls
-`SoundBank.load(path)` and swaps the active bank after a confirmation
-prompt. Bind to a keystroke (Ctrl+R) in SETTINGS mode.
+**Status: Shipped.** `:reload-bank` (INPUT-mode meta-command)
+re-reads the on-disk bank via `SoundBank.load()` and swaps it into
+the running `SoundEngine`. The meta-command resolves the path from
+the `bank_path` the CLI passed to `Application.build`; without one
+the command surfaces a `HELP_REQUESTED` hint instead of silently
+no-oping. Parse failures (corrupt JSON, broken references) and
+missing files surface the same way so the user hears exactly why
+the reload did not happen. `BANK_RELOADED` fires on success with
+`path` and `binding_count` so the default bank narrates "bank
+reloaded from disk". Refuses while the settings editor is open so
+in-flight edits are never silently discarded. Ctrl+R in SETTINGS
+mode stays on F21c (reset-to-defaults); the meta-command is
+reachable from the daily INPUT workflow where the user was already
+typing. Covered by `test_reload_bank_meta_command_swaps_live_bank`
+and peers in `tests/test_app.py`.
 
 ---
 

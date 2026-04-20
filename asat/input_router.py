@@ -278,6 +278,7 @@ META_COMMANDS: tuple[str, ...] = (
     "bookmarks",
     "jump",
     "verbosity",
+    "reload-bank",
 )
 
 # "Ambient" meta-commands do their job without taking focus away from
@@ -305,6 +306,7 @@ AMBIENT_META_COMMANDS: frozenset[str] = frozenset(
         "unbookmark",
         "bookmarks",
         "verbosity",
+        "reload-bank",
     }
 )
 
@@ -333,7 +335,7 @@ HELP_LINES: tuple[str, ...] = (
     "           Ctrl+Z undo, Ctrl+Y redo edits in the order you made them.",
     "           Ctrl+R resets to defaults at cursor scope (Enter confirms, Escape cancels).",
     "Menu:      F2 (or Ctrl+.) opens contextual actions; Up/Down walk, Enter invokes, Escape closes.",
-    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :state, :commands, :reset, :welcome, :repeat, :heading, :toc, :workspace, :list-notebooks, :new-notebook, :bindings, :bookmark, :unbookmark, :bookmarks, :jump, :verbosity.",
+    "Meta:      :help, :settings, :save, :quit, :delete, :duplicate, :pwd, :state, :commands, :reset, :welcome, :repeat, :heading, :toc, :workspace, :list-notebooks, :new-notebook, :bindings, :bookmark, :unbookmark, :bookmarks, :jump, :verbosity, :reload-bank.",
     "           `:help topics` lists focused tours; `:help <topic>` narrates one (navigation, cells, settings, audio, search, meta).",
     "           `:welcome` replays the first-run tour; `:repeat` (or Ctrl+R in notebook/input) re-speaks the last narration.",
     "           Meta-commands are case-insensitive and accept a trailing argument.",

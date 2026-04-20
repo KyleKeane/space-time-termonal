@@ -108,6 +108,12 @@ class EventType(str, Enum):
         ``status`` (``"pass"`` / ``"fail"`` / ``"skip"``), ``index``
         / ``total`` (1-based step counter), and ``detail`` (a short
         free-text summary so the JSONL log is human-skimmable).
+
+    Bank reload (F3):
+        BANK_RELOADED fires after ``:reload-bank`` re-reads the
+        on-disk bank and swaps the live bank in. Payload carries
+        ``path`` (resolved string) and ``binding_count`` so the user
+        hears confirmation that the edits-in-progress were discarded.
     """
 
     SESSION_CREATED = "session.created"
@@ -194,6 +200,8 @@ class EventType(str, Enum):
     SELF_CHECK_STEP = "self_check.step"
 
     VERBOSITY_CHANGED = "verbosity.changed"
+
+    BANK_RELOADED = "bank.reloaded"
 
 
 @dataclass(frozen=True)
