@@ -804,23 +804,23 @@ cells"). Cross-notebook paste falls out for free once F29 lands.
 
 ## F27 — Heading and text cells with hierarchy, navigation, and scope selection
 
-**Status.** Partially shipped as F61 (headings), an F27 text-cell
-slice, F27 parent-scope navigation, and the `asat/outline.py`
-scope helper with `NotebookCursor.select_heading_scope()`.
-Heading cells, flat outline navigation (`]` / `[`, `1`-`6`),
-`:toc`, `:heading <level> <title>`, and the default-bank heading
-voice are in (see F61). Text cells now exist as `CellKind.TEXT`
-with a `:text <prose>` INPUT meta-command and a dedicated
-`focus_changed_text` narration binding. `{` / `}` in NOTEBOOK
-walk to the previous / next heading whose level is strictly
-shallower than the current scope (enclosing heading).
-`asat/outline.scope_range(cells, heading_index)` returns the
-`[start, end)` span of a heading's section (children included),
-and `NotebookCursor.select_heading_scope()` returns the focused
-cell's enclosing section as a list of Cells. What is still
-pending from the original F27 sketch: the NOTEBOOK `i`
-keybinding for in-place text insertion and fold / collapse
-(`z`, `OUTLINE_FOLDED` / `OUTLINE_UNFOLDED`).
+**Status.** Shipped. Heading cells, flat outline navigation (`]` /
+`[`, `1`-`6`), `:toc`, `:heading <level> <title>`, and the default-
+bank heading voice are in (see F61). Text cells exist as
+`CellKind.TEXT` with both a `:text <prose>` INPUT meta-command and
+an in-place `i` keybinding that drops the cursor into a dedicated
+`FocusMode.TEXT_INPUT` — Enter splices the composed buffer into a
+new text cell after the anchor and returns to NOTEBOOK; Escape
+abandons. `{` / `}` in NOTEBOOK walk to the previous / next
+heading whose level is strictly shallower than the current scope
+(enclosing heading). `asat/outline.scope_range(cells,
+heading_index)` returns the `[start, end)` span of a heading's
+section (children included), and
+`NotebookCursor.select_heading_scope()` returns the focused cell's
+enclosing section as a list of Cells. Fold / collapse (`z` +
+`OUTLINE_FOLDED` / `OUTLINE_UNFOLDED`) lives on its own branch
+(PR #90) and completes the scope-collapse half of the original
+sketch.
 
 **Gap.** Every cell today is an input / output pair produced by
 `ExecutionKernel` or an announce-only heading (F61). There is no
@@ -838,15 +838,16 @@ type is a narrow change.
 
 **Sketch — remaining work after F61.**
 
-1. **Text cell kind.** *(Text-cell slice shipped.)* `CellKind.TEXT`
-   and a `text: str` field on `Cell` are in; `is_executable`
-   returns False so `Application.execute` short-circuits (same
-   guard F61 added for headings). INPUT's `:text <prose>`
-   meta-command appends a text cell and abandons INPUT (parallels
-   `:heading`), and FOCUS_CHANGED narrates "text, {text}". Still
-   pending: the NOTEBOOK `i` binding for in-place insertion
-   (needs an in-place editor for the text body; typing-in-line
-   is not yet wired).
+1. **Text cell kind.** *(Shipped.)* `CellKind.TEXT` and a
+   `text: str` field on `Cell` are in; `is_executable` returns
+   False so `Application.execute` short-circuits (same guard F61
+   added for headings). INPUT's `:text <prose>` meta-command
+   appends a text cell and abandons INPUT (parallels `:heading`),
+   and FOCUS_CHANGED narrates "text, {text}". The NOTEBOOK `i`
+   binding enters a dedicated `FocusMode.TEXT_INPUT`: Enter
+   creates a text cell after the anchor, Escape abandons, and the
+   buffer-manipulation primitives (Backspace, Delete, Left/Right,
+   Home/End, Ctrl+A/E/W/U/K) are shared with INPUT.
 2. **Parent-scope navigation.** *(Shipped.)* `{` / `}` in NOTEBOOK
    jump to the previous / next heading whose `heading_level` is
    strictly shallower than the current scope.

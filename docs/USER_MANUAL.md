@@ -200,25 +200,27 @@ mode, save the session, resume it tomorrow with every cell intact.
 
 ## Focus modes
 
-You are always in exactly one of four modes. The current mode
+You are always in exactly one of five modes. The current mode
 decides what keys do.
 
 | Mode       | What you're doing                                  |
 |------------|----------------------------------------------------|
 | `NOTEBOOK` | Walking between cells (no keys go into a buffer). |
 | `INPUT`    | Typing a command into the active cell.             |
+| `TEXT_INPUT` | Composing a new prose cell in-place (F27). Press `i` in NOTEBOOK to enter; Enter creates, Escape abandons. |
 | `OUTPUT`   | Stepping line-by-line through captured output.     |
 | `SETTINGS` | Driving the live SoundBank editor.                 |
 
 Every mode transition announces itself: you'll hear the
 `focus_shift` cue overhead and the system voice names the new mode
-(`"input"`, `"notebook"`, `"output"`, `"settings"`). Walking between
-cells within NOTEBOOK mode plays `nav_blip` instead and the narrator
-reads the focused cell's command. Typing into the input buffer is
-silent on purpose — the `insert_character` action echoes the literal
-character instead. If you lose track of where you are, just press
-Escape — it always takes you one level out (INPUT / OUTPUT →
-NOTEBOOK, SETTINGS → close), and the narrator confirms the new mode.
+(`"input"`, `"notebook"`, `"output"`, `"settings"`, `"text_input"`).
+Walking between cells within NOTEBOOK mode plays `nav_blip` instead
+and the narrator reads the focused cell's command. Typing into any
+buffer (INPUT or TEXT_INPUT) is silent on purpose — the
+`insert_character` action echoes the literal character instead. If
+you lose track of where you are, just press Escape — it always takes
+you one level out (INPUT / OUTPUT / TEXT_INPUT → NOTEBOOK, SETTINGS
+→ close), and the narrator confirms the new mode.
 
 ---
 
@@ -235,6 +237,7 @@ NOTEBOOK, SETTINGS → close), and the narrator confirms the new mode.
 | Ctrl+,     | Open the settings editor.                         |
 | `d`        | Delete the focused cell.                          |
 | `y`        | Duplicate the focused cell (inserts a copy below).|
+| `i`        | Begin composing an in-place text cell; lands in TEXT_INPUT mode (F27). |
 | Alt+Up / Alt+Down | Move the focused cell up / down within the session. |
 
 Moving between cells plays the `nav_blip` cue and the narrator reads
@@ -264,6 +267,38 @@ or when you press Enter from NOTEBOOK mode.
 | Ctrl+R    | Repeat the most recent narration.                 |
 | Enter     | Submits the command to the execution kernel.      |
 | Escape    | Commits the buffer into the cell and returns to NOTEBOOK (does not run). |
+
+---
+
+## TEXT_INPUT mode — composing a prose cell in-place
+
+Press `i` from NOTEBOOK to begin a text cell without leaving the
+flow. The cursor enters TEXT_INPUT mode with an empty buffer; every
+printable key goes into the buffer (no meta-commands, no history
+recall). Enter splices the buffer into the notebook as a new text
+cell *immediately after the currently focused "anchor" cell* and
+focuses it in NOTEBOOK mode. Escape (or an empty / whitespace-only
+buffer on Enter) abandons without creating anything.
+
+| Key       | What it does                                      |
+|-----------|---------------------------------------------------|
+| Any char  | Inserted at the caret.                            |
+| Backspace | Deletes the character before the caret.           |
+| Delete    | Deletes the character under the caret.            |
+| Left / Right | Move the caret one character.                  |
+| Home / End | Jump the caret to the start / end of the buffer. |
+| Ctrl+A / Ctrl+E | Alias for Home / End.                       |
+| Ctrl+W    | Delete the word immediately before the caret.     |
+| Ctrl+U    | Delete from the start of the buffer up to the caret. |
+| Ctrl+K    | Delete from the caret to the end of the buffer.   |
+| Enter     | Create the text cell and return to NOTEBOOK.      |
+| Escape    | Abandon the draft (no cell is created).           |
+
+The `:text <prose>` meta-command in INPUT mode is still available
+for scripted / dictated insertion; `i` is the hands-on counterpart
+where you want the buffer to be the prose body directly.
+
+---
 
 ### Meta-commands
 
@@ -570,6 +605,14 @@ Every key you need, one table.
 | NOTEBOOK   | `]` / `[`         | Next / previous heading (any level)   |
 | NOTEBOOK   | `1`..`6`          | Next heading of that level (F61)      |
 | NOTEBOOK   | `}` / `{`         | Next / prev parent-scope heading (F27)|
+| NOTEBOOK   | `i`               | Begin an in-place text cell (F27); lands in TEXT mode |
+| TEXT       | Enter             | Create a text cell from the buffer after the anchor (F27) |
+| TEXT       | Escape            | Abandon the draft without creating a cell (F27) |
+| TEXT       | Backspace / Delete | Delete char before / at caret        |
+| TEXT       | Left / Right      | Move caret one character              |
+| TEXT       | Home / End        | Caret to start / end (also Ctrl+A / Ctrl+E) |
+| TEXT       | Ctrl+W / Ctrl+U / Ctrl+K | Kill word / to-start / to-end  |
+| TEXT       | F2 / Ctrl+.       | Open actions menu                     |
 | INPUT      | Enter             | Submit command                        |
 | INPUT      | Backspace         | Delete char before caret              |
 | INPUT      | Delete            | Delete char under caret               |
