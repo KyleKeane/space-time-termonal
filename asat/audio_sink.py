@@ -3,9 +3,8 @@
 An AudioSink receives fully-prepared AudioBuffer values and either
 plays them, stores them, or writes them to disk. Keeping the sink
 behind a narrow protocol means tests can substitute a recording sink
-without spinning up audio hardware, and future playback backends
-(sounddevice, an ALSA wrapper, a Windows WASAPI wrapper) plug in the
-same way.
+without spinning up audio hardware, and new playback backends (a
+direct ALSA wrapper, a Windows WASAPI wrapper) plug in the same way.
 
 The shipping sinks are:
 
@@ -15,21 +14,23 @@ The shipping sinks are:
 - WavFileSink writes each buffer to disk as 16-bit PCM. Useful for
   debugging and for listening to the output when no audio device is
   available.
-- WindowsLiveAudioSink plays buffers through `winsound.PlaySound` on
-  Windows.
-- PosixLiveAudioSink pipes each buffer as a WAV blob to a local
-  audio player binary — ``aplay`` / ``paplay`` on Linux, ``afplay``
-  on macOS — so ``pick_live_sink()`` returns a working live sink on
-  every supported platform (F6). Install one of the binaries with
-  your package manager; PulseAudio, PipeWire, and ALSA are all fine
-  so long as a command-line player is on PATH.
+- SoundDeviceSink plays buffers through the ``sounddevice`` library,
+  which bundles PortAudio wheels for Linux / macOS / Windows. This is
+  the default live backend because ``pip install asat`` pulls it in
+  automatically, so users get audible output without installing any
+  system packages.
+- WindowsLiveAudioSink plays buffers through ``winsound.PlaySound``
+  on Windows. Kept as a fallback for environments where sounddevice
+  fails (e.g. no PortAudio output device resolvable).
+- PosixLiveAudioSink pipes each buffer as a WAV blob to a local audio
+  player binary — ``aplay`` / ``paplay`` on Linux, ``afplay`` on macOS.
+  Also kept as a fallback for the rare host where sounddevice cannot
+  open an output device but a player binary is available.
 
-``pick_live_sink()`` tries these in order: Windows first (existing
-``winsound`` path), then ``PosixLiveAudioSink.probe()`` which picks
-whichever POSIX player is available. Only when none are installable
-does it raise ``LiveAudioUnavailable`` — and even then the CLI falls
-back to ``MemorySink`` with a message that names the player binaries
-to install.
+``pick_live_sink()`` tries SoundDeviceSink first (the portable, pure-
+pip path), then the platform-native fallbacks, and only raises
+``LiveAudioUnavailable`` when none work. The CLI turns that into a
+``MemorySink`` with a diagnostic so the session still starts.
 """
 
 from __future__ import annotations
@@ -212,6 +213,98 @@ class WindowsLiveAudioSink:
         self._winsound.PlaySound(None, self._winsound.SND_PURGE)
 
 
+class SoundDeviceSink:
+    """Play each buffer through the ``sounddevice`` (PortAudio) library.
+
+    ``sounddevice`` ships PortAudio wheels for Linux, macOS, and
+    Windows, so ``pip install asat`` unlocks live audio on all three
+    platforms without any additional system packages. This is why it
+    sits at the top of ``pick_live_sink``'s priority list.
+
+    Each ``play()`` call stops whatever clip was previously playing
+    before starting the new one — matching the "latest event wins"
+    semantics that the Windows and POSIX sinks implement, so back-to-
+    back keystroke cues don't pile up.
+
+    ``probe()`` is cheap and used by diagnostics (``--check``) to
+    decide whether the library and at least one output device are
+    usable on this host, without actually constructing a sink.
+    """
+
+    def __init__(self) -> None:
+        """Import sounddevice + numpy and confirm an output device exists.
+
+        Raises ``LiveAudioUnavailable`` when either dependency is
+        missing at runtime, or when PortAudio can't find a usable
+        output device (headless VM, no audio server running, etc.).
+        The CLI catches this and falls back to the next sink or to
+        ``MemorySink``.
+        """
+        try:
+            import sounddevice as sd
+        except (ImportError, OSError) as exc:
+            # OSError covers the case where the sounddevice wheel
+            # installed but the bundled PortAudio native library can't
+            # load (e.g. missing libc deps on an exotic distro).
+            raise LiveAudioUnavailable(
+                "sounddevice is not available: "
+                f"{exc}. Reinstall with `pip install --force-reinstall sounddevice`."
+            ) from exc
+        try:
+            import numpy as np
+        except ImportError as exc:
+            raise LiveAudioUnavailable(
+                "numpy is required for SoundDeviceSink but is not installed."
+            ) from exc
+        try:
+            sd.check_output_settings()
+        except Exception as exc:
+            # PortAudio raises its own exception class; we catch broadly
+            # because the failure modes (no device, permission denied,
+            # ALSA/PulseAudio not running) are all unrecoverable here
+            # and should gracefully fall through to the next sink.
+            raise LiveAudioUnavailable(
+                f"no usable audio output device: {exc}. "
+                "On headless servers, use --wav-dir DIR to capture audio."
+            ) from exc
+        self._sd = sd
+        self._np = np
+
+    @classmethod
+    def probe(cls) -> bool:
+        """Return True when sounddevice + numpy + an output device are usable."""
+        try:
+            import sounddevice as sd
+            import numpy as np  # noqa: F401  # availability check only
+        except (ImportError, OSError):
+            return False
+        try:
+            sd.check_output_settings()
+        except Exception:
+            return False
+        return True
+
+    def play(self, buffer: AudioBuffer) -> None:
+        """Stop any in-flight clip and start playing the new buffer."""
+        self._sd.stop()
+        channels = 2 if buffer.layout == ChannelLayout.STEREO else 1
+        arr = self._np.asarray(buffer.samples, dtype=self._np.float32)
+        if channels == 2:
+            # AudioBuffer stores stereo as interleaved L,R,L,R; PortAudio
+            # expects an (N, 2) array.
+            arr = arr.reshape(-1, 2)
+        self._sd.play(arr, samplerate=buffer.sample_rate, blocking=False)
+
+    def close(self) -> None:
+        """Stop any in-flight clip so the process exits quietly."""
+        try:
+            self._sd.stop()
+        except Exception:
+            # Best-effort shutdown; never let close() raise so callers
+            # can chain it in `finally` blocks without extra guards.
+            pass
+
+
 class PosixLiveAudioSink:
     """Play each buffer through a local audio player subprocess.
 
@@ -363,19 +456,38 @@ class PosixLiveAudioSink:
 def pick_live_sink() -> AudioSink:
     """Return the live sink that fits this host, or raise.
 
-    Prefers the platform-native backend: ``WindowsLiveAudioSink`` on
-    Windows (winsound), ``PosixLiveAudioSink`` on POSIX hosts that
-    have a command-line player installed. Raises
-    ``LiveAudioUnavailable`` only when none of those are usable so
-    the CLI can drop down to ``MemorySink`` with a clear hint about
-    which binary to install (F6).
+    Priority order:
+
+    1. ``SoundDeviceSink`` — the pure-pip path that works on Linux,
+       macOS, and Windows after ``pip install asat`` without requiring
+       any system packages. This is the default "just works" path.
+    2. ``WindowsLiveAudioSink`` — the winsound fallback on Windows for
+       environments where sounddevice can't open a device.
+    3. ``PosixLiveAudioSink`` — the aplay/paplay/afplay fallback on
+       POSIX hosts for the same reason.
+
+    Raises ``LiveAudioUnavailable`` only when none of those work; the
+    CLI then drops down to ``MemorySink`` with a diagnostic message.
     """
+    first_error: Optional[LiveAudioUnavailable] = None
+    try:
+        return SoundDeviceSink()
+    except LiveAudioUnavailable as exc:
+        first_error = exc
     if sys.platform.startswith("win"):
-        return WindowsLiveAudioSink()
+        try:
+            return WindowsLiveAudioSink()
+        except LiveAudioUnavailable as exc:
+            raise LiveAudioUnavailable(
+                "no live audio sink is available on this Windows host — "
+                f"sounddevice: {first_error}; winsound: {exc}. "
+                "Alternative: capture audio with --wav-dir DIR."
+            ) from exc
     try:
         return PosixLiveAudioSink()
     except LiveAudioUnavailable as exc:
         raise LiveAudioUnavailable(
             "no live audio sink is available on this host — "
-            f"{exc} Alternative: capture audio with --wav-dir DIR.",
+            f"sounddevice: {first_error}; posix players: {exc}. "
+            "Alternative: capture audio with --wav-dir DIR.",
         ) from exc

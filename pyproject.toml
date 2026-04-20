@@ -10,7 +10,11 @@ requires-python = ">=3.10"
 readme = "README.md"
 license = { file = "LICENSE" }
 authors = [{ name = "ASAT contributors" }]
-dependencies = []
+dependencies = [
+    "sounddevice>=0.4.6",
+    "numpy>=1.23",
+    "pyttsx3>=2.90",
+]
 
 [tool.setuptools.packages.find]
 include = ["asat*"]
