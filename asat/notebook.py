@@ -26,6 +26,7 @@ from typing import Optional
 from asat.cell import Cell, CellKind
 from asat.event_bus import EventBus, publish_event
 from asat.events import EventType
+from asat.outline import enclosing_heading_index, scope_range
 from asat.session import Session, SessionError
 
 
@@ -284,6 +285,35 @@ class NotebookCursor:
                 return cand.heading_level
             j -= 1
         return None
+
+    def select_heading_scope(self) -> Optional[list[Cell]]:
+        """Return the cells that belong to the focused cell's heading scope (F27).
+
+        "Scope" is the section governed by the nearest enclosing
+        heading — the heading itself plus every following cell up to
+        (but not including) the next same-or-shallower heading. When
+        the focus is a heading, its own section is returned. When the
+        focus is a non-heading cell, the enclosing heading's section
+        is returned. Returns None if there is no focused cell or no
+        enclosing heading.
+
+        The returned list is a fresh list (callers may mutate it
+        freely) but the cells inside are the session's actual Cell
+        instances — same sharing contract as `Session.cells`. For a
+        defensive copy, call `.snapshot()` on each cell.
+        """
+        if self._state.cell_id is None:
+            return None
+        cells = self._session.cells
+        try:
+            index = self._session.index_of(self._state.cell_id)
+        except ValueError:
+            return None
+        heading_index = enclosing_heading_index(cells, index)
+        if heading_index is None:
+            return None
+        start, end = scope_range(cells, heading_index)
+        return list(cells[start:end])
 
     def _move_to_parent_heading(self, direction: int) -> Optional[Cell]:
         if self._state.mode != FocusMode.NOTEBOOK:

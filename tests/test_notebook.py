@@ -748,6 +748,67 @@ class ParentScopeNavigationTests(unittest.TestCase):
         self.assertIsNone(self.cursor.move_to_previous_parent_heading())
 
 
+class SelectHeadingScopeTests(unittest.TestCase):
+    """F27: select_heading_scope returns the enclosing section's cells."""
+
+    def setUp(self) -> None:
+        self.bus = EventBus()
+        self.session = Session.new()
+        self.session.add_cell(Cell.new_heading(1, "Intro"))      # 0
+        self.session.add_cell(Cell.new("ls"))                    # 1
+        self.session.add_cell(Cell.new_heading(2, "Setup"))      # 2
+        self.session.add_cell(Cell.new("install"))               # 3
+        self.session.add_cell(Cell.new_heading(3, "Fixtures"))   # 4
+        self.session.add_cell(Cell.new("make"))                  # 5
+        self.session.add_cell(Cell.new_heading(2, "Training"))   # 6
+        self.session.add_cell(Cell.new("train"))                 # 7
+        self.cursor = NotebookCursor(self.session, self.bus)
+
+    def test_from_heading_returns_its_own_section(self) -> None:
+        self.cursor.focus_cell(self.session.cells[2].cell_id)  # H2 Setup
+        scope = self.cursor.select_heading_scope()
+        assert scope is not None
+        titles = [c.heading_title or c.command for c in scope]
+        self.assertEqual(titles, ["Setup", "install", "Fixtures", "make"])
+
+    def test_from_plain_cell_walks_back_to_enclosing_heading(self) -> None:
+        self.cursor.focus_cell(self.session.cells[5].cell_id)  # under H3
+        scope = self.cursor.select_heading_scope()
+        assert scope is not None
+        self.assertEqual(len(scope), 2)
+        self.assertEqual(scope[0].heading_title, "Fixtures")
+
+    def test_from_top_level_h1_spans_through_nested_children(self) -> None:
+        self.cursor.focus_cell(self.session.cells[0].cell_id)  # H1 Intro
+        scope = self.cursor.select_heading_scope()
+        assert scope is not None
+        self.assertEqual(len(scope), 8)  # everything — no later H1 exists
+
+    def test_no_enclosing_heading_returns_none(self) -> None:
+        bus = EventBus()
+        session = Session.new()
+        session.add_cell(Cell.new("preamble"))
+        session.add_cell(Cell.new_heading(1, "First"))
+        cursor = NotebookCursor(session, bus)
+        cursor.focus_cell(session.cells[0].cell_id)
+        self.assertIsNone(cursor.select_heading_scope())
+
+    def test_empty_session_returns_none(self) -> None:
+        bus = EventBus()
+        session = Session.new()
+        cursor = NotebookCursor(session, bus)
+        self.assertIsNone(cursor.select_heading_scope())
+
+    def test_returned_list_is_fresh_copy(self) -> None:
+        self.cursor.focus_cell(self.session.cells[2].cell_id)
+        first = self.cursor.select_heading_scope()
+        second = self.cursor.select_heading_scope()
+        assert first is not None and second is not None
+        self.assertIsNot(first, second)
+        # But they share the underlying Cell objects (documented contract).
+        self.assertIs(first[0], second[0])
+
+
 class HeadingCreationTests(unittest.TestCase):
     """new_heading_cell adds a landmark without entering INPUT mode."""
 
