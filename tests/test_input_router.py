@@ -1932,6 +1932,58 @@ class ParentScopeNavigationBindingTests(unittest.TestCase):
         self.assertTrue(cursor.focus.input_buffer.endswith("}"))
 
 
+class FoldCollapseBindingTests(unittest.TestCase):
+    """F27: `z` on a heading toggles collapse; Up/Down skips hidden cells."""
+
+    def _build(self):
+        bus = EventBus()
+        session = Session.new()
+        session.add_cell(Cell.new_heading(1, "Intro"))
+        session.add_cell(Cell.new("ls"))
+        session.add_cell(Cell.new_heading(2, "Setup"))
+        session.add_cell(Cell.new("install"))
+        session.add_cell(Cell.new_heading(2, "Training"))
+        cursor = NotebookCursor(session, bus)
+        router = InputRouter(cursor, bus)
+        return bus, session, cursor, router
+
+    def test_z_on_heading_folds_and_unfolds(self) -> None:
+        _bus, session, cursor, router = self._build()
+        cursor.focus_cell(session.cells[2].cell_id)  # H2 Setup
+        action = router.handle_key(Key.printable("z"))
+        self.assertEqual(action, "toggle_fold_heading")
+        self.assertTrue(session.cells[2].collapsed)
+        router.handle_key(Key.printable("z"))
+        self.assertFalse(session.cells[2].collapsed)
+
+    def test_z_on_command_cell_reports_not_toggled(self) -> None:
+        bus, session, cursor, router = self._build()
+        rec = _Recorder(bus)
+        cursor.focus_cell(session.cells[1].cell_id)  # cmd
+        router.handle_key(Key.printable("z"))
+        invoked = [e for e in rec.types_of(EventType.ACTION_INVOKED)
+                   if e.payload["action"] == "toggle_fold_heading"]
+        self.assertFalse(invoked[-1].payload["toggled"])
+        self.assertFalse(session.cells[1].collapsed)
+
+    def test_down_after_fold_skips_hidden_cells(self) -> None:
+        _bus, session, cursor, router = self._build()
+        cursor.focus_cell(session.cells[2].cell_id)  # H2 Setup
+        router.handle_key(Key.printable("z"))  # fold Setup
+        router.handle_key(DOWN)
+        # install (index 3) is hidden; next visible is Training (index 4).
+        self.assertEqual(cursor.focus.cell_id, session.cells[4].cell_id)
+
+    def test_z_noop_in_input_mode_falls_through_as_text(self) -> None:
+        _bus, session, cursor, router = self._build()
+        cursor.focus_cell(session.cells[1].cell_id)
+        cursor.enter_input_mode()
+        router.handle_key(Key.printable("z"))
+        self.assertEqual(cursor.focus.mode, FocusMode.INPUT)
+        self.assertTrue(cursor.focus.input_buffer.endswith("z"))
+        self.assertFalse(session.cells[2].collapsed)
+
+
 class HeadingMetaCommandTests(unittest.TestCase):
     """F61: `:heading <level> <title>` and `:toc`."""
 

@@ -809,6 +809,101 @@ class SelectHeadingScopeTests(unittest.TestCase):
         self.assertIs(first[0], second[0])
 
 
+class FoldCollapseTests(unittest.TestCase):
+    """F27: toggle_fold + collapsed-aware Up/Down navigation."""
+
+    def setUp(self) -> None:
+        self.bus = EventBus()
+        self.session = Session.new()
+        # [0] H1 Intro  [1] ls   [2] H2 Setup   [3] install
+        # [4] H3 Fixt   [5] make [6] H2 Train   [7] train  [8] H1 Runs
+        self.session.add_cell(Cell.new_heading(1, "Intro"))
+        self.session.add_cell(Cell.new("ls"))
+        self.session.add_cell(Cell.new_heading(2, "Setup"))
+        self.session.add_cell(Cell.new("install"))
+        self.session.add_cell(Cell.new_heading(3, "Fixtures"))
+        self.session.add_cell(Cell.new("make"))
+        self.session.add_cell(Cell.new_heading(2, "Training"))
+        self.session.add_cell(Cell.new("train"))
+        self.session.add_cell(Cell.new_heading(1, "Runs"))
+        self.cursor = NotebookCursor(self.session, self.bus)
+
+    def _folded_events(self, etype: EventType) -> list[Event]:
+        captured: list[Event] = []
+        self.bus.subscribe(etype, captured.append)
+        return captured
+
+    def test_toggle_fold_on_heading_returns_true_then_false(self) -> None:
+        self.cursor.focus_cell(self.session.cells[2].cell_id)  # H2 Setup
+        self.assertTrue(self.cursor.toggle_fold_focused_heading())
+        self.assertTrue(self.session.cells[2].collapsed)
+        self.assertFalse(self.cursor.toggle_fold_focused_heading())
+        self.assertFalse(self.session.cells[2].collapsed)
+
+    def test_toggle_fold_publishes_outline_folded_with_cell_count(self) -> None:
+        folded = self._folded_events(EventType.OUTLINE_FOLDED)
+        self.cursor.focus_cell(self.session.cells[2].cell_id)  # H2 Setup: [2,6)
+        self.cursor.toggle_fold_focused_heading()
+        self.assertEqual(len(folded), 1)
+        p = folded[0].payload
+        self.assertEqual(p["cell_id"], self.session.cells[2].cell_id)
+        self.assertEqual(p["heading_level"], 2)
+        self.assertEqual(p["heading_title"], "Setup")
+        self.assertEqual(p["cell_count"], 3)  # end - start - 1
+
+    def test_toggle_fold_publishes_outline_unfolded_on_expand(self) -> None:
+        unfolded = self._folded_events(EventType.OUTLINE_UNFOLDED)
+        self.cursor.focus_cell(self.session.cells[2].cell_id)
+        self.cursor.toggle_fold_focused_heading()  # fold
+        self.cursor.toggle_fold_focused_heading()  # unfold
+        self.assertEqual(len(unfolded), 1)
+        self.assertEqual(unfolded[0].payload["cell_id"], self.session.cells[2].cell_id)
+
+    def test_toggle_fold_refuses_on_command_cell(self) -> None:
+        self.cursor.focus_cell(self.session.cells[1].cell_id)
+        self.assertIsNone(self.cursor.toggle_fold_focused_heading())
+
+    def test_toggle_fold_refuses_on_empty_scope_heading(self) -> None:
+        """A heading with no following cells has nothing to fold."""
+        bus = EventBus()
+        session = Session.new()
+        session.add_cell(Cell.new_heading(1, "Alone"))
+        cursor = NotebookCursor(session, bus)
+        cursor.focus_cell(session.cells[0].cell_id)
+        self.assertIsNone(cursor.toggle_fold_focused_heading())
+        self.assertFalse(session.cells[0].collapsed)
+
+    def test_move_down_skips_collapsed_scope(self) -> None:
+        self.cursor.focus_cell(self.session.cells[2].cell_id)  # H2 Setup
+        self.cursor.toggle_fold_focused_heading()  # fold [2,6)
+        landed = self.cursor.move_down()
+        assert landed is not None
+        # Next visible after H2 Setup is H2 Training (index 6).
+        self.assertEqual(landed.heading_title, "Training")
+
+    def test_move_up_from_after_collapsed_scope_skips_back_to_heading(self) -> None:
+        self.cursor.focus_cell(self.session.cells[2].cell_id)
+        self.cursor.toggle_fold_focused_heading()  # fold [2,6)
+        self.cursor.focus_cell(self.session.cells[6].cell_id)  # H2 Training
+        landed = self.cursor.move_up()
+        assert landed is not None
+        # Previous visible is the collapsed H2 Setup itself.
+        self.assertEqual(landed.heading_title, "Setup")
+
+    def test_collapsed_h1_absorbs_all_children_on_navigation(self) -> None:
+        self.cursor.focus_cell(self.session.cells[0].cell_id)  # H1 Intro
+        self.cursor.toggle_fold_focused_heading()  # fold [0,8)
+        landed = self.cursor.move_down()
+        assert landed is not None
+        # Everything from H1 Intro's scope is hidden; next is H1 Runs.
+        self.assertEqual(landed.heading_title, "Runs")
+
+    def test_toggle_fold_noop_outside_notebook_mode(self) -> None:
+        self.cursor.focus_cell(self.session.cells[1].cell_id)
+        self.cursor.enter_input_mode()
+        self.assertIsNone(self.cursor.toggle_fold_focused_heading())
+
+
 class HeadingCreationTests(unittest.TestCase):
     """new_heading_cell adds a landmark without entering INPUT mode."""
 

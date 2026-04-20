@@ -103,6 +103,8 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.BANK_RELOADED,
     EventType.OUTPUT_PLAYBACK_STARTED,
     EventType.OUTPUT_PLAYBACK_STOPPED,
+    EventType.OUTLINE_FOLDED,
+    EventType.OUTLINE_UNFOLDED,
     EventType.ANSI_OSC_RECEIVED,
 })
 
@@ -437,6 +439,27 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             sound_id="soft_tick",
             say_template="playback stopped",
             priority=170,
+            verbosity="minimal",
+        ),
+
+        # Outline fold / unfold cues announce the scope size so the
+        # user knows how much the collapse hid.
+        EventBinding(
+            id="outline_folded",
+            event_type=EventType.OUTLINE_FOLDED.value,
+            voice_id="narrator",
+            sound_id="nav_blip",
+            say_template="section {heading_title} collapsed, {cell_count} cells",
+            priority=160,
+            verbosity="minimal",
+        ),
+        EventBinding(
+            id="outline_unfolded",
+            event_type=EventType.OUTLINE_UNFOLDED.value,
+            voice_id="narrator",
+            sound_id="nav_blip",
+            say_template="section {heading_title} expanded",
+            priority=160,
             verbosity="minimal",
         ),
 

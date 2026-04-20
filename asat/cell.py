@@ -97,6 +97,7 @@ class Cell:
     heading_level: Optional[int] = None
     heading_title: Optional[str] = None
     text: Optional[str] = None
+    collapsed: bool = False
 
     def __post_init__(self) -> None:
         if self.kind is CellKind.HEADING:
@@ -120,6 +121,8 @@ class Cell:
         else:
             if self.text is not None:
                 raise ValueError("text only applies to TEXT cells")
+        if self.collapsed and self.kind is not CellKind.HEADING:
+            raise ValueError("collapsed only applies to HEADING cells")
 
     @classmethod
     def new(cls, command: str, parent_id: Optional[str] = None) -> "Cell":
@@ -284,6 +287,7 @@ class Cell:
             heading_level=self.heading_level,
             heading_title=self.heading_title,
             text=self.text,
+            collapsed=self.collapsed,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -318,4 +322,5 @@ class Cell:
             heading_level=data.get("heading_level"),
             heading_title=data.get("heading_title"),
             text=data.get("text"),
+            collapsed=bool(data.get("collapsed", False)),
         )

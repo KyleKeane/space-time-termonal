@@ -608,6 +608,7 @@ Every key you need, one table.
 | NOTEBOOK   | `]` / `[`         | Next / previous heading (any level)   |
 | NOTEBOOK   | `1`..`6`          | Next heading of that level (F61)      |
 | NOTEBOOK   | `}` / `{`         | Next / prev parent-scope heading (F27)|
+| NOTEBOOK   | `z`               | Toggle collapse on focused heading (F27)|
 | NOTEBOOK   | `i`               | Begin an in-place text cell (F27); lands in TEXT mode |
 | TEXT       | Enter             | Create a text cell from the buffer after the anchor (F27) |
 | TEXT       | Escape            | Abandon the draft without creating a cell (F27) |

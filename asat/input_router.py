@@ -186,6 +186,7 @@ def default_bindings() -> BindingMap:
             Key.printable("["): "prev_heading",
             Key.printable("}"): "next_parent_heading",
             Key.printable("{"): "prev_parent_heading",
+            Key.printable("z"): "toggle_fold_heading",
             Key.printable("1"): "next_heading_1",
             Key.printable("2"): "next_heading_2",
             Key.printable("3"): "next_heading_3",
@@ -351,6 +352,7 @@ HELP_LINES: tuple[str, ...] = (
     "           ] / [ next / prev heading; 1..6 next heading of that level.",
     "           } / { next / prev heading shallower than current scope (parent).",
     "           i begins an in-place text cell (Enter creates, Escape abandons).",
+    "           z on a heading toggles collapse (hides its cells from Up/Down).",
     "INPUT:     Enter submits, Escape leaves without running.",
     "           Backspace/Delete cut, Left/Right walk, Home/End jump (or Ctrl+A/E).",
     "           Up/Down walk command history (Down past newest restores your draft).",
@@ -1382,6 +1384,7 @@ class InputRouter:
             "next_heading_6": self._next_heading_action(6),
             "next_parent_heading": self._parent_heading_action(direction=+1),
             "prev_parent_heading": self._parent_heading_action(direction=-1),
+            "toggle_fold_heading": self._toggle_fold_action(),
             "begin_text_input": _void(self._cursor.begin_text_input),
             "submit_text_input": self._submit_text_input,
             "abandon_text_input": _void(self._cursor.abandon_text_input),
@@ -1518,6 +1521,13 @@ class InputRouter:
             if cell is not None:
                 payload["cell_id"] = cell.cell_id
             return payload
+        return handler
+
+    def _toggle_fold_action(self) -> ActionHandler:
+        """F27: `z` on a heading toggles its collapsed flag."""
+        def handler() -> Optional[dict[str, object]]:
+            result = self._cursor.toggle_fold_focused_heading()
+            return {"toggled": result is not None, "collapsed": bool(result)}
         return handler
 
     def _parent_heading_action(self, direction: int) -> ActionHandler:

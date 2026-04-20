@@ -32,6 +32,7 @@ Each row is one binding. The `Action` column is the handler name `InputRouter._a
 | `d` | `delete_cell` |
 | `i` | `begin_text_input` |
 | `y` | `duplicate_cell` |
+| `z` | `toggle_fold_heading` |
 | `{` | `prev_parent_heading` |
 | `}` | `next_parent_heading` |
 
