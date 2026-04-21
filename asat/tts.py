@@ -180,11 +180,35 @@ class Pyttsx3Engine:
 
     @classmethod
     def available(cls) -> bool:
-        """Return True when the ``pyttsx3`` package is importable."""
+        """Return True when pyttsx3 can actually initialize its backend.
+
+        Checking ``import pyttsx3`` alone is not enough — the pip
+        package installs cleanly on every platform, but the underlying
+        backend only works when the host OS also has the right TTS
+        system (Linux: ``espeak`` / ``espeak-ng`` binary; macOS:
+        NSSpeechSynthesizer framework; Windows: SAPI5). Without that,
+        ``pyttsx3.init()`` raises — and the previous import-only check
+        caused the registry to pick pyttsx3 as "available", then the
+        engine would fail the moment a real ``synthesize()`` call was
+        made. Now we construct an engine briefly to prove the backend
+        is real, then discard it. ``.stop()`` is best-effort — some
+        drivers don't implement it but the init was the hard part.
+        """
         try:
-            import pyttsx3  # noqa: F401
+            import pyttsx3
         except Exception:
             return False
+        try:
+            engine = pyttsx3.init()
+        except Exception:
+            return False
+        try:
+            # Best-effort cleanup so repeated probes don't leak native
+            # resources. Failures here are harmless; the engine is
+            # already proven-to-construct.
+            engine.stop()
+        except Exception:
+            pass
         return True
 
     @property
