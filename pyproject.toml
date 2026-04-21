@@ -14,6 +14,11 @@ dependencies = [
     "sounddevice>=0.4.6",
     "numpy>=1.23",
     "pyttsx3>=2.90",
+    # tomllib backport for Python 3.10 (stdlib's tomllib landed in 3.11).
+    # tests/test_metadata.py needs it to read pyproject.toml; the
+    # environment marker limits it to 3.10 runners so newer Pythons
+    # don't pull in an unused dep.
+    "tomli>=2.0 ; python_version < '3.11'",
 ]
 
 [tool.setuptools.packages.find]

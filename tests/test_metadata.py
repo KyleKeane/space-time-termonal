@@ -11,9 +11,16 @@ someone bumps one and forgets the other, or reverts the readme pointer.
 
 from __future__ import annotations
 
-import tomllib
+import sys
 import unittest
 from pathlib import Path
+
+# tomllib moved into the stdlib in Python 3.11. On 3.10 we fall back
+# to the `tomli` backport — same API, different module name.
+if sys.version_info >= (3, 11):
+    import tomllib
+else:
+    import tomli as tomllib  # type: ignore[no-redef]
 
 import asat
 
