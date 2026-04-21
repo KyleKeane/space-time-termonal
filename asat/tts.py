@@ -180,35 +180,27 @@ class Pyttsx3Engine:
 
     @classmethod
     def available(cls) -> bool:
-        """Return True when pyttsx3 can actually initialize its backend.
+        """Return True when the ``pyttsx3`` package is importable.
 
-        Checking ``import pyttsx3`` alone is not enough — the pip
-        package installs cleanly on every platform, but the underlying
-        backend only works when the host OS also has the right TTS
-        system (Linux: ``espeak`` / ``espeak-ng`` binary; macOS:
-        NSSpeechSynthesizer framework; Windows: SAPI5). Without that,
-        ``pyttsx3.init()`` raises — and the previous import-only check
-        caused the registry to pick pyttsx3 as "available", then the
-        engine would fail the moment a real ``synthesize()`` call was
-        made. Now we construct an engine briefly to prove the backend
-        is real, then discard it. ``.stop()`` is best-effort — some
-        drivers don't implement it but the init was the hard part.
+        We deliberately keep this probe cheap (import only, no
+        ``pyttsx3.init()``): on macOS and Windows, ``init()`` opens
+        an NSSpeechSynthesizer / SAPI COM session that accumulates
+        native state when probed many times in the same process (as
+        happens during a pytest run). A real initialization failure
+        surfaces at first ``synthesize()`` call, which the
+        ``SoundEngine`` reliability guard catches — the user hears
+        the fail-audible error tone instead of a silent hang, and
+        ``AUDIO_PIPELINE_FAILED`` is published with details.
+
+        For CI or environments where the default engine should not
+        be pyttsx3, set ``ASAT_TTS_ENGINE=tone`` (or another engine
+        id) to override priority walk; the override bypasses this
+        probe entirely.
         """
         try:
-            import pyttsx3
+            import pyttsx3  # noqa: F401
         except Exception:
             return False
-        try:
-            engine = pyttsx3.init()
-        except Exception:
-            return False
-        try:
-            # Best-effort cleanup so repeated probes don't leak native
-            # resources. Failures here are harmless; the engine is
-            # already proven-to-construct.
-            engine.stop()
-        except Exception:
-            pass
         return True
 
     @property
