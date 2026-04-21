@@ -56,6 +56,19 @@ class RegistryDefaultsTests(unittest.TestCase):
 
 class ResolveDefaultIdTests(unittest.TestCase):
 
+    def setUp(self) -> None:
+        # Each test in this class asserts on the registry's priority-
+        # walk / availability-probe behavior, which is short-circuited
+        # when ``ASAT_TTS_ENGINE`` is set. Harness the env here so a
+        # CI pin (or a developer with the var exported in their shell)
+        # can't flip the result under us.
+        self._env_patch = mock.patch.dict(os.environ, {}, clear=False)
+        self._env_patch.start()
+        os.environ.pop("ASAT_TTS_ENGINE", None)
+
+    def tearDown(self) -> None:
+        self._env_patch.stop()
+
     def _registry_with_availability(
         self, **availability: bool
     ) -> TTSEngineRegistry:

@@ -71,11 +71,12 @@ jobs:
         run: python -c "import asat; print('asat', asat.__version__, 'import ok')"
 
       - name: Run full test suite
-        # Pin tone engine: CI has pyttsx3 installed but no guaranteed
-        # system speech subsystem (Ubuntu has no espeak by default;
-        # macOS NSSpeechSynthesizer can be flaky in headless Actions).
-        # Real users aren't affected — they get their preferred engine
-        # at runtime. -v --tb=short keeps failures diagnosable.
+        # Pin tone engine for defense in depth: macOS / Windows CI
+        # runners pass the pyttsx3 backend probe but can still hit
+        # flaky headless renders in `synthesize()`. Tests that
+        # verify registry priority-walk behavior clear this env var
+        # in their own setUp, so they're robust to the pin.
+        # -v --tb=short keeps failures diagnosable in the Actions log.
         env:
           ASAT_TTS_ENGINE: tone
         run: python -m pytest -v --tb=short
