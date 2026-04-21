@@ -172,6 +172,11 @@ class Pyttsx3Engine:
         self._volume = volume
         self._pitch = pitch
         self._backend: Optional[object] = None
+        # Reliability: bounded ring of property rejections. Previously
+        # these were silently swallowed (Fully Configurable invariant
+        # was violated — a user adjusting pitch and hearing no change
+        # had no way to know why). Capped at 16 entries per engine.
+        self._config_rejections: list[dict[str, str]] = []
 
     @classmethod
     def available(cls) -> bool:
@@ -237,13 +242,47 @@ class Pyttsx3Engine:
     def _apply_voice(self, backend: object, voice: VoiceProfile) -> None:
         """Push the VoiceProfile + user overrides into the pyttsx3 engine."""
         if self._voice is not None:
-            _try_set(backend, "voice", self._voice)
+            self._try_set(backend, "voice", self._voice)
         rate = self._rate if self._rate is not None else voice.speed_wpm
-        _try_set(backend, "rate", float(rate))
+        self._try_set(backend, "rate", float(rate))
         volume = self._volume if self._volume is not None else voice.volume
-        _try_set(backend, "volume", max(0.0, min(1.0, float(volume))))
+        self._try_set(backend, "volume", max(0.0, min(1.0, float(volume))))
         if self._pitch is not None:
-            _try_set(backend, "pitch", float(self._pitch))
+            self._try_set(backend, "pitch", float(self._pitch))
+
+    def _try_set(self, backend: object, key: str, value: object) -> None:
+        """Call ``backend.setProperty(key, value)`` and record rejections.
+
+        Some pyttsx3 drivers (notably Linux espeak) raise on unknown
+        property keys. We must not let that take narration down, but
+        we also must not swallow it silently: a user who configured
+        pitch and doesn't hear a change deserves to know the backend
+        rejected the property. Each rejection is appended to a bounded
+        ring and surfaced via ``config_rejections``.
+        """
+        try:
+            backend.setProperty(key, value)  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001 — backend may raise anything
+            record = {
+                "property": str(key),
+                "value": repr(value),
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            self._config_rejections.append(record)
+            # Cap the ring at 16 so a misconfigured engine can't
+            # accumulate unbounded memory over a long session.
+            if len(self._config_rejections) > 16:
+                self._config_rejections = self._config_rejections[-16:]
+
+    @property
+    def config_rejections(self) -> tuple[dict[str, str], ...]:
+        """Return property rejections observed since engine construction.
+
+        Surfaced here for diagnostics — callers can display these in
+        ``:tts list`` output or the settings editor so the user knows
+        which properties their backend silently ignored.
+        """
+        return tuple(self._config_rejections)
 
 
 class EspeakNgEngine:
@@ -405,16 +444,6 @@ class SystemSayEngine:
                 tmp_path.unlink()
             except OSError:
                 pass
-
-
-def _try_set(backend: object, key: str, value: object) -> None:
-    """Call ``backend.setProperty(key, value)`` but tolerate old stubs."""
-    try:
-        backend.setProperty(key, value)  # type: ignore[attr-defined]
-    except Exception:
-        # Some pyttsx3 drivers (Linux espeak) raise on unknown keys.
-        # Swallow so a missing pitch control doesn't take narration down.
-        pass
 
 
 def _wav_to_mono_buffer(blob: bytes, target_sample_rate: int) -> AudioBuffer:

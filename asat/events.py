@@ -64,7 +64,8 @@ class EventType(str, Enum):
         ANSI_LINE_ERASED, ANSI_OSC_RECEIVED, ANSI_BELL
 
     Audio engine:
-        AUDIO_SPOKEN, AUDIO_INTERRUPTED, NARRATION_REPLAYED
+        AUDIO_SPOKEN, AUDIO_INTERRUPTED, NARRATION_REPLAYED,
+        AUDIO_PIPELINE_FAILED, AUDIO_SINK_DEGRADED
 
     Help surface:
         HELP_REQUESTED
@@ -173,6 +174,8 @@ class EventType(str, Enum):
 
     AUDIO_SPOKEN = "audio.spoken"
     AUDIO_INTERRUPTED = "audio.interrupted"
+    AUDIO_PIPELINE_FAILED = "audio.pipeline.failed"
+    AUDIO_SINK_DEGRADED = "audio.sink.degraded"
     NARRATION_REPLAYED = "audio.narration.replayed"
 
     HELP_REQUESTED = "help.requested"

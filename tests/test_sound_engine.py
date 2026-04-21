@@ -898,5 +898,196 @@ class SoundEngineVerbosityTests(unittest.TestCase):
             engine.set_verbosity_level("whisper")
 
 
+class _FailingTTS:
+    """TTS stand-in that raises on demand, for reliability tests."""
+
+    def __init__(self, fail_next: bool = False) -> None:
+        self.fail_next = fail_next
+        self._inner = ToneTTSEngine(sample_rate=8000)
+        self.call_count = 0
+
+    def synthesize(self, text: str, voice: VoiceProfile) -> AudioBuffer:
+        self.call_count += 1
+        if self.fail_next:
+            self.fail_next = False
+            raise RuntimeError("TTS backend simulated crash")
+        return self._inner.synthesize(text, voice)
+
+
+class _FailingSink:
+    """Sink stand-in that can fail on demand, for reliability tests."""
+
+    def __init__(self) -> None:
+        self.played: list[AudioBuffer] = []
+        self.fail_count = 0  # how many more plays should raise
+
+    def play(self, buffer: AudioBuffer) -> None:
+        if self.fail_count > 0:
+            self.fail_count -= 1
+            raise OSError("sink simulated device failure")
+        self.played.append(buffer)
+
+    def close(self) -> None:
+        pass
+
+
+class SoundEngineReliabilityTests(unittest.TestCase):
+    """Verify the Never Crashes invariant at the SoundEngine layer."""
+
+    def _bank_with_binding(self) -> SoundBank:
+        voice = _voice(id="narrator")
+        binding = EventBinding(
+            id="command_submitted_default",
+            event_type=EventType.COMMAND_SUBMITTED.value,
+            voice_id=voice.id,
+            say_template="ran {cell_id}",
+            priority=100,
+        )
+        return SoundBank(voices=(voice,), sounds=(), bindings=(binding,))
+
+    def test_tts_exception_does_not_propagate_and_fires_failure_event(self) -> None:
+        # Never Crashes: a TTS that raises must not take the dispatch
+        # down. The error tone must reach the sink, and
+        # AUDIO_PIPELINE_FAILED must be published so downstream tools
+        # (event log, settings editor) can surface the failure.
+        bus = EventBus()
+        sink = MemorySink()
+        tts = _FailingTTS(fail_next=True)
+        observed_failures: list[dict] = []
+        bus.subscribe(
+            EventType.AUDIO_PIPELINE_FAILED,
+            lambda event: observed_failures.append(dict(event.payload)),
+        )
+        engine = SoundEngine(
+            bus,
+            self._bank_with_binding(),
+            sink,
+            tts=tts,
+            sample_rate=8000,
+        )
+        self.addCleanup(engine.close)
+
+        # Must not raise — the Never Crashes invariant.
+        publish_event(
+            bus,
+            EventType.COMMAND_SUBMITTED,
+            {"cell_id": "c1", "command": "ls"},
+            source="test",
+        )
+
+        self.assertEqual(len(observed_failures), 1)
+        self.assertEqual(observed_failures[0]["event_type"], "command.submitted")
+        self.assertEqual(observed_failures[0]["error_class"], "RuntimeError")
+        self.assertIn("simulated crash", observed_failures[0]["error_message"])
+        # The error tone must have reached the sink so the user is
+        # not left in silence.
+        self.assertEqual(len(sink.buffers), 1)
+        # The error tone is mono at the engine's sample rate.
+        self.assertEqual(sink.buffers[0].sample_rate, 8000)
+        self.assertEqual(sink.buffers[0].layout, ChannelLayout.MONO)
+
+    def test_subsequent_events_still_render_after_a_failure(self) -> None:
+        # After one failing render, a later successful render must
+        # still produce audio normally.
+        bus = EventBus()
+        sink = MemorySink()
+        tts = _FailingTTS(fail_next=True)
+        engine = SoundEngine(
+            bus,
+            self._bank_with_binding(),
+            sink,
+            tts=tts,
+            sample_rate=8000,
+        )
+        self.addCleanup(engine.close)
+
+        publish_event(
+            bus,
+            EventType.COMMAND_SUBMITTED,
+            {"cell_id": "c1", "command": "ls"},
+            source="test",
+        )
+        # The next event hits the same path but the TTS recovered
+        # (fail_next auto-resets to False inside synthesize).
+        publish_event(
+            bus,
+            EventType.COMMAND_SUBMITTED,
+            {"cell_id": "c2", "command": "pwd"},
+            source="test",
+        )
+
+        # Two sink plays: the error tone from the first event, then
+        # the successful speech buffer from the second event.
+        self.assertEqual(len(sink.buffers), 2)
+
+    def test_sink_swaps_to_memory_after_three_consecutive_failures(self) -> None:
+        # Never Crashes + graceful degrade: after the live sink has
+        # refused 3 buffers in a row, SoundEngine must swap it for
+        # MemorySink so subsequent events stop trying a broken device.
+        bus = EventBus()
+        sink = _FailingSink()
+        sink.fail_count = 100  # always fail
+        tts = _FailingTTS(fail_next=False)
+        observed_degrade: list[dict] = []
+        bus.subscribe(
+            EventType.AUDIO_SINK_DEGRADED,
+            lambda event: observed_degrade.append(dict(event.payload)),
+        )
+        engine = SoundEngine(
+            bus,
+            self._bank_with_binding(),
+            sink,
+            tts=tts,
+            sample_rate=8000,
+        )
+        self.addCleanup(engine.close)
+
+        # Force three failures by making TTS raise each time; the
+        # error tone tries to reach the sink and is rejected.
+        for i in range(3):
+            tts.fail_next = True
+            publish_event(
+                bus,
+                EventType.COMMAND_SUBMITTED,
+                {"cell_id": f"c{i}", "command": "ls"},
+                source="test",
+            )
+
+        self.assertEqual(len(observed_degrade), 1)
+        self.assertEqual(observed_degrade[0]["previous_sink"], "_FailingSink")
+        self.assertIn("MemorySink", observed_degrade[0]["reason"])
+
+    def test_failure_in_failure_handler_does_not_recurse(self) -> None:
+        # Re-entrancy guard: if publishing AUDIO_PIPELINE_FAILED
+        # itself triggers a failure (e.g. a pathological handler),
+        # the dispatch still returns cleanly instead of infinite
+        # recursion.
+        bus = EventBus()
+        sink = MemorySink()
+        tts = _FailingTTS(fail_next=True)
+        # A handler that itself raises whenever AUDIO_PIPELINE_FAILED
+        # is published. SoundEngine's guard must absorb this too.
+        bus.subscribe(
+            EventType.AUDIO_PIPELINE_FAILED,
+            lambda event: (_ for _ in ()).throw(ValueError("handler boom")),
+        )
+        engine = SoundEngine(
+            bus,
+            self._bank_with_binding(),
+            sink,
+            tts=tts,
+            sample_rate=8000,
+        )
+        self.addCleanup(engine.close)
+
+        # Must not raise despite the nested failure.
+        publish_event(
+            bus,
+            EventType.COMMAND_SUBMITTED,
+            {"cell_id": "c1", "command": "ls"},
+            source="test",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

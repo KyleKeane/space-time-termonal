@@ -114,6 +114,8 @@ COVERED_EVENT_TYPES: frozenset[EventType] = frozenset({
     EventType.FIRST_RUN_TOUR_EVENT_LOG_PREVIEW,
     EventType.FIRST_RUN_TOUR_LOG_PATH,
     EventType.FIRST_RUN_TOUR_COMPLETED,
+    EventType.AUDIO_PIPELINE_FAILED,
+    EventType.AUDIO_SINK_DEGRADED,
 })
 
 
@@ -422,6 +424,32 @@ def _default_bindings() -> tuple[EventBinding, ...]:
             sound_id="soft_tick",
             say_template="bank reloaded from disk",
             priority=175,
+            verbosity="minimal",
+        ),
+
+        # Reliability: these two bindings narrate the fail-audible
+        # fallback that SoundEngine emits when the main render path
+        # hits an exception (AUDIO_PIPELINE_FAILED) or when the live
+        # sink has failed too many times and has been swapped for
+        # MemorySink (AUDIO_SINK_DEGRADED). The immediate "error tone"
+        # the user hears is played directly by SoundEngine without
+        # going through the binding system — these bindings are the
+        # follow-up spoken context, which itself may fail and that's
+        # fine: the error tone already told the user something broke.
+        EventBinding(
+            id="audio_pipeline_failed",
+            event_type=EventType.AUDIO_PIPELINE_FAILED.value,
+            voice_id="alert",
+            say_template="audio failed on {event_type}: {error_class}",
+            priority=190,
+            verbosity="minimal",
+        ),
+        EventBinding(
+            id="audio_sink_degraded",
+            event_type=EventType.AUDIO_SINK_DEGRADED.value,
+            voice_id="alert",
+            say_template="audio output disabled: {reason}",
+            priority=195,
             verbosity="minimal",
         ),
 

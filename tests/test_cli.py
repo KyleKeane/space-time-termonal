@@ -328,5 +328,81 @@ class WorkspaceResolutionTests(_AsatHomeIsolated):
                 cli._resolve_workspace(args)
 
 
+class MainLoopSupervisorTests(unittest.TestCase):
+    """Verify the Never Crashes invariant at the ``_run`` loop layer."""
+
+    def _make_app_stub(self, raise_on_key: Exception):
+        """Return a minimal Application-like stub that raises on first key."""
+        from asat.event_bus import EventBus
+        from asat.keys import Key, Modifier
+
+        class _AppStub:
+            def __init__(self) -> None:
+                self.bus = EventBus()
+                self.running = True
+                self.calls: list[Key] = []
+                self._first_call = True
+
+            def handle_key(self, key):
+                self.calls.append(key)
+                if self._first_call:
+                    self._first_call = False
+                    raise raise_on_key
+
+            def drain_pending(self):
+                return []
+
+            def execute(self, cell_id):
+                pass  # pragma: no cover
+
+        return _AppStub()
+
+    def test_exception_in_handle_key_is_caught_and_loop_continues(self) -> None:
+        # Never Crashes: handle_key raising must not exit the loop.
+        # The supervisor catches, publishes AUDIO_PIPELINE_FAILED,
+        # logs, and moves on to the next key.
+        from asat.events import EventType
+        from asat.keyboard import ScriptedKeyboard
+        from asat.keys import Key
+
+        app = self._make_app_stub(RuntimeError("router boom"))
+        observed_failures: list[dict] = []
+        app.bus.subscribe(
+            EventType.AUDIO_PIPELINE_FAILED,
+            lambda event: observed_failures.append(dict(event.payload)),
+        )
+        keys = iter([Key.printable("a"), Key.printable("b")])
+        keyboard = ScriptedKeyboard(keys)
+        err = io.StringIO()
+
+        with mock.patch("sys.stderr", err):
+            cli._run(app, keyboard)
+
+        # Both keys were delivered — the first one raised, the
+        # second one still arrived at handle_key.
+        self.assertEqual(len(app.calls), 2)
+        # AUDIO_PIPELINE_FAILED was published with the error details.
+        self.assertEqual(len(observed_failures), 1)
+        self.assertEqual(observed_failures[0]["error_class"], "RuntimeError")
+        self.assertIn("router boom", observed_failures[0]["error_message"])
+        # A stderr line was written for sighted/developer debugging.
+        self.assertIn("recovered from error", err.getvalue())
+        self.assertIn("RuntimeError", err.getvalue())
+
+    def test_keyboard_interrupt_still_propagates(self) -> None:
+        # KeyboardInterrupt is the one exception that MUST propagate
+        # so Ctrl+C behaves predictably. Verify the supervisor does
+        # not swallow it.
+        from asat.keyboard import ScriptedKeyboard
+        from asat.keys import Key
+
+        app = self._make_app_stub(KeyboardInterrupt())
+        keys = iter([Key.printable("a")])
+        keyboard = ScriptedKeyboard(keys)
+
+        with self.assertRaises(KeyboardInterrupt):
+            cli._run(app, keyboard)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -40,6 +40,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import threading
 import wave
 from pathlib import Path
 from typing import Optional, Protocol
@@ -394,6 +395,13 @@ class PosixLiveAudioSink:
         """Path of the player binary this sink uses (for diagnostics)."""
         return self._binary
 
+    # Budget for writing the WAV bytes into the player's stdin. Every
+    # buffer we emit is tens to hundreds of KB; even the slowest real
+    # player drains it in <50ms on modern hardware. If we hit 500ms,
+    # the player is wedged and we kill it so a stuck backend cannot
+    # block the event loop that's trying to speak to the user.
+    WRITE_TIMEOUT_SECONDS = 0.5
+
     def play(self, buffer: AudioBuffer) -> None:
         """Render the buffer to WAV bytes and pipe them to the player."""
         self._kill_previous()
@@ -414,16 +422,48 @@ class PosixLiveAudioSink:
             ) from exc
         if self._process.stdin is None:
             return  # pragma: no cover - Popen with stdin=PIPE always sets it.
-        try:
-            self._process.stdin.write(data)
-            self._process.stdin.close()
-        except (BrokenPipeError, ValueError):
-            # The player exited before we could finish writing — this
-            # can happen when the next `play()` kills the prior one
-            # mid-write, or when the device is suddenly unavailable.
-            # Neither case is fatal: the subsequent play() will try
-            # fresh.
-            pass
+        self._write_with_watchdog(self._process, data)
+
+    def _write_with_watchdog(
+        self, process: subprocess.Popen[bytes], data: bytes
+    ) -> None:
+        """Write ``data`` to ``process.stdin`` with a hard timeout.
+
+        Runs the write on a background thread and joins for at most
+        ``WRITE_TIMEOUT_SECONDS``. If the thread hasn't returned — the
+        player hung without draining its stdin — we terminate the
+        process so the next ``play()`` can start fresh. Broken pipes
+        and closed streams are tolerated silently; the next event
+        will re-try with a new subprocess.
+        """
+        def _write() -> None:
+            assert process.stdin is not None  # narrowed above
+            try:
+                process.stdin.write(data)
+                process.stdin.close()
+            except (BrokenPipeError, ValueError, OSError):
+                # Player exited before we finished writing, or stdin
+                # was closed by a concurrent kill. Both recoverable —
+                # the next play() will spawn a fresh subprocess.
+                pass
+
+        thread = threading.Thread(target=_write, daemon=True)
+        thread.start()
+        thread.join(timeout=self.WRITE_TIMEOUT_SECONDS)
+        if thread.is_alive():
+            # The player isn't draining stdin; kill it so we don't
+            # block forever on the next play() call. The thread is
+            # daemon so it will not prevent process exit.
+            try:
+                process.terminate()
+            except ProcessLookupError:
+                pass
+            thread.join(timeout=0.1)
+            if thread.is_alive():
+                try:
+                    process.kill()
+                except ProcessLookupError:
+                    pass
 
     def close(self) -> None:
         """Stop any in-flight clip so the process exits quietly."""

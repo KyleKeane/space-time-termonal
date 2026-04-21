@@ -262,9 +262,11 @@ See [AUDIO.md](AUDIO.md) for the full reference.
 
 | EventType           | Payload keys                                                 |
 |---------------------|--------------------------------------------------------------|
-| `AUDIO_SPOKEN`      | `event_type`, `binding_id`, `text`, `voice_id`, `sound_id`   |
-| `AUDIO_INTERRUPTED` | `event_type` — **reserved; no producer ships today.** Future barge-in / cancellation work will publish it; until then no subscriber will ever hear it. The vocabulary entry is kept so external bindings can be authored ahead of the engine work. |
-| `NARRATION_REPLAYED`| `event_type`, `binding_id`, `text`, `voice_id`               |
+| `AUDIO_SPOKEN`         | `event_type`, `binding_id`, `text`, `voice_id`, `sound_id` |
+| `AUDIO_INTERRUPTED`    | `event_type` — **reserved; no producer ships today.** Future barge-in / cancellation work will publish it; until then no subscriber will ever hear it. The vocabulary entry is kept so external bindings can be authored ahead of the engine work. |
+| `AUDIO_PIPELINE_FAILED`| `event_type`, `binding_id`, `error_class`, `error_message` — fired when `SoundEngine._render()` catches an exception from TTS, the spatializer, a generator, or the sink. The engine immediately plays a fixed 3-note descending error tone so the user hears *something* even when the normal render path is broken, then publishes this event so the failure is audit-trailed and (optionally) spoken by the follow-up binding. Never re-raises; the session always continues. |
+| `AUDIO_SINK_DEGRADED`  | `previous_sink`, `reason` — fired when the live sink has failed 3 times in a row and has been swapped for `MemorySink` for the rest of the session. The user hears the usual audio until this event, which announces that subsequent output will be buffered silently; re-launching with `--live` is the recovery. |
+| `NARRATION_REPLAYED`   | `event_type`, `binding_id`, `text`, `voice_id`             |
 
 `NARRATION_REPLAYED` fires when the user presses `Ctrl+R` (or
 types `:repeat`) to re-hear the most recent narration. The engine
