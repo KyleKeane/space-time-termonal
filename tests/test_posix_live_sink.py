@@ -88,6 +88,59 @@ class _FakeProcess:
         return 0
 
 
+class _HangingStdin:
+    """Stdin that blocks on write until the test releases it.
+
+    Simulates a player process that accepts the pipe but never drains
+    — the scenario the watchdog is designed to catch.
+    """
+
+    def __init__(self) -> None:
+        import threading as _t
+        self._release = _t.Event()
+        self.closed = False
+
+    def write(self, data: bytes) -> int:
+        # Block here until the test signals release OR the write is
+        # interrupted by the player being killed (close() called).
+        self._release.wait(timeout=5.0)
+        return len(data)
+
+    def close(self) -> None:
+        self.closed = True
+        self._release.set()
+
+
+class _HangingProcess:
+    """Popen stand-in whose stdin never drains until terminate()."""
+
+    def __init__(self, argv: list[str], **_kwargs: object) -> None:
+        self.argv = argv
+        self.stdin = _HangingStdin()
+        self.terminated = False
+        self.killed = False
+        self._poll_result: "int | None" = None
+
+    def poll(self) -> "int | None":
+        return self._poll_result
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self._poll_result = -15
+        # Unblock the writer thread so it can exit cleanly after we
+        # "kill" the process.
+        self.stdin.close()
+
+    def kill(self) -> None:
+        self.killed = True
+        self._poll_result = -9
+        self.stdin.close()
+
+    def wait(self, timeout: float = 0.0) -> int:
+        self._poll_result = 0
+        return 0
+
+
 class ProbeTests(unittest.TestCase):
 
     def test_picks_first_available_candidate(self) -> None:
@@ -187,6 +240,49 @@ class PlayTests(unittest.TestCase):
         # or touch any process.
         sink.close()
         self.assertEqual(self.processes, [])
+
+
+class WriteWatchdogTests(unittest.TestCase):
+    """Verify the write-stdin watchdog kills a hung player.
+
+    A player that accepts the connection but never drains stdin
+    would block the sink forever. The watchdog terminates the
+    subprocess after ``WRITE_TIMEOUT_SECONDS`` so the event loop
+    that called ``play`` can return in bounded time.
+    """
+
+    def setUp(self) -> None:
+        self.processes: list[_HangingProcess] = []
+
+        def fake_popen(argv, **kwargs):
+            process = _HangingProcess(argv, **kwargs)
+            self.processes.append(process)
+            return process
+
+        def fake_which(name: str) -> "str | None":
+            return "/usr/bin/paplay" if name == "paplay" else None
+
+        self._popen_patch = mock.patch(
+            "asat.audio_sink.subprocess.Popen", side_effect=fake_popen
+        )
+        self._popen_patch.start()
+        self.addCleanup(self._popen_patch.stop)
+
+        self._which_patch = mock.patch(
+            "asat.audio_sink.shutil.which", side_effect=fake_which
+        )
+        self._which_patch.start()
+        self.addCleanup(self._which_patch.stop)
+
+    def test_hung_player_is_terminated_after_write_timeout(self) -> None:
+        sink = PosixLiveAudioSink()
+        # Shrink the timeout so the test runs fast. Still well above
+        # any real drain latency for a tiny buffer.
+        sink.WRITE_TIMEOUT_SECONDS = 0.05
+        sink.play(_buffer())
+        proc = self.processes[0]
+        # The watchdog must have fired terminate() on the hung proc.
+        self.assertTrue(proc.terminated)
 
 
 class PickLiveSinkTests(unittest.TestCase):

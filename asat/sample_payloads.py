@@ -105,6 +105,16 @@ SAMPLE_PAYLOADS: dict[EventType, dict[str, object]] = {
         "items": [],
     },
     EventType.INTERACTIVE_MENU_CLEARED: {"cell_id": "c1"},
+    EventType.AUDIO_PIPELINE_FAILED: {
+        "event_type": "command.completed",
+        "binding_id": "command-completed-default",
+        "error_class": "TTSEngineError",
+        "error_message": "espeak-ng returned empty WAV on stdout",
+    },
+    EventType.AUDIO_SINK_DEGRADED: {
+        "previous_sink": "SoundDeviceSink",
+        "reason": "3 consecutive sink failures; swapped to MemorySink",
+    },
     EventType.SETTINGS_OPENED: {"section": "voices", "record_count": 3},
     EventType.SETTINGS_CLOSED: {"dirty": False},
     EventType.SETTINGS_FOCUSED: {

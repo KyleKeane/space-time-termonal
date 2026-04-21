@@ -35,6 +35,8 @@ from typing import Optional, Sequence
 from asat import __version__
 from asat.actions import SystemClipboard
 from asat.app import Application
+from asat.event_bus import EventBusError, publish_event
+from asat.events import EventType
 from asat.audio_sink import (
     AudioSink,
     LiveAudioUnavailable,
@@ -211,14 +213,77 @@ def _print_check_report(app: Application, args: argparse.Namespace) -> int:
 
 
 def _run(app: Application, keyboard: KeyboardReader) -> None:
-    """Read keys until the Application flags itself as done."""
+    """Read keys until the Application flags itself as done.
+
+    Reliability contract (Never Crashes invariant): any exception
+    raised below ``keyboard.read_key()`` — including ``EventBusError``
+    aggregated from a failed audio handler — is caught, sonified via
+    ``AUDIO_PIPELINE_FAILED``, and logged to stderr. The loop keeps
+    running. Only ``KeyboardInterrupt`` (Ctrl+C) and ``SystemExit``
+    bubble out; everything else is survivable.
+
+    ``SoundEngine`` is the first line of defense — it guards its own
+    ``_dispatch`` and plays a fail-audible error tone when a binding
+    renders wrong. This supervisor is the belt-and-braces net for
+    anything that escapes: a broken keyboard reader, a bug in the
+    input router, an exception thrown by ``app.execute``'s kernel.
+    """
     while app.running:
-        key = keyboard.read_key()
+        try:
+            key = keyboard.read_key()
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:  # noqa: BLE001 — intentional last-resort catch
+            _report_loop_failure(app, where="keyboard.read_key", error=exc)
+            continue
         if key is None:
             break
-        app.handle_key(key)
-        for cell_id in app.drain_pending():
-            app.execute(cell_id)
+        try:
+            app.handle_key(key)
+            for cell_id in app.drain_pending():
+                app.execute(cell_id)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except Exception as exc:  # noqa: BLE001 — intentional last-resort catch
+            _report_loop_failure(app, where="handle_key/execute", error=exc)
+
+
+def _report_loop_failure(app: Application, *, where: str, error: BaseException) -> None:
+    """Publish AUDIO_PIPELINE_FAILED and log to stderr; never raise.
+
+    Triple-guarded: publishing the failure event itself may raise
+    (e.g. an ``EventBusError`` aggregating a downstream subscriber),
+    so we wrap the publish and the stderr write in their own
+    try/except. If literally everything fails, the loop still
+    continues — silence is better than a crash.
+    """
+    try:
+        publish_event(
+            app.bus,
+            EventType.AUDIO_PIPELINE_FAILED,
+            {
+                "event_type": where,
+                "binding_id": "",
+                "error_class": type(error).__name__,
+                "error_message": str(error),
+            },
+            source="main_loop_supervisor",
+        )
+    except Exception:
+        # SoundEngine's own _handle_render_failure guard should have
+        # absorbed any downstream failure, but just in case there is
+        # a second-level aggregate, swallow it here.
+        pass
+    try:
+        print(
+            f"[asat] recovered from error in {where}: "
+            f"{type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+    except Exception:
+        # stderr may be closed / redirected to a dead pipe; don't
+        # let that take the loop down.
+        pass
 
 
 def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:

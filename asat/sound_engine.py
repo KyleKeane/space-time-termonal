@@ -44,7 +44,7 @@ from asat.audio import (
     SpatialPosition,
     VoiceProfile,
 )
-from asat.audio_sink import AudioSink
+from asat.audio_sink import AudioSink, MemorySink
 from asat.event_bus import EventBus, publish_event
 from asat.events import Event, EventType
 from asat.hrtf import HRTFProfile, Spatializer
@@ -54,6 +54,46 @@ from asat.tts import TTSEngine, ToneTTSEngine
 
 
 NARRATION_HISTORY_CAPACITY = 20
+
+# Reliability: when the live sink raises this many times in a row we
+# assume the device is gone for the session and swap `MemorySink` in
+# so further events stop trying to play into a broken backend. The
+# swap publishes `AUDIO_SINK_DEGRADED`; a re-launch with `--live` is
+# the recovery path.
+MAX_CONSECUTIVE_SINK_FAILURES = 3
+
+
+def _build_error_tone_buffer(sample_rate: int = DEFAULT_SAMPLE_RATE) -> AudioBuffer:
+    """Return a distinct 3-note descending error tone.
+
+    Played directly by ``SoundEngine`` when the normal render path
+    raises — it's the "fail-audible" floor the user can rely on even
+    when TTS, the spatializer, the sound bank, or the binding system
+    is broken. Must depend on nothing outside ``AudioBuffer`` so it
+    cannot itself fail the same way the primary path just failed.
+
+    The shape (800 Hz → 600 Hz → 400 Hz, 80 ms each, short gaps) was
+    chosen to be clearly distinguishable from any of the default
+    bank's cues and to carry the universal "descending = something
+    went wrong" connotation.
+    """
+    import math
+
+    note_duration_s = 0.08
+    gap_duration_s = 0.02
+    frequencies = (800.0, 600.0, 400.0)
+    samples: list[float] = []
+    frame_count = int(note_duration_s * sample_rate)
+    gap_frames = int(gap_duration_s * sample_rate)
+    for freq in frequencies:
+        omega = 2.0 * math.pi * freq / sample_rate
+        for frame in range(frame_count):
+            # Envelope with a brief attack/release so the tone doesn't
+            # click audibly at buffer boundaries.
+            fade = min(1.0, frame / 80.0, (frame_count - frame) / 80.0)
+            samples.append(0.35 * fade * math.sin(omega * frame))
+        samples.extend(0.0 for _ in range(gap_frames))
+    return AudioBuffer.mono(samples, sample_rate=sample_rate)
 
 
 class NarrationHistoryEntry(NamedTuple):
@@ -151,6 +191,18 @@ class SoundEngine:
         )
         self._bank: SoundBank = SoundBank()
         self._subscribed_types: set[EventType] = set()
+        # Reliability: pre-compute the fail-audible error tone once
+        # so rendering it later requires nothing but sink.play().
+        self._error_tone_buffer: AudioBuffer = _build_error_tone_buffer(
+            sample_rate
+        )
+        # Consecutive sink failure counter. Reset on every successful
+        # play; when it hits MAX_CONSECUTIVE_SINK_FAILURES we swap the
+        # sink for MemorySink and publish AUDIO_SINK_DEGRADED.
+        self._sink_failure_count: int = 0
+        # Re-entrancy guard for error-tone playback and failure events
+        # so a failure in the failure path cannot recurse infinitely.
+        self._handling_failure: bool = False
         self.set_bank(bank)
 
     @property
@@ -298,17 +350,41 @@ class SoundEngine:
         self._subscribed_types = wanted
 
     def _dispatch(self, event: Event) -> None:
-        """Render every matching binding and play the result."""
+        """Render every matching binding and play the result.
+
+        Reliability contract (Never Crashes invariant): this method
+        never raises. A failure in predicate evaluation, binding
+        lookup, or rendering is caught, sonified with the fail-audible
+        error tone, and reported via ``AUDIO_PIPELINE_FAILED``. The
+        session always continues.
+        """
         if event.source == self.SOURCE:
             return
-        bindings = self._bank.bindings_for(event.event_type.value)
+        try:
+            bindings = self._bank.bindings_for(event.event_type.value)
+        except Exception as exc:
+            self._handle_render_failure(event, binding_id="", error=exc)
+            return
         for binding in bindings:
-            if not self._predicate.matches(binding.predicate, event.payload):
+            try:
+                matches = self._predicate.matches(binding.predicate, event.payload)
+            except Exception as exc:
+                self._handle_render_failure(event, binding_id=binding.id, error=exc)
                 continue
-            self._render(binding, event)
+            if not matches:
+                continue
+            try:
+                self._render(binding, event)
+            except Exception as exc:
+                self._handle_render_failure(event, binding_id=binding.id, error=exc)
 
     def _render(self, binding: EventBinding, event: Event) -> None:
-        """Render one binding into audio and route it to the sink."""
+        """Render one binding into audio and route it to the sink.
+
+        Raises whatever the underlying TTS / spatializer / generator /
+        sink raise. ``_dispatch`` is the single caller and is
+        responsible for the fail-audible fallback.
+        """
         voice = self._resolve_voice(binding)
         sound = self._resolve_sound(binding)
         text = _render_template(binding.say_template, event.payload)
@@ -338,6 +414,9 @@ class SoundEngine:
         if mixed is None:
             return
         self._sink.play(mixed)
+        # A successful play resets the consecutive-sink-failure counter
+        # so transient glitches don't eventually trip the degrade path.
+        self._sink_failure_count = 0
         if speech_buffer is not None and text and binding.voice_id:
             self._history.append(
                 NarrationHistoryEntry(
@@ -359,6 +438,83 @@ class SoundEngine:
             },
             source=self.SOURCE,
         )
+
+    def _handle_render_failure(
+        self,
+        event: Event,
+        *,
+        binding_id: str,
+        error: BaseException,
+    ) -> None:
+        """Play the error tone and announce the failure; never raise.
+
+        Re-entrancy-guarded: if a failure occurs while we're already
+        handling a failure (e.g. the error-tone play() itself throws),
+        we swallow it rather than recursing. The supervisor in
+        ``__main__.py`` is the final net that keeps the process alive
+        if somehow this method still raises.
+        """
+        if self._handling_failure:
+            return
+        self._handling_failure = True
+        try:
+            self._play_error_tone_best_effort()
+            publish_event(
+                self._bus,
+                EventType.AUDIO_PIPELINE_FAILED,
+                {
+                    "event_type": event.event_type.value,
+                    "binding_id": binding_id,
+                    "error_class": type(error).__name__,
+                    "error_message": str(error),
+                },
+                source=self.SOURCE,
+            )
+        except Exception:
+            # Last-resort swallow: the process must not die here.
+            # The supervisor in __main__.py logs and continues.
+            pass
+        finally:
+            self._handling_failure = False
+
+    def _play_error_tone_best_effort(self) -> None:
+        """Play the fail-audible tone; on repeated failure, degrade the sink.
+
+        Each sink failure increments ``_sink_failure_count``. When it
+        reaches ``MAX_CONSECUTIVE_SINK_FAILURES`` we swap the sink for
+        ``MemorySink`` for the rest of the session and publish
+        ``AUDIO_SINK_DEGRADED`` so the user hears an announcement
+        through whatever sink is still working (typically none by then,
+        but the event log captures it regardless).
+        """
+        try:
+            self._sink.play(self._error_tone_buffer)
+            self._sink_failure_count = 0
+        except Exception as sink_error:
+            self._sink_failure_count += 1
+            if self._sink_failure_count >= MAX_CONSECUTIVE_SINK_FAILURES:
+                previous_name = type(self._sink).__name__
+                try:
+                    self._sink.close()
+                except Exception:
+                    # Sink is already broken; swallow close failures.
+                    pass
+                self._sink = MemorySink()
+                self._sink_failure_count = 0
+                publish_event(
+                    self._bus,
+                    EventType.AUDIO_SINK_DEGRADED,
+                    {
+                        "previous_sink": previous_name,
+                        "reason": (
+                            f"{MAX_CONSECUTIVE_SINK_FAILURES} consecutive "
+                            f"sink failures ({type(sink_error).__name__}); "
+                            "swapped to MemorySink. Re-launch with --live "
+                            "to restore audio output."
+                        ),
+                    },
+                    source=self.SOURCE,
+                )
 
     def _resolve_voice(self, binding: EventBinding) -> Optional[Voice]:
         """Return the voice this binding points at, or None."""

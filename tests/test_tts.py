@@ -92,5 +92,56 @@ class ToneTTSVoiceTests(unittest.TestCase):
         self.assertGreater(slow_buf.frame_count(), fast_buf.frame_count())
 
 
+class Pyttsx3ConfigRejectionTests(unittest.TestCase):
+    """Verify that property rejections are recorded, not silently dropped.
+
+    Previously ``_try_set`` did ``except Exception: pass`` — a user
+    adjusting pitch and hearing no change had no way to tell whether
+    their backend accepted the value. Now each rejection is appended
+    to a bounded ring on the engine instance and exposed via the
+    ``config_rejections`` property.
+    """
+
+    def test_rejected_property_is_recorded_not_silently_dropped(self) -> None:
+        from asat.tts import Pyttsx3Engine
+
+        # Don't construct the real backend; we just want to probe
+        # _try_set in isolation. Build the engine directly and call
+        # its method with a backend that raises.
+        engine = Pyttsx3Engine(sample_rate=22050)
+
+        class _BrokenBackend:
+            def setProperty(self, key, value):
+                raise RuntimeError(f"driver does not support {key!r}")
+
+        engine._try_set(_BrokenBackend(), "pitch", 1.5)
+
+        rejections = engine.config_rejections
+        self.assertEqual(len(rejections), 1)
+        self.assertEqual(rejections[0]["property"], "pitch")
+        self.assertEqual(rejections[0]["value"], "1.5")
+        self.assertIn("RuntimeError", rejections[0]["error"])
+        self.assertIn("pitch", rejections[0]["error"])
+
+    def test_rejection_ring_is_capped_at_16(self) -> None:
+        from asat.tts import Pyttsx3Engine
+
+        engine = Pyttsx3Engine(sample_rate=22050)
+
+        class _BrokenBackend:
+            def setProperty(self, key, value):
+                raise RuntimeError("always fails")
+
+        backend = _BrokenBackend()
+        for i in range(50):
+            engine._try_set(backend, f"prop_{i}", i)
+
+        rejections = engine.config_rejections
+        self.assertEqual(len(rejections), 16)
+        # The ring keeps the most recent entries, not the oldest.
+        self.assertEqual(rejections[-1]["property"], "prop_49")
+        self.assertEqual(rejections[0]["property"], "prop_34")
+
+
 if __name__ == "__main__":
     unittest.main()
