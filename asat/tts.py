@@ -180,7 +180,23 @@ class Pyttsx3Engine:
 
     @classmethod
     def available(cls) -> bool:
-        """Return True when the ``pyttsx3`` package is importable."""
+        """Return True when the ``pyttsx3`` package is importable.
+
+        We deliberately keep this probe cheap (import only, no
+        ``pyttsx3.init()``): on macOS and Windows, ``init()`` opens
+        an NSSpeechSynthesizer / SAPI COM session that accumulates
+        native state when probed many times in the same process (as
+        happens during a pytest run). A real initialization failure
+        surfaces at first ``synthesize()`` call, which the
+        ``SoundEngine`` reliability guard catches — the user hears
+        the fail-audible error tone instead of a silent hang, and
+        ``AUDIO_PIPELINE_FAILED`` is published with details.
+
+        For CI or environments where the default engine should not
+        be pyttsx3, set ``ASAT_TTS_ENGINE=tone`` (or another engine
+        id) to override priority walk; the override bypasses this
+        probe entirely.
+        """
         try:
             import pyttsx3  # noqa: F401
         except Exception:
