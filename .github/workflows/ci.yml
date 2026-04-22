@@ -88,3 +88,92 @@ jobs:
 
       - name: Confirm --version
         run: python -m asat --version
+
+  diagnose-audio:
+    # Informational companion to the `test` matrix above: runs on a
+    # single Python version across the three OSes **without** pinning
+    # ``ASAT_TTS_ENGINE=tone`` and **with** ``--live``. The test matrix
+    # forces the tone backend for reproducibility, which hides whether
+    # pyttsx3 / sounddevice actually function on a fresh macOS or
+    # Windows install. This job removes that veil: whichever TTS the
+    # registry picks natively is what runs, and ``--live`` promotes a
+    # MemorySink fallback from PASS to FAIL so "no sound on my Mac"
+    # troubleshooting has a real signal to latch onto. Output is
+    # captured per-OS and uploaded as an artifact so a blind user can
+    # download and read it through their screen reader without having
+    # to parse the full Actions HTML log.
+    name: Audio diagnostic on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Report environment
+        shell: bash
+        run: |
+          python --version
+          python -m pip --version
+          python -c "import sys, platform; print(sys.platform, platform.platform())"
+
+      - name: Upgrade pip
+        shell: bash
+        run: python -m pip install --upgrade pip
+
+      - name: Install ASAT (verbose)
+        shell: bash
+        run: python -m pip install -v .
+
+      - name: Probe native TTS / audio backends
+        # Reports which optional deps actually imported. Distinguishes
+        # "pip install claimed success" from "the runtime bindings
+        # actually load", which is a real failure mode on macOS /
+        # Windows when a wheel lacks a matching system library.
+        shell: bash
+        continue-on-error: true
+        run: |
+          python - <<'PY'
+          import importlib
+          for mod in ("sounddevice", "numpy", "pyttsx3"):
+              try:
+                  m = importlib.import_module(mod)
+              except Exception as exc:
+                  print(f"{mod:12s} IMPORT FAILED: {type(exc).__name__}: {exc}")
+              else:
+                  print(f"{mod:12s} ok   ({getattr(m, '__version__', 'unknown')})")
+          PY
+
+      - name: Report installed packages
+        shell: bash
+        run: python -m pip list
+
+      - name: Run --check --live (natural TTS resolution)
+        # No ASAT_TTS_ENGINE override: the registry picks whatever
+        # backend the platform actually ships with. --live flips step
+        # 5 ("live_playback") from informational PASS to hard FAIL if
+        # sounddevice / the platform live sink cannot be opened, so a
+        # silent headless runner produces a diagnostic exit code
+        # instead of a green checkmark. Output goes to both the log
+        # and a per-OS text file uploaded below.
+        shell: bash
+        continue-on-error: true
+        run: |
+          python -m asat --check --live 2>&1 | tee "asat-check-${{ matrix.os }}.txt"
+
+      - name: Upload diagnostic output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asat-check-${{ matrix.os }}
+          path: asat-check-${{ matrix.os }}.txt
+          if-no-files-found: warn
